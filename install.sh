@@ -27,14 +27,15 @@ echo "⚙️  対話的な初期設定を行います。"
 
 # Default AI Engine の現在の設定を確認
 # doctor がエラーでも設定だけは抜く（未設定なら空）
-DEFAULT_ENGINE=$(kage config default_ai_engine --global 2>/dev/null | grep -oP '= \K.*' || echo "codex")
+CURRENT_ENGINE=$(kage config default_ai_engine --global 2>/dev/null | grep -oP '= \K.*' || echo "")
+DEFAULT_VAL=${CURRENT_ENGINE:-"codex"}
 
 echo "AIエンジンを設定します (codex, claude, gemini, copilotなど)。"
-read -p "使用するAIエンジンを入力してください [現在の設定: $DEFAULT_ENGINE]: " NEW_ENGINE
-NEW_ENGINE=${NEW_ENGINE:-$DEFAULT_ENGINE}
+read -p "使用するAIエンジンを入力してください [現在の設定: $DEFAULT_VAL]: " INPUT_ENGINE
+FINAL_ENGINE=${INPUT_ENGINE:-$DEFAULT_VAL}
 
-if [ -n "$NEW_ENGINE" ]; then
-    kage config default_ai_engine "$NEW_ENGINE" --global
+if [ -n "$FINAL_ENGINE" ]; then
+    kage config default_ai_engine "$FINAL_ENGINE" --global
 fi
 
 # 5. 診断実行
