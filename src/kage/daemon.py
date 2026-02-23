@@ -204,6 +204,20 @@ def _stop_macos_launchd():
 
 # --- Public API ---
 
+def install():
+    plat = get_platform()
+    if plat == "linux":
+        _setup_linux_cron()
+    elif plat == "macos":
+        _setup_macos_launchd()
+
+def remove():
+    plat = get_platform()
+    if plat == "linux":
+        _remove_linux_cron()
+    elif plat == "macos":
+        _remove_macos_launchd()
+
 def start():
     platform = get_platform()
     if platform == "darwin":
