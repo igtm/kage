@@ -29,5 +29,16 @@ def log_execution(project_path: str, task_name: str, status: str, stdout: str, s
         INSERT INTO executions (id, project_path, task_name, run_at, status, stdout, stderr)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     ''', (exec_id, project_path, task_name, run_at, status, stdout, stderr))
+    
+    # ログを最大100件に制限
+    cursor.execute('''
+        DELETE FROM executions 
+        WHERE id NOT IN (
+            SELECT id FROM executions 
+            ORDER BY run_at DESC 
+            LIMIT 100
+        )
+    ''')
+    
     conn.commit()
     conn.close()
