@@ -212,7 +212,7 @@ INDEX_HTML = """
                                 <h3>${task.name}</h3>
                                 <div class="details">
                                     <div><strong>Project:</strong> ${task.project_path}</div>
-                                    <div><strong>Schedule:</strong> <code>${task.cron}</code></div>
+                                    <div><strong>Schedule:</strong> <code>${task.cron}</code> (Next: ${task.next_run})</div>
                                     ${task.prompt ? `<div><strong>AI Prompt:</strong> ${task.prompt}</div>` : ''}
                                     ${task.command ? `<div><strong>Command:</strong> <code>${task.command}</code></div>` : ''}
                                     ${task.provider ? `<div><strong>Provider:</strong> ${task.provider}</div>` : ''}
@@ -231,6 +231,7 @@ INDEX_HTML = """
                             <div><strong>Default AI Engine:</strong> ${config.default_ai_engine || 'None'}</div>
                             <div><strong>Log Level:</strong> ${config.log_level}</div>
                             <div><strong>UI Port:</strong> ${config.ui_port}</div>
+                            <div><strong>Timezone:</strong> ${config.timezone}</div>
                         </div>
                     </div>
                     ${tasksHtml}
@@ -270,18 +271,39 @@ def get_logs():
 def get_config_api():
     from .scheduler import get_projects
     from .parser import load_project_tasks
+    from datetime import datetime, timezone as dt_timezone
+    import zoneinfo
+    from croniter import croniter
     
     config = get_global_config()
     projects = get_projects()
+    
+    # Setup timezone for calculating next run
+    tz_name = config.timezone
+    try:
+        tz = zoneinfo.ZoneInfo(tz_name)
+    except Exception:
+        tz = dt_timezone.utc
+    now = datetime.now(tz)
     
     all_tasks = []
     for proj_dir in projects:
         tasks = load_project_tasks(proj_dir)
         for toml_path, task_def in tasks:
             t = task_def.task
+            
+            next_run_str = ""
+            try:
+                itr = croniter(t.cron, now)
+                next_dt = itr.get_next(datetime)
+                next_run_str = next_dt.strftime('%Y-%m-%d %H:%M:%S')
+            except Exception:
+                next_run_str = "Invalid cron"
+
             all_tasks.append({
                 "name": t.name,
                 "cron": t.cron,
+                "next_run": next_run_str,
                 "prompt": t.prompt,
                 "command": t.command,
                 "provider": t.provider or (t.ai.engine if (t.ai and t.ai.engine) else None),
@@ -293,6 +315,7 @@ def get_config_api():
         "default_ai_engine": config.default_ai_engine,
         "log_level": config.log_level,
         "ui_port": config.ui_port,
+        "timezone": config.timezone,
         "tasks": all_tasks
     }
 
