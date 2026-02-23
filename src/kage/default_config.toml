@@ -14,13 +14,13 @@ timezone = "UTC"             # cronスケジュールなどで使うタイムゾ
 template = ["codex", "exec", "--full-auto", "{prompt}"]
 
 [commands.codex_json]
-template = ["codex", "exec", "--full-auto", "--output-format", "json", "{prompt}"]
+template = ["codex", "exec", "--full-auto", "{prompt}\n\nPlease output ONLY valid JSON without Markdown formatting."]
 
 [commands.claude]
 template = ["claude", "-p", "--dangerously-skip-permissions", "{prompt}"]
 
 [commands.claude_json]
-template = ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json", "{prompt}"]
+template = ["claude", "-p", "--dangerously-skip-permissions", "{prompt}\n\nPlease output ONLY valid JSON without Markdown formatting."]
 
 [commands.copilot]
 template = ["copilot", "-p", "{prompt}", "--allow-all-tools"]
@@ -29,7 +29,7 @@ template = ["copilot", "-p", "{prompt}", "--allow-all-tools"]
 template = ["gemini", "--approval-mode", "yolo", "{prompt}"]
 
 [commands.gemini_json]
-template = ["gemini", "--approval-mode", "yolo", "--output-format", "json", "{prompt}"]
+template = ["gemini", "--approval-mode", "yolo", "{prompt}\n\nPlease output ONLY valid JSON without Markdown formatting."]
 
 # --- プロバイダー定義 (command + parser の組み合わせ) ---
 
