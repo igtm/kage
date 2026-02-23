@@ -47,12 +47,11 @@ def project_list():
         table.add_row(str(proj_dir), str(task_count), status)
 
     console.print(table)
-    console.print(table)
     console.print(f"[dim]Source: {KAGE_PROJECTS_LIST}[/dim]")
 
 @project_app.command("remove")
 def project_remove(
-    path: str = typer.Argument(..., help="Project path to unregister")
+    path: Optional[str] = typer.Argument(None, help="Project path to unregister (defaults to current directory)")
 ):
     """Unregister a project from kage."""
     from .config import KAGE_PROJECTS_LIST
@@ -60,7 +59,11 @@ def project_remove(
     from pathlib import Path
 
     console = Console()
-    target = str(Path(path).resolve())
+    if path:
+        target_path = Path(path).resolve()
+    else:
+        target_path = Path.cwd().resolve()
+    target = str(target_path)
 
     if not KAGE_PROJECTS_LIST.exists():
         console.print("[yellow]No projects registered.[/yellow]")
@@ -292,8 +295,9 @@ def config(
 
 @app.command()
 def doctor():
-    """セットアップ状態を診断して潜在的な問題を表示する。"""
+    """Run setup diagnostics and show potential issues."""
     import shutil
+    import os
     from rich.console import Console
     from rich.table import Table
     from .config import (
@@ -301,8 +305,28 @@ def doctor():
         KAGE_PROJECTS_LIST, KAGE_DB_PATH
     )
 
+    is_ja = os.environ.get("LANG", "").startswith("ja")
+    
+    t_title = "セットアップ診断" if is_ja else "Setup Diagnostics"
+    t_chk = "チェック項目" if is_ja else "Check Item"
+    t_det = "詳細" if is_ja else "Details"
+    t_exists = "存在します" if is_ja else "Found"
+    t_run_onboard = "kage onboard を実行してください" if is_ja else "Run 'kage onboard'"
+    t_not_found = "が見つかりません" if is_ja else "not found"
+    t_only_default = "ライブラリデフォルトのみが使用されます" if is_ja else "Using library defaults"
+    t_proj_reg = "プロジェクト登録済み" if is_ja else "projects registered"
+    t_run_init = "kage onboard / init を実行してください" if is_ja else "Run 'kage onboard' or 'kage init'"
+    t_ai_not_set = "default_ai_engine が未設定" if is_ja else "default_ai_engine not set"
+    t_ai_hint = "AIタスクを使う場合: kage config default_ai_engine codex --global" if is_ja else "If using AI tasks: run 'kage config default_ai_engine codex --global'"
+    t_prov_undef = "が未定義" if is_ja else "is undefined"
+    t_prov_cmd_hint = "default_config.toml または config.toml に commands を追加してください" if is_ja else "Add commands to your config.toml"
+    t_prov_hint = "config.toml に providers セクションを追加するか、デフォルト設定を確認してください" if is_ja else "Check providers in your config or default_config.toml"
+    t_res = "結果:" if is_ja else "Result:"
+    t_err = "エラー" if is_ja else "errors"
+    t_warn = "警告" if is_ja else "warnings"
+
     console = Console()
-    console.print("\n[bold cyan]kage doctor[/bold cyan] — セットアップ診断\n")
+    console.print(f"\n[bold cyan]kage doctor[/bold cyan] — {t_title}\n")
 
     checks = []
 
@@ -315,43 +339,40 @@ def doctor():
     def fail(label, detail=""):
         checks.append(("[red]✘[/red]", label, detail))
 
-    # 1. ディレクトリ確認
+    # 1. Directory
     if KAGE_GLOBAL_DIR.exists():
-        ok("~/.kage/ ディレクトリ", str(KAGE_GLOBAL_DIR))
+        ok(f"~/.kage/ {'ディレクトリ' if is_ja else 'Directory'}", str(KAGE_GLOBAL_DIR))
     else:
-        fail("~/.kage/ ディレクトリが見つかりません", "kage onboard を実行してください")
+        fail(f"~/.kage/ {'ディレクトリ' if is_ja else 'Directory'} {t_not_found}", t_run_onboard)
 
-    # 2. ユーザー設定ファイル
+    # 2. Config
     if KAGE_CONFIG_PATH.exists():
-        ok("~/.kage/config.toml", "存在します")
+        ok("~/.kage/config.toml", t_exists)
     else:
-        warn("~/.kage/config.toml が見つかりません", "ライブラリデフォルトのみが使用されます")
+        warn(f"~/.kage/config.toml {t_not_found}", t_only_default)
 
-    # 3. データベース
+    # 3. DB
     if KAGE_DB_PATH.exists():
         ok("kage.db", str(KAGE_DB_PATH))
     else:
-        fail("kage.db が見つかりません", "kage onboard を実行してください")
+        fail(f"kage.db {t_not_found}", t_run_onboard)
 
-    # 4. projects.list
+    # 4. Projects
     if KAGE_PROJECTS_LIST.exists():
         lines = KAGE_PROJECTS_LIST.read_text().splitlines()
         count = len([l for l in lines if l.strip()])
-        ok("projects.list", f"{count} プロジェクト登録済み")
+        ok("projects.list", f"{count} {t_proj_reg}")
     else:
-        warn("projects.list が見つかりません", "kage onboard / init を実行してください")
+        warn(f"projects.list {t_not_found}", t_run_init)
 
-    # 5. default_ai_engine 設定確認（AIを使う場合のみ必要なので警告扱い）
+    # 5. Engine
     cfg = get_global_config()
     if cfg.default_ai_engine:
         ok("default_ai_engine", f'"{cfg.default_ai_engine}"')
     else:
-        warn(
-            "default_ai_engine が未設定",
-            "AIタスクを使う場合: kage config default_ai_engine codex --global"
-        )
+        warn(t_ai_not_set, t_ai_hint)
 
-    # 6. default engine の解決確認（設定されている場合のみ）
+    # 6. Provider Checks
     if cfg.default_ai_engine:
         prov = cfg.providers.get(cfg.default_ai_engine)
         if prov:
@@ -359,21 +380,14 @@ def doctor():
             if cmd_def:
                 ok(f"providers.{cfg.default_ai_engine}", f"→ commands.{prov.command}: {cmd_def.template[0]}")
             else:
-                warn(
-                    f"providers.{cfg.default_ai_engine}.command = '{prov.command}' が未定義",
-                    "default_config.toml または config.toml に commands を追加してください"
-                )
+                warn(f"providers.{cfg.default_ai_engine}.command = '{prov.command}' {t_prov_undef}", t_prov_cmd_hint)
         else:
-            warn(
-                f"providers.{cfg.default_ai_engine} が未定義",
-                "config.toml に providers セクションを追加するか、デフォルト設定を確認してください"
-            )
+            warn(f"providers.{cfg.default_ai_engine} {t_prov_undef}", t_prov_hint)
 
-    # 結果テーブル表示
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
     table.add_column("", width=2)
-    table.add_column("チェック項目", style="bold")
-    table.add_column("詳細", style="dim")
+    table.add_column(t_chk, style="bold")
+    table.add_column(t_det, style="dim")
     for icon, label, detail in checks:
         table.add_row(icon, label, detail)
 
@@ -381,7 +395,7 @@ def doctor():
     
     fails = [c for c in checks if "✘" in c[0]]
     warns = [c for c in checks if "⚠" in c[0]]
-    console.print(f"\n[bold]結果:[/bold] {len(checks)} 項目中 [red]{len(fails)} エラー[/red] / [yellow]{len(warns)} 警告[/yellow]")
+    console.print(f"\n[bold]{t_res}[/bold] {len(checks)} {('項目中' if is_ja else 'items,')} [red]{len(fails)} {t_err}[/red] / [yellow]{len(warns)} {t_warn}[/yellow]")
     if fails:
         raise typer.Exit(code=1)
 
