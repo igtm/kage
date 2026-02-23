@@ -27,22 +27,26 @@ echo "⚙️  対話的な初期設定を行います。"
 # デフォルト設定ファイルのパス
 CONFIG_PATH="$HOME/.kage/config.toml"
 
-# 現在の設定を取得（より安全な方法で）
-CURRENT_VAL=""
+# 強力なクリーンアップ: 以前のバグで混入した壊れた設定を強制的に除去
 if [ -f "$CONFIG_PATH" ]; then
-    # 単純な grep で default_ai_engine の行を探す
-    CURRENT_VAL=$(grep "default_ai_engine" "$CONFIG_PATH" | cut -d'=' -f2 | tr -d ' "' | tr -d "'")
+    # sed を使って default_ai_engine の行に "${" が含まれている場合はその行を削除し、デフォルトを書きやすくする
+    if grep -q "default_ai_engine.*\${" "$CONFIG_PATH"; then
+        echo "🧹 壊れた設定を検出しました。修復中..."
+        sed -i '/default_ai_engine.*${/d' "$CONFIG_PATH"
+    fi
 fi
 
-# 壊れた文字列が入っている場合は空にする
-if [[ "$CURRENT_VAL" == *"\${"* ]]; then
-    CURRENT_VAL=""
+# 現在の設定を取得
+CURRENT_VAL=""
+if [ -f "$CONFIG_PATH" ]; then
+    CURRENT_VAL=$(grep "default_ai_engine" "$CONFIG_PATH" | cut -d'=' -f2 | tr -d ' "' | tr -d "'")
 fi
 
 DEFAULT_VAL=${CURRENT_VAL:-"codex"}
 
 echo "AIエンジンを設定します (codex, claude, gemini, copilotなど)。"
-printf "使用するAIエンジンを入力してください [現在の設定: %s]: " "$DEFAULT_VAL"
+# read の前に明示的にエコー
+echo -n "使用するAIエンジンを入力してください [現在の設定: $DEFAULT_VAL]: "
 read INPUT_ENGINE
 FINAL_ENGINE=${INPUT_ENGINE:-$DEFAULT_VAL}
 
