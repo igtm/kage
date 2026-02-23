@@ -1,5 +1,7 @@
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel
+
 import uvicorn
 import sqlite3
 import webbrowser
@@ -117,6 +119,103 @@ INDEX_HTML = """
             max-height: 300px;
         }
         .config-label { color: var(--accent-color); font-weight: bold; margin-bottom: 5px; display: block; }
+
+        /* Chat UI Styles */
+        #chat-section {
+            display: none;
+            flex-direction: column;
+            height: 70vh;
+        }
+        #chat-section.active {
+            display: flex;
+        }
+        #chat-history {
+            flex-grow: 1;
+            overflow-y: auto;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .message {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            line-height: 1.5;
+        }
+        .message.user {
+            align-self: flex-end;
+            background-color: var(--accent-color);
+            color: #0d1117;
+            border-bottom-right-radius: 0;
+        }
+        .message.assistant {
+            align-self: flex-start;
+            background-color: #21262d;
+            border: 1px solid var(--border-color);
+            border-bottom-left-radius: 0;
+        }
+        .message.error {
+            background-color: rgba(248, 81, 73, 0.2);
+            color: var(--error-color);
+            border: 1px solid var(--error-color);
+        }
+        .message pre {
+            background-color: #0d1117;
+            margin-top: 10px;
+            max-height: 500px;
+        }
+        .chat-input-container {
+            display: flex;
+            gap: 10px;
+        }
+        #chat-input {
+            flex-grow: 1;
+            background-color: #0d1117;
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+            font-family: inherit;
+            resize: none;
+            height: 50px;
+        }
+        #chat-input:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+        #chat-submit {
+            background-color: var(--success-color);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 0 20px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        #chat-submit:hover {
+            opacity: 0.8;
+        }
+        #chat-submit:disabled {
+            background-color: var(--border-color);
+            color: var(--secondary-text);
+            cursor: not-allowed;
+        }
+        .loading-dots:after {
+            content: '.';
+            animation: dots 1.5s steps(5, end) infinite;
+        }
+        @keyframes dots {
+            0%, 20% { color: rgba(0,0,0,0); text-shadow: .25em 0 0 rgba(0,0,0,0), .5em 0 0 rgba(0,0,0,0);}
+            40% { color: inherit; text-shadow: .25em 0 0 rgba(0,0,0,0), .5em 0 0 rgba(0,0,0,0);}
+            60% { text-shadow: .25em 0 0 inherit, .5em 0 0 rgba(0,0,0,0);}
+            80%, 100% { text-shadow: .25em 0 0 inherit, .5em 0 0 inherit;}
+        }
     </style>
 </head>
 <body>
@@ -127,6 +226,7 @@ INDEX_HTML = """
     <div class="tabs">
         <div class="tab active" data-section="logs">Execution Logs</div>
         <div class="tab" data-section="config">Settings & Task List</div>
+        <div class="tab" data-section="chat">AI Chat</div>
     </div>
 
     <div class="container">
@@ -136,6 +236,18 @@ INDEX_HTML = """
         
         <div id="config-section" class="section">
             <div id="config-container">Loading configuration...</div>
+        </div>
+        
+        <div id="chat-section" class="section">
+            <div id="chat-history">
+                <div class="message assistant">
+                    Hi! I'm the kage AI assistant. I can help you configure tasks, explain logs, or execute commands using your default AI engine. What would you like to do?
+                </div>
+            </div>
+            <div class="chat-input-container">
+                <textarea id="chat-input" placeholder="Ask AI to create a task or check config... (Shift+Enter for new line, Enter to send)"></textarea>
+                <button id="chat-submit">Send</button>
+            </div>
         </div>
     </div>
 
@@ -247,10 +359,81 @@ INDEX_HTML = """
                 fetchLogs();
             }
         }, 5000);
+
+        // Chat Logic
+        const chatInput = document.getElementById('chat-input');
+        const chatSubmit = document.getElementById('chat-submit');
+        const chatHistory = document.getElementById('chat-history');
+
+        function appendMessage(role, content, isHtml=false) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${role}`;
+            if (isHtml) {
+                msgDiv.innerHTML = content;
+            } else {
+                msgDiv.textContent = content;
+            }
+            chatHistory.appendChild(msgDiv);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+            return msgDiv;
+        }
+
+        async function sendChatMessage() {
+            const text = chatInput.value.trim();
+            if (!text) return;
+
+            chatInput.value = '';
+            chatInput.disabled = true;
+            chatSubmit.disabled = true;
+            appendMessage('user', text);
+
+            const loadingMsg = appendMessage('assistant', '<span class="loading-dots">Thinking</span>', true);
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+
+                const result = await response.json();
+                chatHistory.removeChild(loadingMsg);
+                
+                if (response.ok) {
+                    let htmlRes = '';
+                    if (result.stdout) htmlRes += `<pre>${result.stdout.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+                    if (result.stderr) htmlRes += `<pre style="color:var(--error-color)">${result.stderr.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+                    if (!result.stdout && !result.stderr) htmlRes = "Done with empty output.";
+                    appendMessage('assistant', htmlRes, true);
+                } else {
+                    appendMessage('error', result.error || "Unknown error occurred.");
+                }
+
+            } catch (err) {
+                chatHistory.removeChild(loadingMsg);
+                appendMessage('error', "Network error or server down.");
+            } finally {
+                chatInput.disabled = false;
+                chatSubmit.disabled = false;
+                chatInput.focus();
+            }
+        }
+
+        chatSubmit.addEventListener('click', sendChatMessage);
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendChatMessage();
+            }
+        });
+
     </script>
 </body>
 </html>
 """
+
+class ChatRequest(BaseModel):
+    message: str
 
 @app.get("/", response_class=HTMLResponse)
 def root():
@@ -318,6 +501,56 @@ def get_config_api():
         "timezone": config.timezone,
         "tasks": all_tasks
     }
+
+@app.post("/api/chat")
+def handle_chat(req: ChatRequest):
+    import subprocess
+    import os
+    from pathlib import Path
+    
+    config = get_global_config()
+    engine_name = config.default_ai_engine
+    if not engine_name:
+        return JSONResponse(status_code=400, content={"error": "default_ai_engine is not set in global config."})
+        
+    provider = config.providers.get(engine_name)
+    if not provider:
+        return JSONResponse(status_code=400, content={"error": f"Provider '{engine_name}' is not defined in providers."})
+        
+    cmd_def = config.commands.get(provider.command)
+    if not cmd_def:
+        return JSONResponse(status_code=400, content={"error": f"Command template '{provider.command}' is not defined."})
+        
+    template = cmd_def.template
+    cmd = [part.replace("{prompt}", req.message) for part in template]
+    
+    # Resolve the executable via env_path if set
+    env = os.environ.copy()
+    if config.env_path:
+        env["PATH"] = config.env_path
+        
+    import shutil
+    if cmd and cmd[0]:
+        exe_path = shutil.which(cmd[0], path=env.get("PATH"))
+        if exe_path:
+            cmd[0] = exe_path
+            
+    try:
+        # Run subprocess blockingly and capture output
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(Path.cwd()),
+            env=env
+        )
+        return {
+            "stdout": res.stdout,
+            "stderr": res.stderr,
+            "returncode": res.returncode
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 def open_browser(url: str):
     time.sleep(1) # wait for server to start
