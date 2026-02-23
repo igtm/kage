@@ -1,5 +1,5 @@
 import typer
-from . import config, daemon, db
+from . import config as config_mod, daemon, db
 
 app = typer.Typer(
     help="kage - AI Native Cron Task Runner",
@@ -43,7 +43,7 @@ def daemon_restart():
 def onboard():
     """Initial setup for kage: Create ~/.kage and default configuration."""
     typer.echo("Initializing kage onboard...")
-    config.setup_global()
+    config_mod.setup_global()
     daemon.install()
     db.init_db()
     typer.echo("Successfully set up global configuration and database.")
@@ -52,7 +52,7 @@ def onboard():
 def init():
     """Initialize a kage project in the current directory."""
     typer.echo("Initializing kage project...")
-    config.setup_local()
+    config_mod.setup_local()
     typer.echo("Project initialized.")
 
 @app.command()
@@ -100,10 +100,9 @@ def ui():
     """Launch the web UI dashboard."""
     from .config import get_global_config
     from .web import start_ui
-    config = get_global_config()
-    typer.echo(f"Starting web UI on port {config.ui_port}...")
-    typer.echo(f"Starting web UI on port {config.ui_port}...")
-    start_ui(port=config.ui_port)
+    cfg = get_global_config()
+    typer.echo(f"Starting web UI on port {cfg.ui_port}...")
+    start_ui(port=cfg.ui_port)
 
 @app.command()
 def config(
