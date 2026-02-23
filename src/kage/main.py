@@ -47,7 +47,35 @@ def project_list():
         table.add_row(str(proj_dir), str(task_count), status)
 
     console.print(table)
+    console.print(table)
     console.print(f"[dim]Source: {KAGE_PROJECTS_LIST}[/dim]")
+
+@project_app.command("remove")
+def project_remove(
+    path: str = typer.Argument(..., help="Project path to unregister")
+):
+    """Unregister a project from kage."""
+    from .config import KAGE_PROJECTS_LIST
+    from rich.console import Console
+    from pathlib import Path
+
+    console = Console()
+    target = str(Path(path).resolve())
+
+    if not KAGE_PROJECTS_LIST.exists():
+        console.print("[yellow]No projects registered.[/yellow]")
+        return
+
+    lines = KAGE_PROJECTS_LIST.read_text().splitlines()
+    new_lines = [l for l in lines if l.strip() and str(Path(l.strip()).resolve()) != target]
+
+    if len(new_lines) == len([l for l in lines if l.strip()]):
+        console.print(f"[yellow]Project not found in registry: {target}[/yellow]")
+        return
+
+    KAGE_PROJECTS_LIST.write_text("\n".join(new_lines) + ("\n" if new_lines else ""))
+    console.print(f"[green]✔ Removed:[/green] {target}")
+
 
 @task_app.command("list")
 def task_list(
