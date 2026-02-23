@@ -66,7 +66,7 @@ fi
 
 # 2. インストール
 ui_info "$MSG_INSTALLING"
-uv tool install kage-ai --reinstall -q
+uv tool install kage-ai --reinstall --force -q
 ui_success "$MSG_INSTALLED"
 echo ""
 
