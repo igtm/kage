@@ -165,17 +165,17 @@ def doctor():
     else:
         warn("projects.list が見つかりません", "kage onboard / init を実行してください")
 
-    # 5. default_ai_engine 設定確認
+    # 5. default_ai_engine 設定確認（AIを使う場合のみ必要なので警告扱い）
     cfg = get_global_config()
     if cfg.default_ai_engine:
         ok("default_ai_engine", f'"{cfg.default_ai_engine}"')
     else:
-        fail(
+        warn(
             "default_ai_engine が未設定",
-            "~/.kage/config.toml に default_ai_engine = \"codex\" を追加してください"
+            "AIタスクを使う場合: kage config default_ai_engine codex --global"
         )
 
-    # 6. default engine の解決確認
+    # 6. default engine の解決確認（設定されている場合のみ）
     if cfg.default_ai_engine:
         prov = cfg.providers.get(cfg.default_ai_engine)
         if prov:
@@ -183,23 +183,15 @@ def doctor():
             if cmd_def:
                 ok(f"providers.{cfg.default_ai_engine}", f"→ commands.{prov.command}: {cmd_def.template[0]}")
             else:
-                fail(
-                    f"providers.{cfg.default_ai_engine}.command = '{prov.command}' が commands に存在しません",
+                warn(
+                    f"providers.{cfg.default_ai_engine}.command = '{prov.command}' が未定義",
                     "default_config.toml または config.toml に commands を追加してください"
                 )
         else:
-            fail(
-                f"providers.{cfg.default_ai_engine} が定義されていません",
-                "config.toml に providers セクションを追加してください"
+            warn(
+                f"providers.{cfg.default_ai_engine} が未定義",
+                "config.toml に providers セクションを追加するか、デフォルト設定を確認してください"
             )
-
-    # 7. 利用可能なCLIツール確認
-    for cli in ["codex", "claude", "copilot", "gemini", "jq"]:
-        path = shutil.which(cli)
-        if path:
-            ok(f"CLI: {cli}", path)
-        else:
-            warn(f"CLI: {cli}", "PATH上に見つかりません（使用しない場合は問題なし）")
 
     # 結果テーブル表示
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
