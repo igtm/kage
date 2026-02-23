@@ -1,6 +1,7 @@
 import typer
 from . import config as config_mod, daemon, db
 from typing import Optional
+from importlib import metadata
 
 app = typer.Typer(
     help="kage - AI Native Cron Task Runner",
@@ -15,6 +16,36 @@ app.add_typer(task_app, name="task")
 
 project_app = typer.Typer(help="Manage registered projects")
 app.add_typer(project_app, name="project")
+
+
+def _resolve_version() -> str:
+    for pkg in ("kage-ai", "kage"):
+        try:
+            return metadata.version(pkg)
+        except metadata.PackageNotFoundError:
+            continue
+    return "unknown"
+
+
+def _version_callback(value: bool):
+    if value:
+        typer.echo(_resolve_version())
+        raise typer.Exit()
+
+
+@app.callback()
+def app_callback(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help="Show version and exit.",
+        is_eager=True,
+        callback=_version_callback,
+    )
+):
+    """kage CLI."""
+    return None
 
 @project_app.command("list")
 def project_list():
@@ -430,6 +461,12 @@ def doctor():
     console.print(f"\n[bold]{t_res}[/bold] {len(checks)} {('項目中' if is_ja else 'items,')} [red]{len(fails)} {t_err}[/red] / [yellow]{len(warns)} {t_warn}[/yellow]")
     if fails:
         raise typer.Exit(code=1)
+
+
+@app.command("version")
+def version():
+    """Show kage version."""
+    typer.echo(_resolve_version())
 
 if __name__ == "__main__":
     app()

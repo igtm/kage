@@ -110,13 +110,14 @@ wheels = [
 ]
 
 [[package]]
-name = "kage"
-version = "0.0.1"
+name = "kage-ai"
+version = "0.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "croniter" },
     { name = "fastapi" },
     { name = "pydantic" },
+    { name = "rich" },
     { name = "tomlkit" },
     { name = "typer" },
     { name = "tzdata" },
@@ -134,6 +135,7 @@ requires-dist = [
     { name = "croniter", specifier = ">=6.0.0" },
     { name = "fastapi", specifier = ">=0.131.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "rich", specifier = ">=14.2.0" },
     { name = "tomlkit", specifier = ">=0.14.0" },
     { name = "typer", specifier = ">=0.24.1" },
     { name = "tzdata", specifier = ">=2025.3" },
