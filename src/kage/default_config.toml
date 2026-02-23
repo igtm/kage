@@ -1,0 +1,67 @@
+# kage デフォルト設定（ライブラリ同梱）
+# ~/.kage/config.toml や .kage/config.toml で上書き可能
+# default_ai_engine は意図的に未定義。~/.kage/config.toml または .kage/config.toml で指定すること。
+
+log_level = "INFO"
+ui_port = 8484
+
+# --- CLI コマンドテンプレート定義 ---
+# {prompt} がプロンプト文字列に置換される
+
+[commands.codex]
+template = ["codex", "exec", "--full-auto", "{prompt}"]
+
+[commands.codex_json]
+template = ["codex", "exec", "--full-auto", "--output-format", "json", "{prompt}"]
+
+[commands.claude]
+template = ["claude", "-p", "--dangerously-skip-permissions", "{prompt}"]
+
+[commands.claude_json]
+template = ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json", "{prompt}"]
+
+[commands.copilot]
+template = ["copilot", "-p", "{prompt}", "--allow-all-tools"]
+
+[commands.gemini]
+template = ["gemini", "--approval-mode", "yolo", "{prompt}"]
+
+[commands.gemini_json]
+template = ["gemini", "--approval-mode", "yolo", "--output-format", "json", "{prompt}"]
+
+# --- プロバイダー定義 (command + parser の組み合わせ) ---
+
+[providers.codex]
+command = "codex"
+parser = "raw"
+parser_args = ""
+
+[providers.codex_json]
+command = "codex_json"
+parser = "jq"
+parser_args = ".output"
+
+[providers.claude]
+command = "claude"
+parser = "raw"
+parser_args = ""
+
+[providers.claude_json]
+command = "claude_json"
+parser = "jq"
+parser_args = ".result"
+
+[providers.copilot]
+command = "copilot"
+parser = "raw"
+parser_args = ""
+
+[providers.gemini]
+command = "gemini"
+parser = "raw"
+parser_args = ""
+
+[providers.gemini_json]
+command = "gemini_json"
+parser = "jq"
+parser_args = ".output"
