@@ -24,7 +24,7 @@ if $IS_JA; then
     MSG_TITLE="🌑 kage - AI Native Cron Task Runner インストーラー"
     MSG_NO_UV="'uv' が見つかりません。"
     MSG_NO_UV_HINT="  → https://github.com/astral-sh/uv からインストールしてください。"
-    MSG_INSTALLING="kage を GitHub からインストール中..."
+    MSG_INSTALLING="kage-ai を PyPI からインストール中..."
     MSG_INSTALLED="kage のインストール完了"
     MSG_ONBOARD="kage onboard を実行中..."
     MSG_DOCTOR="セットアップ診断を実行中..."
@@ -39,7 +39,7 @@ else
     MSG_TITLE="🌑 kage - AI Native Cron Task Runner Installer"
     MSG_NO_UV="'uv' not found."
     MSG_NO_UV_HINT="  → Install it from https://github.com/astral-sh/uv"
-    MSG_INSTALLING="Installing kage from GitHub..."
+    MSG_INSTALLING="Installing kage-ai from PyPI..."
     MSG_INSTALLED="kage installed successfully"
     MSG_ONBOARD="Running kage onboard..."
     MSG_DOCTOR="Running setup diagnostics..."
@@ -66,7 +66,7 @@ fi
 
 # 2. インストール
 ui_info "$MSG_INSTALLING"
-uv tool install git+https://github.com/igtm/kage.git --reinstall -q
+uv tool install kage-ai --reinstall -q
 ui_success "$MSG_INSTALLED"
 echo ""
 

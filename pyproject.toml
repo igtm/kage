@@ -1,5 +1,5 @@
 [project]
-name = "kage"
+name = "kage-ai"
 version = "0.0.1"
 description = "AI-native cron task runner for per-project scheduled prompts and commands."
 readme = "README.md"

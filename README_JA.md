@@ -25,7 +25,7 @@ curl -sSL https://raw.githubusercontent.com/igtm/kage/main/install.sh | bash
 または PyPI からインストールできます：
 
 ```bash
-pip install kage
+pip install kage-ai
 ```
 
 `uv` を使ってインストールすることも可能です：
