@@ -255,7 +255,7 @@ def logs(limit: int = 10):
     conn = sqlite3.connect(KAGE_DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT run_at, project_path, task_name, status, stderr
+        SELECT run_at, project_path, task_name, status, stdout, stderr
         FROM executions 
         ORDER BY run_at DESC LIMIT ?
     ''', (limit,))
@@ -267,14 +267,41 @@ def logs(limit: int = 10):
     table.add_column("Project")
     table.add_column("Task")
     table.add_column("Status")
-    table.add_column("Error", style="dim")
+    table.add_column("Output (stdout / stderr)", style="dim")
     
     for row in rows:
-        run_at, proj, name, status, stderr_val = row
-        err_out = (stderr_val or "").strip()
-        if len(err_out) > 50:
-            err_out = err_out[:47] + "..."
-        table.add_row(str(run_at), str(proj), str(name), str(status), err_out)
+        run_at, proj, name, status, stdout_val, stderr_val = row
+        
+        # 整形: "2026-02-23T18:28:01.032891" -> "02/23 18:28:01"
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(run_at)
+            run_at_str = dt.strftime("%m/%d %H:%M:%S")
+        except ValueError:
+            run_at_str = run_at[:19].replace("T", " ")
+
+        # Output 整形
+        out_str = []
+        if stdout_val and str(stdout_val).strip():
+            clean_out = str(stdout_val).strip().replace('\n', ' ').replace('\r', '')
+            out_str.append(f"[STDOUT] {clean_out[:40]}")
+        if stderr_val and str(stderr_val).strip():
+            clean_err = str(stderr_val).strip().replace('\n', ' ').replace('\r', '')
+            out_str.append(f"[STDERR] {clean_err[:40]}")
+            
+        final_out = " | ".join(out_str)
+        if len(final_out) > 65:
+            final_out = final_out[:62] + "..."
+            
+        # ステータスの色付け
+        status_colored = f"[green]{status}[/green]" if status == "SUCCESS" else f"[red]{status}[/red]"
+        
+        # プロジェクトパスの短縮 (最後の2ディレクトリなどを表示)
+        from pathlib import Path
+        p = Path(proj)
+        proj_str = f".../{p.parent.name}/{p.name}" if len(p.parts) > 2 else proj
+
+        table.add_row(run_at_str, proj_str, str(name), status_colored, final_out)
         
     console.print(table)
     conn.close()
