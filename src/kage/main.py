@@ -255,7 +255,7 @@ def logs(limit: int = 10):
     conn = sqlite3.connect(KAGE_DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT run_at, project_path, task_name, status 
+        SELECT run_at, project_path, task_name, status, stderr
         FROM executions 
         ORDER BY run_at DESC LIMIT ?
     ''', (limit,))
@@ -267,9 +267,14 @@ def logs(limit: int = 10):
     table.add_column("Project")
     table.add_column("Task")
     table.add_column("Status")
+    table.add_column("Error", style="dim")
     
     for row in rows:
-        table.add_row(*[str(x) for x in row])
+        run_at, proj, name, status, stderr_val = row
+        err_out = (stderr_val or "").strip()
+        if len(err_out) > 50:
+            err_out = err_out[:47] + "..."
+        table.add_row(str(run_at), str(proj), str(name), str(status), err_out)
         
     console.print(table)
     conn.close()

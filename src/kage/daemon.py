@@ -218,8 +218,17 @@ def _stop_macos_launchd():
 # --- Public API ---
 
 def install():
+    typer.echo("Installing kage daemon...")
+
+    # PATHを保存して、cron実行時に復元できるようにする
+    from .config import set_config_value
+    current_path = os.environ.get("PATH", "")
+    if current_path:
+        set_config_value("env_path", current_path, is_global=True)
+        typer.echo("Saved current PATH to global config (env_path).")
+
     plat = get_platform()
-    if plat == "linux":
+    if plat.startswith("linux"):
         _setup_linux_cron()
     elif plat == "macos":
         _setup_macos_launchd()

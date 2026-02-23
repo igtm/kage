@@ -26,6 +26,7 @@ class GlobalConfig(BaseModel):
     ui_port: int = 8484
     daemon_interval_minutes: int = 1  # cron/launchd の起動間隔（分単位）
     timezone: str = "UTC"  # cron式のタイムゾーン評価基準
+    env_path: Optional[str] = None  # cron実行時に復元するPATH環境変数
     commands: dict[str, CommandDef] = {}
     providers: dict[str, ProviderConfig] = {}
 

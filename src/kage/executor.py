@@ -1,4 +1,5 @@
 import subprocess
+import os
 from pathlib import Path
 from .parser import TaskDef
 from .db import log_execution
@@ -64,12 +65,25 @@ def execute_task(project_dir: Path, task: TaskDef):
 
     try:
         print(f"Executing task '{task.name}' in {project_dir}")
+        env = os.environ.copy()
+        if global_config.env_path:
+            env["PATH"] = global_config.env_path
+            
+        # cmd[0] を環境変数のPATHに基づいて絶対パスに変換する
+        import shutil
+        if cmd and cmd[0]:
+            exe_path = shutil.which(cmd[0], path=env.get("PATH"))
+            if exe_path:
+                cmd[0] = exe_path
+
         result = subprocess.run(
             cmd,
             cwd=project_dir,
             capture_output=True,
             text=True,
+            env=env
         )
+
         if task.prompt and parser_type == "jq" and p_args:
             try:
                 jq_cmd = ["jq", "-r", p_args]
@@ -78,7 +92,9 @@ def execute_task(project_dir: Path, task: TaskDef):
                     input=result.stdout,
                     capture_output=True,
                     text=True,
+                    env=env
                 )
+
                 if jq_result.returncode == 0:
                     result.stdout = jq_result.stdout
                 else:
