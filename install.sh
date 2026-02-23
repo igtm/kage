@@ -44,7 +44,8 @@ DEFAULT_VAL="codex"
 
 echo "AIエンジンを設定します (codex, claude, gemini, copilotなど)。"
 echo -n "使用するAIエンジンを入力してください [デフォルト: $DEFAULT_VAL]: "
-read INPUT_ENGINE
+# curl | bash でも対話入力できるよう /dev/tty から読み込む
+read INPUT_ENGINE < /dev/tty
 FINAL_ENGINE=${INPUT_ENGINE:-$DEFAULT_VAL}
 
 if [ -n "$FINAL_ENGINE" ]; then
