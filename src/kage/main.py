@@ -13,6 +13,42 @@ app.add_typer(daemon_app, name="daemon")
 task_app = typer.Typer(help="Manage kage tasks")
 app.add_typer(task_app, name="task")
 
+project_app = typer.Typer(help="Manage registered projects")
+app.add_typer(project_app, name="project")
+
+@project_app.command("list")
+def project_list():
+    """List all registered projects."""
+    from .scheduler import get_projects
+    from .parser import load_project_tasks
+    from .config import KAGE_PROJECTS_LIST
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    projects = get_projects()
+
+    if not projects:
+        console.print(f"[yellow]No projects registered.[/yellow]")
+        console.print(f"Run [bold]kage init[/bold] in a project directory to register it.")
+        console.print(f"List file: {KAGE_PROJECTS_LIST}")
+        return
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Project Path", style="bold")
+    table.add_column("Tasks", justify="right")
+    table.add_column("Status")
+
+    for proj_dir in sorted(projects):
+        tasks = load_project_tasks(proj_dir)
+        task_count = len(tasks)
+        exists = proj_dir.exists()
+        status = "[green]✔ OK[/green]" if exists else "[red]✘ Directory not found[/red]"
+        table.add_row(str(proj_dir), str(task_count), status)
+
+    console.print(table)
+    console.print(f"[dim]Source: {KAGE_PROJECTS_LIST}[/dim]")
+
 @task_app.command("list")
 def task_list(
     project: Optional[str] = typer.Option(None, "--project", "-p", help="Filter by project path")
