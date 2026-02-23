@@ -13,7 +13,6 @@ if ! command -v uv &> /dev/null; then
 fi
 
 # 2. ツールとしてのインストール
-# リポジトリをクローンせずに実行する場合、GitHubのURLから直接インストール
 echo "📦 kage を GitHub から直接インストール中..."
 uv tool install git+https://github.com/igtm/kage.git --reinstall
 
@@ -25,16 +24,30 @@ kage onboard
 echo ""
 echo "⚙️  対話的な初期設定を行います。"
 
-# Default AI Engine の現在の設定を確認
-# doctor がエラーでも設定だけは抜く（未設定なら空）
-CURRENT_ENGINE=$(kage config default_ai_engine --global 2>/dev/null | grep -oP '= \K.*' || echo "")
-DEFAULT_VAL=${CURRENT_ENGINE:-"codex"}
+# デフォルト設定ファイルのパス
+CONFIG_PATH="$HOME/.kage/config.toml"
+
+# 現在の設定を取得（より安全な方法で）
+CURRENT_VAL=""
+if [ -f "$CONFIG_PATH" ]; then
+    # 単純な grep で default_ai_engine の行を探す
+    CURRENT_VAL=$(grep "default_ai_engine" "$CONFIG_PATH" | cut -d'=' -f2 | tr -d ' "' | tr -d "'")
+fi
+
+# 壊れた文字列が入っている場合は空にする
+if [[ "$CURRENT_VAL" == *"\${"* ]]; then
+    CURRENT_VAL=""
+fi
+
+DEFAULT_VAL=${CURRENT_VAL:-"codex"}
 
 echo "AIエンジンを設定します (codex, claude, gemini, copilotなど)。"
-read -p "使用するAIエンジンを入力してください [現在の設定: $DEFAULT_VAL]: " INPUT_ENGINE
+printf "使用するAIエンジンを入力してください [現在の設定: %s]: " "$DEFAULT_VAL"
+read INPUT_ENGINE
 FINAL_ENGINE=${INPUT_ENGINE:-$DEFAULT_VAL}
 
 if [ -n "$FINAL_ENGINE" ]; then
+    # kage config コマンドを使用して確実に書き込む
     kage config default_ai_engine "$FINAL_ENGINE" --global
 fi
 
