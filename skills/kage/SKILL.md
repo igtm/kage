@@ -20,15 +20,22 @@ description: AI native cron task runner. Allows scheduling AI prompts and shell 
 ### Setup & Project Management
 - `kage onboard`: Initialize global directory (`~/.kage/`) and register OS daemon.
 - `kage init`: Initialize current directory as a kage project, creating `.kage/tasks/sample.toml`.
+- `kage project list`: Show registered projects and task counts.
+- `kage project remove [path]`: Unregister a project.
 - `kage doctor`: Diagnose setup health, configuration validity, and CLI tool availability.
+- `kage config <key> <value> [--global]`: Update config values.
 
 ### Execution & Monitoring
 - `kage run`: Manually trigger all scheduled tasks for registered projects (used by daemon).
 - `kage ui`: Start the web-based dashboard.
 - `kage logs`: View the recent execution history in the terminal.
+- `kage task list`: Show all tasks across registered projects.
+- `kage task show <name>`: Show a task's resolved configuration.
+- `kage task run <name>`: Run one task immediately (ignore schedule).
 
 ### Daemon Control
 - `kage daemon install`: Register the background runner to the OS.
+- `kage daemon remove`: Unregister the background runner from the OS.
 - `kage daemon status`: Check if the background runner is active.
 - `kage daemon start/stop/restart`: Control the background runner without uninstalling.
 
@@ -37,7 +44,7 @@ description: AI native cron task runner. Allows scheduling AI prompts and shell 
 Tasks are defined in TOML files. A typical task looks like this:
 
 ```toml
-[task.my_task]
+[task_my_task]
 name = "Daily Report"
 cron = "0 9 * * *"
 prompt = "Analyze the logs in ./logs/ and summarize the key findings."
@@ -60,3 +67,12 @@ Important settings:
 - `ui_port = 8484`: Dashboard port.
 - `[providers.NAME]`: Custom AI provider definitions.
 - `[commands.NAME]`: Custom CLI command templates.
+
+## Release Notes
+
+- Current package version: `0.0.1`
+- Recommended release flow:
+  1. Update `pyproject.toml` version and docs.
+  2. `uv build`
+  3. `gh release create v<version> --generate-notes`
+  4. Upload to PyPI with token auth (`__token__`).

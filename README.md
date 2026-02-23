@@ -22,7 +22,13 @@ The easiest way to install kage is via the interactive installer:
 curl -sSL https://raw.githubusercontent.com/igtm/kage/main/install.sh | bash
 ```
 
-Alternatively, you can install manually using `uv`:
+Or install from PyPI:
+
+```bash
+pip install kage
+```
+
+Alternatively, install with `uv`:
 
 ```bash
 uv tool install git+https://github.com/igtm/kage.git
@@ -50,20 +56,20 @@ kage onboard
    ```
    This creates `.kage/tasks/sample.toml`.
 
-## Task Defintion Samples
+## Task Definition Samples
 
 Define tasks in `.toml` files under `.kage/tasks/`.
 
 ```toml
 # Auto-refactor using AI
-[task.refactor]
+[task_refactor]
 name = "Daily Refactor"
 cron = "0 3 * * *"
 prompt = "Please clean up the code in src/"
 provider = "claude"
 
 # Classification with JSON/JQ parsing
-[task.labels]
+[task_labels]
 name = "Ticket Labeling"
 cron = "*/30 * * * *"
 prompt = "Classify this issue as JSON '{\"label\":\"...\"}': 'Cannot login'"
@@ -71,7 +77,7 @@ provider = "codex_json"
 parser_args = ".label"
 
 # Standard Shell Command
-[task.cleanup]
+[task_cleanup]
 name = "Log Cleanup"
 cron = "0 0 * * 0"
 command = "rm -rf ./logs/*.log"
@@ -90,6 +96,26 @@ shell = "bash"
 - `kage ui`: Launch web dashboard (default: [http://localhost:8484](http://localhost:8484)).
 - `kage logs`: View execution history.
 - `kage run`: Force run all scheduled tasks (normally executed by cron/launchd).
+- `kage task list`: List all tasks across all registered projects.
+- `kage task show <name>`: Show details for one task.
+- `kage task run <name>`: Run one task immediately.
+- `kage project list`: List registered projects.
+- `kage project remove [path]`: Unregister a project.
+
+## Release / Publish
+
+```bash
+# 1) Build package
+uv build
+
+# 2) Create release (example: v0.0.1)
+gh release create v0.0.1 --title "kage v0.0.1" --generate-notes
+
+# 3) Publish to PyPI (token auth)
+TWINE_USERNAME=__token__ \
+TWINE_PASSWORD='<pypi-token>' \
+uvx twine upload dist/*
+```
 
 ## License
 

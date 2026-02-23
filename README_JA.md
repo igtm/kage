@@ -22,7 +22,13 @@
 curl -sSL https://raw.githubusercontent.com/igtm/kage/main/install.sh | bash
 ```
 
-または、`uv` を使って手動でインストールすることも可能です：
+または PyPI からインストールできます：
+
+```bash
+pip install kage
+```
+
+`uv` を使ってインストールすることも可能です：
 
 ```bash
 uv tool install git+https://github.com/igtm/kage.git
@@ -56,14 +62,14 @@ kage onboard
 
 ```toml
 # AIを使った自動リファクタリング
-[task.refactor]
+[task_refactor]
 name = "Daily Refactor"
 cron = "0 3 * * *"
 prompt = "src/ 内のコードを綺麗にしてください"
 provider = "claude"
 
 # JSON出力のパース例
-[task.labels]
+[task_labels]
 name = "Ticket Labeling"
 cron = "*/30 * * * *"
 prompt = "Issueを分類して JSON '{\"label\":\"...\"}' で返して: 'ログイン不可'"
@@ -71,7 +77,7 @@ provider = "codex_json"
 parser_args = ".label"
 
 # 標準のシェルコマンド
-[task.cleanup]
+[task_cleanup]
 name = "Log Cleanup"
 cron = "0 0 * * 0"
 command = "rm -rf ./logs/*.log"
@@ -90,6 +96,26 @@ shell = "bash"
 - `kage ui`: Webダッシュボードの起動（デフォルト: [http://localhost:8484](http://localhost:8484)）。
 - `kage logs`: ターミナルで実行履歴を表示。
 - `kage run`: スケジュールされたタスクを即時一括実行（通常は cron/launchd から呼ばれます）。
+- `kage task list`: すべての登録タスク一覧を表示。
+- `kage task show <name>`: 指定タスクの詳細を表示。
+- `kage task run <name>`: 指定タスクを即時実行。
+- `kage project list`: 登録済みプロジェクト一覧を表示。
+- `kage project remove [path]`: プロジェクト登録を解除。
+
+## リリース / 公開
+
+```bash
+# 1) パッケージをビルド
+uv build
+
+# 2) GitHub Release を作成（例: v0.0.1）
+gh release create v0.0.1 --title "kage v0.0.1" --generate-notes
+
+# 3) PyPI に公開（トークン認証）
+TWINE_USERNAME=__token__ \
+TWINE_PASSWORD='<pypi-token>' \
+uvx twine upload dist/*
+```
 
 ## ライセンス
 
