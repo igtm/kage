@@ -48,6 +48,33 @@ INDEX_HTML = """
             align-items: center;
             margin-bottom: 2rem;
         }
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .github-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            border: 1px solid var(--border-color);
+            border-radius: 999px;
+            color: var(--text-color);
+            transition: border-color 0.2s, color 0.2s, background-color 0.2s;
+            text-decoration: none;
+        }
+        .github-link:hover {
+            color: var(--accent-color);
+            border-color: var(--accent-color);
+            background-color: rgba(88, 166, 255, 0.08);
+        }
+        .github-link svg {
+            width: 18px;
+            height: 18px;
+            fill: currentColor;
+        }
         h1 {
             color: var(--accent-color);
             margin: 0;
@@ -221,6 +248,13 @@ INDEX_HTML = """
 <body>
     <div class="header">
         <h1>kage Dashboard 🌑</h1>
+        <div class="header-right">
+            <a class="github-link" href="https://github.com/igtm/kage" target="_blank" rel="noopener noreferrer" aria-label="kage GitHub repository" title="GitHub">
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.63 2.29 6.71 5.47 7.8.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.16-.28-.15-.68-.54-.01-.55.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.54.28-.89.5-1.1-1.78-.21-3.64-.92-3.64-4.08 0-.9.31-1.64.82-2.22-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.85.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.07 2.2-.85 2.2-.85.44 1.12.16 1.95.08 2.16.51.58.82 1.31.82 2.22 0 3.17-1.87 3.87-3.65 4.08.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.47.55.39A8.24 8.24 0 0 0 16 8.2C16 3.67 12.42 0 8 0z"/>
+                </svg>
+            </a>
+        </div>
     </div>
     
     <div class="tabs">
@@ -252,6 +286,15 @@ INDEX_HTML = """
     </div>
 
     <script>
+        let lastLogsSignature = null;
+
+        function escapeHtml(text) {
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => {
                 const sectionName = tab.getAttribute('data-section');
@@ -274,6 +317,11 @@ INDEX_HTML = """
             try {
                 const response = await fetch('/api/logs');
                 const logs = await response.json();
+                const signature = JSON.stringify(logs);
+                if (signature === lastLogsSignature) {
+                    return;
+                }
+                lastLogsSignature = signature;
                 const container = document.getElementById('logs-container');
                 container.innerHTML = '';
                 
@@ -289,16 +337,16 @@ INDEX_HTML = """
                     const statusClass = log.status || 'ERROR';
 
                     let outputHtml = '';
-                    if (log.stdout) outputHtml += `<strong>stdout:</strong><pre>${log.stdout}</pre>`;
-                    if (log.stderr) outputHtml += `<strong>stderr:</strong><pre>${log.stderr}</pre>`;
+                    if (log.stdout) outputHtml += `<strong>stdout:</strong><pre>${escapeHtml(log.stdout)}</pre>`;
+                    if (log.stderr) outputHtml += `<strong>stderr:</strong><pre>${escapeHtml(log.stderr)}</pre>`;
 
                     card.innerHTML = `
                         <div class="card-header">
-                            <span class="task-name">${log.task_name}</span>
-                            <span class="status ${statusClass}">${log.status}</span>
+                            <span class="task-name">${escapeHtml(log.task_name)}</span>
+                            <span class="status ${statusClass}">${escapeHtml(log.status)}</span>
                         </div>
                         <div class="details">
-                            <div><strong>Project:</strong> ${log.project_path}</div>
+                            <div><strong>Project:</strong> ${escapeHtml(log.project_path)}</div>
                             <div><strong>Run At:</strong> ${time}</div>
                         </div>
                         ${outputHtml}
