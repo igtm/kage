@@ -22,15 +22,51 @@ class TaskDef(BaseModel):
 class LocalTask(BaseModel):
     task: TaskDef
 
-def parse_task_file(filepath: Path) -> Optional[LocalTask]:
+def _parse_task_dict(data: dict) -> Optional[TaskDef]:
+    """dict から TaskDef を生成する。ai フィールドは入れ子 dict を許容。"""
+    try:
+        if "ai" in data and isinstance(data["ai"], dict):
+            data = dict(data)
+            data["ai"] = AIEngineConfig(**data["ai"])
+        return TaskDef(**data)
+    except Exception as e:
+        return None
+
+def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
+    """
+    TOML ファイルから TaskDef のリストを返す。
+    
+    対応フォーマット:
+      1. 単一タスク: [task] セクション
+      2. 複数タスク: [task_xxx] セクション群 (キーが 'task' で始まる)
+    """
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             doc = tomlkit.load(f)
-            # handle dict unpacking
-            return LocalTask(**doc)
+        data = doc.unwrap() if hasattr(doc, "unwrap") else dict(doc)
     except Exception as e:
-        print(f"Error parsing {filepath}: {e}")
-        return None
+        print(f"Error reading {filepath}: {e}")
+        return []
+
+    results = []
+
+    # フォーマット 1: [task] セクション
+    if "task" in data and isinstance(data["task"], dict):
+        t = _parse_task_dict(data["task"])
+        if t:
+            results.append(("task", t))
+        return results
+
+    # フォーマット 2: [task_xxx] セクション群
+    for key, val in data.items():
+        if key.startswith("task") and isinstance(val, dict) and "name" in val and "cron" in val:
+            t = _parse_task_dict(val)
+            if t:
+                results.append((key, t))
+
+    if not results:
+        print(f"No valid tasks found in {filepath}")
+    return results
 
 def load_project_tasks(project_dir: Path) -> List[tuple[Path, LocalTask]]:
     tasks_dir = project_dir / ".kage" / "tasks"
@@ -39,7 +75,6 @@ def load_project_tasks(project_dir: Path) -> List[tuple[Path, LocalTask]]:
     
     tasks = []
     for toml_file in tasks_dir.glob("*.toml"):
-        parsed = parse_task_file(toml_file)
-        if parsed is not None:
-            tasks.append((toml_file, parsed))
+        for section_key, task_def in parse_task_file(toml_file):
+            tasks.append((toml_file, LocalTask(task=task_def)))
     return tasks

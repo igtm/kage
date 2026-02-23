@@ -1,5 +1,6 @@
 import typer
 from . import config as config_mod, daemon, db
+from typing import Optional
 
 app = typer.Typer(
     help="kage - AI Native Cron Task Runner",
@@ -8,6 +9,117 @@ app = typer.Typer(
 
 daemon_app = typer.Typer(help="OS-level daemon (cron/launchd) management")
 app.add_typer(daemon_app, name="daemon")
+
+task_app = typer.Typer(help="Manage kage tasks")
+app.add_typer(task_app, name="task")
+
+@task_app.command("list")
+def task_list(
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Filter by project path")
+):
+    """List all registered tasks across projects."""
+    from .scheduler import get_projects
+    from .parser import load_project_tasks
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    projects = get_projects()
+    
+    if not projects:
+        console.print("[yellow]No projects registered. Run 'kage init' in a project directory.[/yellow]")
+        raise typer.Exit()
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Project", style="dim")
+    table.add_column("Task Name", style="bold")
+    table.add_column("Schedule")
+    table.add_column("Type")
+    table.add_column("Provider/Command")
+
+    found = False
+    for proj_dir in projects:
+        if project and project not in str(proj_dir):
+            continue
+        tasks = load_project_tasks(proj_dir)
+        for toml_file, local_task in tasks:
+            t = local_task.task
+            task_type = "AI Prompt" if t.prompt else "Shell"
+            provider_info = t.provider or (t.ai.engine if t.ai and t.ai.engine else "") if t.prompt else (t.command or "")[:40]
+            table.add_row(
+                str(proj_dir),
+                t.name,
+                t.cron,
+                task_type,
+                provider_info or "-",
+            )
+            found = True
+
+    if not found:
+        console.print("[yellow]No tasks found.[/yellow]")
+    else:
+        console.print(table)
+
+@task_app.command("show")
+def task_show(
+    name: str = typer.Argument(..., help="Task name to show details for")
+):
+    """Show details of a specific task."""
+    from .scheduler import get_projects
+    from .parser import load_project_tasks
+    from rich.console import Console
+    from rich.panel import Panel
+
+    console = Console()
+    projects = get_projects()
+
+    for proj_dir in projects:
+        for toml_file, local_task in load_project_tasks(proj_dir):
+            t = local_task.task
+            if t.name == name:
+                details = [
+                    f"[bold]Name:[/bold]      {t.name}",
+                    f"[bold]Schedule:[/bold]  {t.cron}",
+                    f"[bold]Project:[/bold]   {proj_dir}",
+                    f"[bold]File:[/bold]      {toml_file}",
+                ]
+                if t.prompt:
+                    details.append(f"[bold]Type:[/bold]      AI Prompt")
+                    details.append(f"[bold]Prompt:[/bold]    {t.prompt}")
+                    details.append(f"[bold]Provider:[/bold]  {t.provider or (t.ai.engine if t.ai and t.ai.engine else 'global default')}")
+                elif t.command:
+                    details.append(f"[bold]Type:[/bold]      Shell Command")
+                    details.append(f"[bold]Command:[/bold]   {t.command}")
+                    details.append(f"[bold]Shell:[/bold]     {t.shell or 'sh'}")
+                console.print(Panel("\n".join(details), title=f"[cyan]{t.name}[/cyan]", expand=False))
+                return
+
+    console.print(f"[red]Task '{name}' not found.[/red]")
+    raise typer.Exit(1)
+
+@task_app.command("run")
+def task_run(
+    name: str = typer.Argument(..., help="Task name to run immediately")
+):
+    """Run a specific task immediately (ignores schedule)."""
+    from .scheduler import get_projects
+    from .parser import load_project_tasks
+    from .executor import execute_task
+    from rich.console import Console
+
+    console = Console()
+    projects = get_projects()
+
+    for proj_dir in projects:
+        for toml_file, local_task in load_project_tasks(proj_dir):
+            if local_task.task.name == name:
+                console.print(f"[cyan]Running task:[/cyan] [bold]{name}[/bold] in {proj_dir}")
+                execute_task(proj_dir, local_task.task)
+                console.print(f"[green]✓ Task '{name}' completed.[/green]")
+                return
+
+    console.print(f"[red]Task '{name}' not found.[/red]")
+    raise typer.Exit(1)
 
 @daemon_app.command("install")
 def daemon_install():

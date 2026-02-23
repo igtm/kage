@@ -4,6 +4,7 @@
 
 log_level = "INFO"
 ui_port = 8484
+daemon_interval_minutes = 1  # daemon (cron/launchd) の起動間隔（分単位）
 
 # --- CLI コマンドテンプレート定義 ---
 # {prompt} がプロンプト文字列に置換される

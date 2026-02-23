@@ -14,7 +14,17 @@ def get_kage_path():
 # --- Linux (cron) Implementation ---
 
 def _setup_linux_cron():
-    """Add kage run to system crontab so it runs every minute."""
+    """Add kage run to crontab with configurable interval."""
+    from .config import get_global_config
+    cfg = get_global_config()
+    interval = max(1, cfg.daemon_interval_minutes)
+    
+    # cron式を間隔から生成
+    if interval == 1:
+        cron_expr = "* * * * *"
+    else:
+        cron_expr = f"*/{interval} * * * *"
+
     try:
         current_cron = subprocess.check_output(["crontab", "-l"], text=True, stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError:
@@ -25,9 +35,8 @@ def _setup_linux_cron():
         return
 
     kage_path = get_kage_path()
-    # Log execution for debugging
     log_file = Path.home() / ".kage" / "cron.log"
-    new_job = f"* * * * * {kage_path} run >> {log_file} 2>&1\n"
+    new_job = f"{cron_expr} {kage_path} run >> {log_file} 2>&1\n"
     
     new_cron = current_cron
     if current_cron and not current_cron.endswith("\n"):
@@ -38,7 +47,7 @@ def _setup_linux_cron():
         proc = subprocess.Popen(["crontab", "-"], stdin=subprocess.PIPE, text=True)
         proc.communicate(new_cron)
         if proc.returncode == 0:
-            typer.echo("Successfully added kage to crontab (Linux/Linux-like).")
+            typer.echo(f"Successfully added kage to crontab (every {interval} min).")
         else:
             typer.echo("Failed to update crontab.")
     except Exception as e:
@@ -133,7 +142,11 @@ LAUNCHD_PLIST_ID = "com.user.kage"
 LAUNCHD_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_PLIST_ID}.plist"
 
 def _setup_macos_launchd():
-    """Create a launchd plist to run kage every minute."""
+    """Create a launchd plist to run kage at a configurable interval."""
+    from .config import get_global_config
+    cfg = get_global_config()
+    interval_seconds = max(60, cfg.daemon_interval_minutes * 60)
+
     kage_path = get_kage_path()
     log_file = Path.home() / ".kage" / "launchd.log"
     
@@ -149,7 +162,7 @@ def _setup_macos_launchd():
         <string>run</string>
     </array>
     <key>StartInterval</key>
-    <integer>60</integer>
+    <integer>{interval_seconds}</integer>
     <key>StandardOutPath</key>
     <string>{log_file}</string>
     <key>StandardErrorPath</key>
@@ -166,7 +179,7 @@ def _setup_macos_launchd():
         subprocess.run(["launchctl", "unload", str(LAUNCHD_PLIST_PATH)], stderr=subprocess.DEVNULL)
         # Load and start
         subprocess.run(["launchctl", "load", str(LAUNCHD_PLIST_PATH)], check=True)
-        typer.echo(f"Successfully registered kage to launchd (macOS). Agent ID: {LAUNCHD_PLIST_ID}")
+        typer.echo(f"Successfully registered kage to launchd (every {cfg.daemon_interval_minutes} min). Agent ID: {LAUNCHD_PLIST_ID}")
     except Exception as e:
         typer.echo(f"Failed to register launchd agent: {e}")
 

@@ -24,6 +24,7 @@ class GlobalConfig(BaseModel):
     default_ai_engine: Optional[str] = None
     log_level: str = "INFO"
     ui_port: int = 8484
+    daemon_interval_minutes: int = 1  # cron/launchd の起動間隔（分単位）
     commands: dict[str, CommandDef] = {}
     providers: dict[str, ProviderConfig] = {}
 
