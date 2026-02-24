@@ -36,11 +36,11 @@ def test_parse_markdown_front_matter_prompt_task(tmp_path: Path):
         """---
 name: Nightly Research
 cron: "0 2 * * *"
-prompt: "Compare candidate libraries and summarize pros/cons"
 provider: codex
 ---
 
-# body is ignored for now
+Compare candidate libraries and summarize pros/cons in markdown.
+Include benchmark table and recommendations.
 """,
         encoding="utf-8",
     )
@@ -50,7 +50,8 @@ provider: codex
     _, task = parsed[0]
     assert task.name == "Nightly Research"
     assert task.cron == "0 2 * * *"
-    assert task.prompt == "Compare candidate libraries and summarize pros/cons"
+    assert "Compare candidate libraries" in (task.prompt or "")
+    assert "benchmark table" in (task.prompt or "")
     assert task.provider == "codex"
 
 
@@ -60,9 +61,26 @@ def test_parse_markdown_rejects_command_task(tmp_path: Path):
         """---
 name: Bad Shell Task
 cron: "* * * * *"
-prompt: "ignored"
 command: "echo hello"
 ---
+
+this body should not be accepted because command exists in front matter
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_task_file(task_file)
+    assert parsed == []
+
+
+def test_parse_markdown_requires_body_prompt(tmp_path: Path):
+    task_file = tmp_path / "empty.md"
+    task_file.write_text(
+        """---
+name: Empty Prompt
+cron: "0 1 * * *"
+---
+
 """,
         encoding="utf-8",
     )
@@ -90,8 +108,9 @@ prompt = "run toml"
         """---
 name: Md Task
 cron: "30 * * * *"
-prompt: "run md"
 ---
+
+run md with long markdown body
 """,
         encoding="utf-8",
     )

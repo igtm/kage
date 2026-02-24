@@ -61,7 +61,7 @@ kage onboard
 Define tasks in `.toml` **or** `.md` files under `.kage/tasks/`.
 
 - `*.toml`: existing format (single or multiple tasks per file)
-- `*.md`: front matter format, **one file = one prompt task only**
+- `*.md`: front matter + markdown body, **one file = one prompt task only**
 
 ```toml
 # Auto-refactor using AI
@@ -91,12 +91,14 @@ shell = "bash"
 ---
 name: Nightly Research
 cron: "0 2 * * *"
-prompt: "Collect benchmark updates and summarize differences"
 provider: codex
 ---
 
-# One markdown file = one prompt task
+Collect benchmark updates and summarize differences.
+Add comparison points for quality, speed, and cost.
 ```
+
+In markdown tasks, the entire body after front matter is treated as the prompt.
 
 ## Commands
 

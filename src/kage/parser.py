@@ -38,14 +38,16 @@ def _parse_task_dict(data: dict) -> Optional[TaskDef]:
         return None
 
 
-def _parse_front_matter(text: str) -> Optional[dict]:
+def _split_markdown_front_matter(text: str) -> tuple[Optional[dict], str]:
     """
-    Markdown front matter (--- ... ---) を簡易パースする。
-    形式は `key: value` のみ対応（ネストは非対応）。
+    Markdown front matter (--- ... ---) と本文を分離する。
+
+    返り値: (front_matter_dict | None, body_text)
+    - front matter が無い/不正な場合は (None, original_text)
     """
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
-        return None
+        return None, text
 
     end_idx = None
     for i in range(1, len(lines)):
@@ -54,7 +56,7 @@ def _parse_front_matter(text: str) -> Optional[dict]:
             break
 
     if end_idx is None:
-        return None
+        return None, text
 
     data: dict = {}
     for raw in lines[1:end_idx]:
@@ -69,7 +71,9 @@ def _parse_front_matter(text: str) -> Optional[dict]:
         if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
             val = val[1:-1]
         data[key] = val
-    return data
+
+    body = "\n".join(lines[end_idx + 1 :]).strip()
+    return data, body
 
 
 def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
@@ -91,9 +95,9 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
             print(f"Error reading {filepath}: {e}")
             return []
 
-        fm = _parse_front_matter(text)
+        fm, body_prompt = _split_markdown_front_matter(text)
         if not fm:
-            print(f"No valid front matter found in {filepath}")
+            print(f"Markdown task requires front matter block in {filepath}")
             return []
 
         # md は prompt タスクのみ許可
@@ -101,15 +105,19 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
             print(f"Markdown task must be prompt-only (command is not allowed): {filepath}")
             return []
 
-        required = ["name", "cron", "prompt"]
+        required = ["name", "cron"]
         if not all(k in fm and str(fm[k]).strip() for k in required):
             print(f"Markdown task requires front matter keys: {required} in {filepath}")
+            return []
+
+        if not body_prompt.strip():
+            print(f"Markdown task requires non-empty body as prompt in {filepath}")
             return []
 
         task_data = {
             "name": fm.get("name"),
             "cron": fm.get("cron"),
-            "prompt": fm.get("prompt"),
+            "prompt": body_prompt,
             "provider": fm.get("provider"),
             "parser": fm.get("parser"),
             "parser_args": fm.get("parser_args"),

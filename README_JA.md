@@ -61,7 +61,7 @@ kage onboard
 `.kage/tasks/` 内の `.toml` または `.md`（front matter）でタスクを定義できます。
 
 - `*.toml`: 既存形式（1ファイルに複数タスクも可）
-- `*.md`: front matter 形式、**1ファイル1タスク（promptタスクのみ）**
+- `*.md`: front matter + 本文、**1ファイル1タスク（promptタスクのみ）**
 
 ```toml
 # AIを使った自動リファクタリング
@@ -91,12 +91,14 @@ shell = "bash"
 ---
 name: Nightly Research
 cron: "0 2 * * *"
-prompt: "候補ライブラリを比較し、差分を要約して"
 provider: codex
 ---
 
-# markdownは1ファイル1タスク（promptのみ）
+候補ライブラリを比較して、品質・速度・コスト差分を要約して。
+最後に推奨案も書いて。
 ```
+
+markdownタスクでは、front matter の下に書いた本文全体が prompt として扱われます。
 
 ## コマンド一覧
 
