@@ -1,11 +1,12 @@
-import pytest
 from pathlib import Path
-from kage.parser import parse_task_file
 
-def test_parse_valid_toml(tmp_path: Path):
-    # Dummy toml creation
+from kage.parser import load_project_tasks, parse_task_file
+
+
+def test_parse_valid_toml_single_task(tmp_path: Path):
     task_file = tmp_path / "valid.toml"
-    task_file.write_text("""
+    task_file.write_text(
+        """
 [task]
 name = "Weekly Refactoring"
 cron = "0 3 * * 0"
@@ -14,33 +15,106 @@ prompt = "Refactor src directory"
 [task.ai]
 engine = "claude"
 args = ["--dangerously-skip-permissions"]
-    """, encoding="utf-8")
-    
+        """,
+        encoding="utf-8",
+    )
+
     parsed = parse_task_file(task_file)
-    assert parsed is not None
-    assert parsed.task.name == "Weekly Refactoring"
-    assert parsed.task.cron == "0 3 * * 0"
-    assert parsed.task.prompt == "Refactor src directory"
-    assert parsed.task.ai.engine == "claude"
-    assert parsed.task.ai.args == ["--dangerously-skip-permissions"]
+    assert len(parsed) == 1
+    _, task = parsed[0]
+    assert task.name == "Weekly Refactoring"
+    assert task.cron == "0 3 * * 0"
+    assert task.prompt == "Refactor src directory"
+    assert task.ai is not None
+    assert task.ai.engine == "claude"
+    assert task.ai.args == ["--dangerously-skip-permissions"]
 
-def test_parse_invalid_toml(tmp_path: Path):
-    invalid_file = tmp_path / "invalid.toml"
-    invalid_file.write_text("invalid_toml_content", encoding="utf-8")
-    parsed = parse_task_file(invalid_file)
-    assert parsed is None
 
-def test_parse_shell_command(tmp_path: Path):
-    task_file = tmp_path / "shell.toml"
-    task_file.write_text("""
+def test_parse_markdown_front_matter_prompt_task(tmp_path: Path):
+    task_file = tmp_path / "nightly.md"
+    task_file.write_text(
+        """---
+name: Nightly Research
+cron: "0 2 * * *"
+provider: codex
+---
+
+Compare candidate libraries and summarize pros/cons in markdown.
+Include benchmark table and recommendations.
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_task_file(task_file)
+    assert len(parsed) == 1
+    _, task = parsed[0]
+    assert task.name == "Nightly Research"
+    assert task.cron == "0 2 * * *"
+    assert "Compare candidate libraries" in (task.prompt or "")
+    assert "benchmark table" in (task.prompt or "")
+    assert task.provider == "codex"
+
+
+def test_parse_markdown_rejects_command_task(tmp_path: Path):
+    task_file = tmp_path / "bad.md"
+    task_file.write_text(
+        """---
+name: Bad Shell Task
+cron: "* * * * *"
+command: "echo hello"
+---
+
+this body should not be accepted because command exists in front matter
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_task_file(task_file)
+    assert parsed == []
+
+
+def test_parse_markdown_requires_body_prompt(tmp_path: Path):
+    task_file = tmp_path / "empty.md"
+    task_file.write_text(
+        """---
+name: Empty Prompt
+cron: "0 1 * * *"
+---
+
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_task_file(task_file)
+    assert parsed == []
+
+
+def test_load_project_tasks_supports_toml_and_md(tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    tasks_dir = project_dir / ".kage" / "tasks"
+    tasks_dir.mkdir(parents=True)
+
+    (tasks_dir / "a.toml").write_text(
+        """
 [task]
-name = "Cleanup"
-cron = "* * * * *"
-command = "rm -rf /tmp/*"
-    """, encoding="utf-8")
-    
-    parsed = parse_task_file(task_file)
-    assert parsed is not None
-    assert parsed.task.name == "Cleanup"
-    assert parsed.task.command == "rm -rf /tmp/*"
-    assert parsed.task.prompt is None
+name = "Toml Task"
+cron = "0 * * * *"
+prompt = "run toml"
+""",
+        encoding="utf-8",
+    )
+
+    (tasks_dir / "b.md").write_text(
+        """---
+name: Md Task
+cron: "30 * * * *"
+---
+
+run md with long markdown body
+""",
+        encoding="utf-8",
+    )
+
+    tasks = load_project_tasks(project_dir)
+    names = sorted([t.task.name for _, t in tasks])
+    assert names == ["Md Task", "Toml Task"]

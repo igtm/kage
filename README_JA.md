@@ -58,7 +58,10 @@ kage onboard
 
 ## タスクの定義例
 
-`.kage/tasks/` 内の `.toml` ファイルにタスクを記述します。
+`.kage/tasks/` 内の `.toml` または `.md`（front matter）でタスクを定義できます。
+
+- `*.toml`: 既存形式（1ファイルに複数タスクも可）
+- `*.md`: front matter + 本文、**1ファイル1タスク（promptタスクのみ）**
 
 ```toml
 # AIを使った自動リファクタリング
@@ -83,6 +86,19 @@ cron = "0 0 * * 0"
 command = "rm -rf ./logs/*.log"
 shell = "bash"
 ```
+
+```md
+---
+name: Nightly Research
+cron: "0 2 * * *"
+provider: codex
+---
+
+候補ライブラリを比較して、品質・速度・コスト差分を要約して。
+最後に推奨案も書いて。
+```
+
+markdownタスクでは、front matter の下に書いた本文全体が prompt として扱われます。
 
 ## コマンド一覧
 

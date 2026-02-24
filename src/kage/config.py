@@ -238,6 +238,22 @@ def setup_local(target_dir: Path = None):
 
         with open(sample_task_path, "w", encoding="utf-8") as f:
             tomlkit.dump(doc, f)
+
+    sample_md_path = tasks_dir / "sample.md"
+    if not sample_md_path.exists():
+        sample_md_path.write_text(
+            """---
+name: Nightly Research
+cron: \"0 2 * * *\"
+provider: codex
+---
+
+Collect updates about candidate libraries for our project.
+Compare quality, speed, and cost trade-offs.
+Write a concise recommendation with pros/cons.
+""",
+            encoding="utf-8",
+        )
             
     # Add to global projects list
     if KAGE_PROJECTS_LIST.exists():
