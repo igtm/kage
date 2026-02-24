@@ -58,7 +58,10 @@ kage onboard
 
 ## Task Definition Samples
 
-Define tasks in `.toml` files under `.kage/tasks/`.
+Define tasks in `.toml` **or** `.md` files under `.kage/tasks/`.
+
+- `*.toml`: existing format (single or multiple tasks per file)
+- `*.md`: front matter format, **one file = one prompt task only**
 
 ```toml
 # Auto-refactor using AI
@@ -82,6 +85,17 @@ name = "Log Cleanup"
 cron = "0 0 * * 0"
 command = "rm -rf ./logs/*.log"
 shell = "bash"
+```
+
+```md
+---
+name: Nightly Research
+cron: "0 2 * * *"
+prompt: "Collect benchmark updates and summarize differences"
+provider: codex
+---
+
+# One markdown file = one prompt task
 ```
 
 ## Commands
