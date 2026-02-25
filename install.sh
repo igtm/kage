@@ -13,6 +13,28 @@ ui_success() { echo -e "${SUCCESS}✓${NC} $*"; }
 ui_info()    { echo -e "${INFO}·${NC} $*"; }
 ui_bold()    { echo -e "${BOLD}$*${NC}"; }
 
+get_installed_version() {
+    if command -v kage >/dev/null 2>&1; then
+        kage --version 2>/dev/null | head -n1 | tr -d '[:space:]'
+    else
+        echo "not installed"
+    fi
+}
+
+get_target_version() {
+    local target="unknown"
+    if command -v curl >/dev/null 2>&1; then
+        target="$(curl -fsSL https://pypi.org/pypi/kage-ai/json 2>/dev/null \
+            | grep -o '"version":"[^"]*"' \
+            | head -n1 \
+            | cut -d'"' -f4 || true)"
+    fi
+    if [[ -z "${target}" ]]; then
+        target="unknown"
+    fi
+    echo "${target}"
+}
+
 # 言語判定: $LANG が ja で始まる場合は日本語、それ以外は英語
 IS_JA=false
 if [[ "${LANG:-}" == ja* ]]; then
@@ -25,6 +47,9 @@ if $IS_JA; then
     MSG_NO_UV="'uv' が見つかりません。"
     MSG_NO_UV_HINT="  → https://github.com/astral-sh/uv からインストールしてください。"
     MSG_INSTALLING="kage-ai を PyPI からインストール中..."
+    MSG_CURR_VER="  現在のバージョン: %s"
+    MSG_TARGET_VER="  インストール対象:   %s"
+    MSG_AFTER_VER="  インストール後:     %s"
     MSG_INSTALLED="kage のインストール完了"
     MSG_ONBOARD="kage onboard を実行中..."
     MSG_DOCTOR="セットアップ診断を実行中..."
@@ -40,6 +65,9 @@ else
     MSG_NO_UV="'uv' not found."
     MSG_NO_UV_HINT="  → Install it from https://github.com/astral-sh/uv"
     MSG_INSTALLING="Installing kage-ai from PyPI..."
+    MSG_CURR_VER="  Current version:     %s"
+    MSG_TARGET_VER="  Target version:      %s"
+    MSG_AFTER_VER="  Installed version:   %s"
     MSG_INSTALLED="kage installed successfully"
     MSG_ONBOARD="Running kage onboard..."
     MSG_DOCTOR="Running setup diagnostics..."
@@ -65,9 +93,15 @@ if ! command -v uv &> /dev/null; then
 fi
 
 # 2. インストール
+CURRENT_VERSION="$(get_installed_version)"
+TARGET_VERSION="$(get_target_version)"
 ui_info "$MSG_INSTALLING"
+ui_info "$(printf "$MSG_CURR_VER" "$CURRENT_VERSION")"
+ui_info "$(printf "$MSG_TARGET_VER" "$TARGET_VERSION")"
 uv tool install kage-ai --reinstall --force -q
 ui_success "$MSG_INSTALLED"
+INSTALLED_VERSION="$(get_installed_version)"
+ui_success "$(printf "$MSG_AFTER_VER" "$INSTALLED_VERSION")"
 echo ""
 
 # 3. 初期化
