@@ -230,14 +230,14 @@ def install():
     plat = get_platform()
     if plat.startswith("linux"):
         _setup_linux_cron()
-    elif plat == "macos":
+    elif plat == "darwin":
         _setup_macos_launchd()
 
 def remove():
     plat = get_platform()
     if plat == "linux":
         _remove_linux_cron()
-    elif plat == "macos":
+    elif plat == "darwin":
         _remove_macos_launchd()
 
 def start():
