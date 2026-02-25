@@ -118,6 +118,37 @@ INDEX_HTML = """
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
         .task-list-item h3 { margin-top: 0; color: var(--accent-color); }
+        .task-list-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        .task-list-head h3 { margin: 0; color: var(--accent-color); }
+        .task-run-button {
+            background-color: var(--success-color);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 0.85rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            white-space: nowrap;
+        }
+        .task-run-button:hover { opacity: 0.85; }
+        .task-run-button:disabled {
+            background-color: var(--border-color);
+            color: var(--secondary-text);
+            cursor: not-allowed;
+        }
+        .task-run-message {
+            margin-top: 10px;
+            font-size: 0.85rem;
+            color: var(--secondary-text);
+        }
+        .task-run-message.error { color: var(--error-color); }
         .card-header {
             display: flex;
             justify-content: space-between;
@@ -369,14 +400,25 @@ INDEX_HTML = """
                     config.tasks.forEach(task => {
                         tasksHtml += `
                             <div class="task-list-item">
-                                <h3>${task.name}</h3>
-                                <div class="details">
-                                    <div><strong>Project:</strong> ${task.project_path}</div>
-                                    <div><strong>Schedule:</strong> <code>${task.cron}</code> (Next: ${task.next_run})</div>
-                                    ${task.prompt ? `<div><strong>AI Prompt:</strong> ${task.prompt}</div>` : ''}
-                                    ${task.command ? `<div><strong>Command:</strong> <code>${task.command}</code></div>` : ''}
-                                    ${task.provider ? `<div><strong>Provider:</strong> ${task.provider}</div>` : ''}
+                                <div class="task-list-head">
+                                    <h3>${escapeHtml(task.name)}</h3>
+                                    <button
+                                        class="task-run-button"
+                                        data-project-path="${escapeHtml(task.project_path)}"
+                                        data-task-name="${escapeHtml(task.name)}"
+                                        data-file="${escapeHtml(task.file || '')}"
+                                    >
+                                        Run now
+                                    </button>
                                 </div>
+                                <div class="details">
+                                    <div><strong>Project:</strong> ${escapeHtml(task.project_path)}</div>
+                                    <div><strong>Schedule:</strong> <code>${escapeHtml(task.cron)}</code> (Next: ${escapeHtml(task.next_run)})</div>
+                                    ${task.prompt ? `<div><strong>AI Prompt:</strong> ${escapeHtml(task.prompt)}</div>` : ''}
+                                    ${task.command ? `<div><strong>Command:</strong> <code>${escapeHtml(task.command)}</code></div>` : ''}
+                                    ${task.provider ? `<div><strong>Provider:</strong> ${escapeHtml(task.provider)}</div>` : ''}
+                                </div>
+                                <div class="task-run-message"></div>
                             </div>
                         `;
                     });
@@ -396,9 +438,54 @@ INDEX_HTML = """
                     </div>
                     ${tasksHtml}
                 `;
+                wireRunButtons();
             } catch (error) {
                 document.getElementById('config-container').innerHTML = '<p style="color:red">Failed to load configuration.</p>';
             }
+        }
+
+        function wireRunButtons() {
+            document.querySelectorAll('.task-run-button').forEach(button => {
+                button.addEventListener('click', async () => {
+                    const projectPath = button.getAttribute('data-project-path') || '';
+                    const taskName = button.getAttribute('data-task-name') || '';
+                    const file = button.getAttribute('data-file') || '';
+                    const messageEl = button.closest('.task-list-item')?.querySelector('.task-run-message');
+
+                    button.disabled = true;
+                    if (messageEl) {
+                        messageEl.textContent = 'Starting...';
+                        messageEl.classList.remove('error');
+                    }
+
+                    try {
+                        const response = await fetch('/api/tasks/run', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                project_path: projectPath,
+                                task_name: taskName,
+                                file: file || null
+                            })
+                        });
+                        const result = await response.json();
+                        if (!response.ok) {
+                            throw new Error(result.error || 'Failed to start task');
+                        }
+                        if (messageEl) {
+                            messageEl.textContent = result.message || 'Task started';
+                        }
+                        fetchLogs();
+                    } catch (error) {
+                        if (messageEl) {
+                            messageEl.textContent = error.message || 'Failed to start task';
+                            messageEl.classList.add('error');
+                        }
+                    } finally {
+                        button.disabled = false;
+                    }
+                });
+            });
         }
 
         fetchLogs();
@@ -483,6 +570,11 @@ INDEX_HTML = """
 class ChatRequest(BaseModel):
     message: str
 
+class RunTaskRequest(BaseModel):
+    project_path: str
+    task_name: str
+    file: str | None = None
+
 @app.get("/", response_class=HTMLResponse)
 def root():
     return INDEX_HTML
@@ -549,6 +641,35 @@ def get_config_api():
         "timezone": config.timezone,
         "tasks": all_tasks
     }
+
+@app.post("/api/tasks/run")
+def run_task_now(req: RunTaskRequest):
+    from .parser import load_project_tasks
+    from .executor import execute_task
+
+    proj_dir = Path(req.project_path).expanduser()
+    if not proj_dir.exists():
+        return JSONResponse(status_code=404, content={"error": "Project path does not exist."})
+
+    matched_task = None
+    for toml_path, local_task in load_project_tasks(proj_dir):
+        if local_task.task.name != req.task_name:
+            continue
+        if req.file and str(toml_path) != req.file:
+            continue
+        matched_task = local_task.task
+        break
+
+    if matched_task is None:
+        return JSONResponse(status_code=404, content={"error": "Task not found in the specified project."})
+
+    threading.Thread(
+        target=execute_task,
+        args=(proj_dir, matched_task),
+        daemon=True
+    ).start()
+
+    return {"message": f"Task '{req.task_name}' started."}
 
 @app.post("/api/chat")
 def handle_chat(req: ChatRequest):
