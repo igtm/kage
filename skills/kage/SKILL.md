@@ -23,6 +23,7 @@ description: AI native cron task runner. Allows scheduling AI prompts and shell 
 - `kage project list`: Show registered projects and task counts.
 - `kage project remove [path]`: Unregister a project.
 - `kage doctor`: Diagnose setup health, configuration validity, and CLI tool availability.
+- `kage config-show [--workspace <path>]`: Show resolved merged config and loaded providers/commands.
 - `kage config <key> <value> [--global]`: Update config values.
 
 ### Execution & Monitoring
@@ -68,11 +69,17 @@ Important settings:
 - `[providers.NAME]`: Custom AI provider definitions.
 - `[commands.NAME]`: Custom CLI command templates.
 
+For `codex`, place global flags before `exec` for headless runs:
+
+```toml
+[commands.codex]
+template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "{prompt}"]
+```
+
 ## Release Notes
 
-- Current package version: `0.0.1`
 - Recommended release flow:
   1. Update `pyproject.toml` version and docs.
   2. `uv build`
-  3. `gh release create v<version> --generate-notes`
+  3. `gh release create v<version> --title "kage-ai v<version>" --generate-notes`
   4. Upload to PyPI with token auth (`__token__`).

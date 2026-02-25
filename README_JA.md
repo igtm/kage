@@ -108,7 +108,8 @@ markdownタスクでは、front matter の下に書いた本文全体が prompt 
 - `kage daemon remove`: OSのスケジューラからの登録解除。
 - `kage daemon status`: デーモンの登録状態を確認。
 - `kage config <key> <value> [--global]`: CLIから設定を更新。
-- `kage doctor`: セットアップ状態と設定の健全性を診断。
+- `kage config-show [--workspace <path>]`: マージ後の設定（defaults/user/workspace）と読み込み済み `providers` / `commands` を表示。
+- `kage doctor`: セットアップ状態に加えて設定・タスクファイルの妥当性（未知キー、型不一致、cron不正、front matter不備など）を診断。
 - `kage ui`: Webダッシュボードの起動（デフォルト: [http://localhost:8484](http://localhost:8484)）。
 - `kage logs`: ターミナルで実行履歴を表示。
 - `kage run`: スケジュールされたタスクを即時一括実行（通常は cron/launchd から呼ばれます）。
@@ -132,6 +133,17 @@ TWINE_USERNAME=__token__ \
 TWINE_PASSWORD='<pypi-token>' \
 uvx twine upload dist/*
 ```
+
+## Codex プロバイダー注意点（headless / launchd）
+
+`codex` のコマンドテンプレートを自前定義する場合、グローバル引数は `exec` の前に置いてください。
+
+```toml
+[commands.codex]
+template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "{prompt}"]
+```
+
+CLIバージョンによっては `codex exec --ask-for-approval ...` が失敗します。
 
 ## ライセンス
 

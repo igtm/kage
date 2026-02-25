@@ -14,7 +14,10 @@ def _normalize_codex_headless_args(cmd: list[str]) -> list[str]:
     exe = Path(cmd[0]).name
     if exe != "codex":
         return cmd
-    if len(cmd) < 2 or cmd[1] != "exec":
+
+    try:
+        exec_idx = cmd.index("exec")
+    except ValueError:
         return cmd
 
     try:
@@ -24,17 +27,30 @@ def _normalize_codex_headless_args(cmd: list[str]) -> list[str]:
     if is_tty:
         return cmd
 
-    normalized = [part for part in cmd if part != "--full-auto"]
-    insert_at = 2
+    # Split into codex-global args and exec args
+    head = cmd[:exec_idx]
+    tail = cmd[exec_idx + 1 :]
 
-    if "--ask-for-approval" not in normalized:
-        normalized[insert_at:insert_at] = ["--ask-for-approval", "never"]
-        insert_at += 2
+    # Remove exec-scoped convenience that can prompt on non-TTY
+    tail = [part for part in tail if part != "--full-auto"]
 
-    if "--sandbox" not in normalized:
-        normalized[insert_at:insert_at] = ["--sandbox", "workspace-write"]
+    def _drop_flag_with_value(parts: list[str], flag: str) -> list[str]:
+        out: list[str] = []
+        i = 0
+        while i < len(parts):
+            if parts[i] == flag:
+                i += 2
+                continue
+            out.append(parts[i])
+            i += 1
+        return out
 
-    return normalized
+    # Ensure global non-interactive policy before subcommand.
+    head = _drop_flag_with_value(head, "--ask-for-approval")
+    head = _drop_flag_with_value(head, "--sandbox")
+    head = head + ["--ask-for-approval", "never", "--sandbox", "workspace-write"]
+
+    return head + ["exec"] + tail
 
 def execute_task(project_dir: Path, task: TaskDef):
     global_config = get_global_config(workspace_dir=project_dir)

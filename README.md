@@ -108,7 +108,8 @@ In markdown tasks, the entire body after front matter is treated as the prompt.
 - `kage daemon remove`: Unregister kage from system scheduler.
 - `kage daemon status`: Check daemon registration status.
 - `kage config <key> <value> [--global]`: Update configuration via CLI.
-- `kage doctor`: Check setup health and configuration.
+- `kage config-show [--workspace <path>]`: Show resolved config (merged defaults/user/workspace), including loaded `providers` and `commands`.
+- `kage doctor`: Check setup health and validate config/task files (unknown keys, type errors, invalid cron, missing front matter, etc).
 - `kage ui`: Launch web dashboard (default: [http://localhost:8484](http://localhost:8484)).
 - `kage logs`: View execution history.
 - `kage run`: Force run all scheduled tasks (normally executed by cron/launchd).
@@ -132,6 +133,17 @@ TWINE_USERNAME=__token__ \
 TWINE_PASSWORD='<pypi-token>' \
 uvx twine upload dist/*
 ```
+
+## Codex Provider Note (Headless / launchd)
+
+When defining a custom codex command template, place global flags **before** `exec`:
+
+```toml
+[commands.codex]
+template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "{prompt}"]
+```
+
+`codex exec --ask-for-approval ...` may fail depending on CLI version.
 
 ## License
 

@@ -63,7 +63,7 @@ def test_execute_ai_via_provider(tmp_path: Path, mock_global_config, mocker):
     
     args, _ = mock_run.call_args
     assert Path(args[0][0]).name == "codex"
-    assert args[0][1:] == ["exec", "--ask-for-approval", "never", "--sandbox", "workspace-write", "Fix this"]
+    assert args[0][1:] == ["--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "Fix this"]
 
 
 def test_execute_explicit_provider(tmp_path: Path, mock_global_config, mocker):
@@ -78,7 +78,7 @@ def test_execute_explicit_provider(tmp_path: Path, mock_global_config, mocker):
     assert mock_run.call_count == 2
     args, _ = mock_run.call_args_list[0]
     assert Path(args[0][0]).name == "codex"
-    assert args[0][1:] == ["exec", "--ask-for-approval", "never", "--sandbox", "workspace-write", "--output-format", "json", "Fix this"]
+    assert args[0][1:] == ["--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "--output-format", "json", "Fix this"]
 
 
 def test_execute_inline_command_template(tmp_path: Path, mock_global_config, mocker):
