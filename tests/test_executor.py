@@ -24,6 +24,7 @@ def mock_global_config(mocker):
     )
     mocker.patch("kage.executor.get_global_config", return_value=config)
     mocker.patch("kage.executor.log_execution")
+    mocker.patch("kage.executor.sys.stdin.isatty", return_value=False)
 
 
 def test_execute_shell_command_with_custom_shell(tmp_path: Path, mock_global_config, mocker):
@@ -35,7 +36,8 @@ def test_execute_shell_command_with_custom_shell(tmp_path: Path, mock_global_con
     execute_task(tmp_path, task)
     
     args, _ = mock_run.call_args
-    assert args[0] == ["bash", "-c", "echo hello"]
+    assert Path(args[0][0]).name == "bash"
+    assert args[0][1:] == ["-c", "echo hello"]
 
 
 def test_execute_shell_command_default_sh(tmp_path: Path, mock_global_config, mocker):
@@ -47,7 +49,8 @@ def test_execute_shell_command_default_sh(tmp_path: Path, mock_global_config, mo
     execute_task(tmp_path, task)
     
     args, _ = mock_run.call_args
-    assert args[0] == ["sh", "-c", "echo hello"]
+    assert Path(args[0][0]).name == "sh"
+    assert args[0][1:] == ["-c", "echo hello"]
 
 
 def test_execute_ai_via_provider(tmp_path: Path, mock_global_config, mocker):
@@ -59,7 +62,8 @@ def test_execute_ai_via_provider(tmp_path: Path, mock_global_config, mocker):
     execute_task(tmp_path, task)
     
     args, _ = mock_run.call_args
-    assert args[0] == ["codex", "exec", "--full-auto", "Fix this"]
+    assert Path(args[0][0]).name == "codex"
+    assert args[0][1:] == ["exec", "--ask-for-approval", "never", "--sandbox", "workspace-write", "Fix this"]
 
 
 def test_execute_explicit_provider(tmp_path: Path, mock_global_config, mocker):
@@ -73,7 +77,8 @@ def test_execute_explicit_provider(tmp_path: Path, mock_global_config, mocker):
     # codex_json は jq パーサー付きなので 2回 run が呼ばれる
     assert mock_run.call_count == 2
     args, _ = mock_run.call_args_list[0]
-    assert args[0] == ["codex", "exec", "--full-auto", "--output-format", "json", "Fix this"]
+    assert Path(args[0][0]).name == "codex"
+    assert args[0][1:] == ["exec", "--ask-for-approval", "never", "--sandbox", "workspace-write", "--output-format", "json", "Fix this"]
 
 
 def test_execute_inline_command_template(tmp_path: Path, mock_global_config, mocker):

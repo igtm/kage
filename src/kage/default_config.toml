@@ -11,10 +11,10 @@ timezone = "UTC"             # cronスケジュールなどで使うタイムゾ
 # {prompt} がプロンプト文字列に置換される
 
 [commands.codex]
-template = ["codex", "exec", "--full-auto", "{prompt}"]
+template = ["codex", "exec", "--ask-for-approval", "never", "--sandbox", "workspace-write", "{prompt}"]
 
 [commands.codex_json]
-template = ["codex", "exec", "--full-auto", "{prompt}\n\nPlease output ONLY valid JSON without Markdown formatting."]
+template = ["codex", "exec", "--ask-for-approval", "never", "--sandbox", "workspace-write", "{prompt}\n\nPlease output ONLY valid JSON without Markdown formatting."]
 
 [commands.claude]
 template = ["claude", "-p", "--dangerously-skip-permissions", "{prompt}"]

@@ -1,9 +1,40 @@
 import subprocess
 import os
+import sys
 from pathlib import Path
 from .parser import TaskDef
 from .db import log_execution
 from .config import get_global_config
+
+def _normalize_codex_headless_args(cmd: list[str]) -> list[str]:
+    """When running without a TTY, avoid interactive approval prompts in codex exec."""
+    if not cmd:
+        return cmd
+
+    exe = Path(cmd[0]).name
+    if exe != "codex":
+        return cmd
+    if len(cmd) < 2 or cmd[1] != "exec":
+        return cmd
+
+    try:
+        is_tty = sys.stdin.isatty()
+    except Exception:
+        is_tty = False
+    if is_tty:
+        return cmd
+
+    normalized = [part for part in cmd if part != "--full-auto"]
+    insert_at = 2
+
+    if "--ask-for-approval" not in normalized:
+        normalized[insert_at:insert_at] = ["--ask-for-approval", "never"]
+        insert_at += 2
+
+    if "--sandbox" not in normalized:
+        normalized[insert_at:insert_at] = ["--sandbox", "workspace-write"]
+
+    return normalized
 
 def execute_task(project_dir: Path, task: TaskDef):
     global_config = get_global_config(workspace_dir=project_dir)
@@ -75,6 +106,7 @@ def execute_task(project_dir: Path, task: TaskDef):
             exe_path = shutil.which(cmd[0], path=env.get("PATH"))
             if exe_path:
                 cmd[0] = exe_path
+        cmd = _normalize_codex_headless_args(cmd)
 
         result = subprocess.run(
             cmd,
