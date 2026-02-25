@@ -141,6 +141,19 @@ def _start_linux_cron():
 LAUNCHD_PLIST_ID = "com.user.kage"
 LAUNCHD_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_PLIST_ID}.plist"
 
+def _launchd_domain() -> str:
+    return f"gui/{os.getuid()}"
+
+def _launchd_label() -> str:
+    return f"{_launchd_domain()}/{LAUNCHD_PLIST_ID}"
+
+def _bootout_macos_launchd():
+    """Unload launchd agent if loaded. Ignore errors."""
+    subprocess.run(["launchctl", "bootout", _launchd_label()], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["launchctl", "bootout", _launchd_domain(), str(LAUNCHD_PLIST_PATH)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Fallback for older launchctl behavior.
+    subprocess.run(["launchctl", "unload", str(LAUNCHD_PLIST_PATH)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 def _setup_macos_launchd():
     """Create a launchd plist to run kage at a configurable interval."""
     from .config import get_global_config
@@ -150,6 +163,15 @@ def _setup_macos_launchd():
     kage_path = get_kage_path()
     log_file = Path.home() / ".kage" / "launchd.log"
     
+    env_block = ""
+    if cfg.env_path:
+        env_block = f"""
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{cfg.env_path}</string>
+    </dict>"""
+
     plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -166,7 +188,7 @@ def _setup_macos_launchd():
     <key>StandardOutPath</key>
     <string>{log_file}</string>
     <key>StandardErrorPath</key>
-    <string>{log_file}</string>
+    <string>{log_file}</string>{env_block}
 </dict>
 </plist>
 """
@@ -175,10 +197,9 @@ def _setup_macos_launchd():
     LAUNCHD_PLIST_PATH.write_text(plist_content)
     
     try:
-        # Unload if already loaded (ignore error)
-        subprocess.run(["launchctl", "unload", str(LAUNCHD_PLIST_PATH)], stderr=subprocess.DEVNULL)
-        # Load and start
-        subprocess.run(["launchctl", "load", str(LAUNCHD_PLIST_PATH)], check=True)
+        _bootout_macos_launchd()
+        subprocess.run(["launchctl", "bootstrap", _launchd_domain(), str(LAUNCHD_PLIST_PATH)], check=True)
+        subprocess.run(["launchctl", "kickstart", "-k", _launchd_label()], check=True)
         typer.echo(f"Successfully registered kage to launchd (every {cfg.daemon_interval_minutes} min). Agent ID: {LAUNCHD_PLIST_ID}")
     except Exception as e:
         typer.echo(f"Failed to register launchd agent: {e}")
@@ -189,7 +210,7 @@ def _remove_macos_launchd():
         return
         
     try:
-        subprocess.run(["launchctl", "unload", str(LAUNCHD_PLIST_PATH)], stderr=subprocess.DEVNULL)
+        _bootout_macos_launchd()
         LAUNCHD_PLIST_PATH.unlink()
         typer.echo("Successfully removed kage from launchd.")
     except Exception as e:
@@ -200,7 +221,13 @@ def _start_macos_launchd():
         typer.echo("kage launchd agent is not installed. Use install first.")
         return
     try:
-        subprocess.run(["launchctl", "load", str(LAUNCHD_PLIST_PATH)], check=True)
+        # bootstrap may fail when already loaded, so ignore and always kickstart.
+        subprocess.run(
+            ["launchctl", "bootstrap", _launchd_domain(), str(LAUNCHD_PLIST_PATH)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(["launchctl", "kickstart", "-k", _launchd_label()], check=True)
         typer.echo("kage background tasks started (launchctl loaded).")
     except Exception as e:
         typer.echo(f"Failed to start launchctl agent: {e}")
@@ -210,7 +237,13 @@ def _stop_macos_launchd():
         typer.echo("kage launchd agent is not installed.")
         return
     try:
-        subprocess.run(["launchctl", "unload", str(LAUNCHD_PLIST_PATH)], check=True)
+        result = subprocess.run(
+            ["launchctl", "bootout", _launchd_label()],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode != 0:
+            subprocess.run(["launchctl", "bootout", _launchd_domain(), str(LAUNCHD_PLIST_PATH)], check=True)
         typer.echo("kage background tasks stopped (launchctl unloaded).")
     except Exception as e:
         typer.echo(f"Failed to stop launchctl agent: {e}")
@@ -262,10 +295,13 @@ def status():
     platform = get_platform()
     if platform == "darwin":
         if LAUNCHD_PLIST_PATH.exists():
-            # Check if actually loaded
             try:
-                out = subprocess.check_output(["launchctl", "list"], text=True)
-                if LAUNCHD_PLIST_ID in out:
+                result = subprocess.run(
+                    ["launchctl", "print", _launchd_label()],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if result.returncode == 0:
                     typer.echo(f"[ACTIVE] launchd agent '{LAUNCHD_PLIST_ID}' is loaded.")
                 else:
                     typer.echo(f"[STOPPED] launchd agent exists at {LAUNCHD_PLIST_PATH} but is not loaded.")
