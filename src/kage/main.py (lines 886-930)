@@ -1,0 +1,59 @@
+    def _validate_task_file(task_file: Path, merged_cfg):
+        label = str(task_file)
+        if task_file.suffix.lower() != ".md":
+            warn(label, "Only .md task files are supported. TOML tasks are deprecated.")
+            return
+
+        try:
+            text = task_file.read_text(encoding="utf-8")
+        except Exception as e:
+            fail(label, f"read error: {e}")
+            return
+
+        fm, body = _split_markdown_front_matter(text)
+        if not fm:
+            fail(label, "missing markdown front matter")
+            return
+
+        allowed = {
+            "name",
+            "cron",
+            "active",
+            "mode",
+            "concurrency_policy",
+            "timezone",
+            "timeout_minutes",
+            "allowed_hours",
+            "denied_hours",
+            "provider",
+            "command",
+            "shell",
+            "parser",
+            "parser_args",
+        }
+        for k in fm.keys():
+            if k not in allowed:
+                warn(label, f"front matter unknown key: {k}")
+
+        if not isinstance(fm.get("name"), str) or not fm.get("name", "").strip():
+            fail(label, "front matter name is required")
+        _validate_cron(fm.get("cron"), label)
+
+        if not body.strip() and "command" not in fm:
+            fail(
+                label,
+                "markdown task requires either body prompt or 'command' in front matter",
+            )
+
+        task_data = {
+            "name": fm.get("name"),
+            "cron": fm.get("cron"),
+            "active": fm.get("active", "true"),
+            "prompt": body if body.strip() else None,
+            "command": fm.get("command"),
+            "shell": fm.get("shell"),
+            "provider": fm.get("provider"),
+            "parser": fm.get("parser"),
+            "parser_args": fm.get("parser_args"),
+        }
+        _validate_task_mapping(task_data, f"{label}#task", merged_cfg)

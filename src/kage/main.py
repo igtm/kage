@@ -694,6 +694,7 @@ def doctor():
             "env_path",
             "commands",
             "providers",
+            "system_prompt",
         }
         for k in data.keys():
             if k not in allowed_top:
@@ -706,6 +707,7 @@ def doctor():
             "daemon_interval_minutes": (int,),
             "timezone": (str,),
             "env_path": (str,),
+            "system_prompt": (str,),
         }
         for key, expected in typed_keys.items():
             if (
@@ -911,6 +913,8 @@ def doctor():
             "allowed_hours",
             "denied_hours",
             "provider",
+            "command",
+            "shell",
             "parser",
             "parser_args",
         }
@@ -921,14 +925,20 @@ def doctor():
         if not isinstance(fm.get("name"), str) or not fm.get("name", "").strip():
             fail(label, "front matter name is required")
         _validate_cron(fm.get("cron"), label)
-        if not body.strip():
-            fail(label, "markdown body prompt is empty")
+
+        if not body.strip() and "command" not in fm:
+            fail(
+                label,
+                "markdown task requires either body prompt or 'command' in front matter",
+            )
 
         task_data = {
             "name": fm.get("name"),
             "cron": fm.get("cron"),
             "active": fm.get("active", "true"),
-            "prompt": body,
+            "prompt": body if body.strip() else None,
+            "command": fm.get("command"),
+            "shell": fm.get("shell"),
             "provider": fm.get("provider"),
             "parser": fm.get("parser"),
             "parser_args": fm.get("parser_args"),

@@ -128,33 +128,37 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
         print(f"Markdown task requires front matter block in {filepath}")
         return []
 
-    # md は prompt タスクのみ許可 (commandは廃止またはfrontmatterで指定)
-    required = ["name", "cron"]
-    if not all(k in fm and str(fm[k]).strip() for k in required):
-        print(f"Markdown task requires front matter keys: {required} in {filepath}")
-        return []
+        # md は prompt または command タスクを許可
+        required = ["name", "cron"]
+        if not all(k in fm and str(fm[k]).strip() for k in required):
+            print(f"Markdown task requires front matter keys: {required} in {filepath}")
+            return []
 
-    if not body_prompt.strip():
-        print(f"Markdown task requires non-empty body as prompt in {filepath}")
-        return []
+        task_data = {
+            "name": fm.get("name"),
+            "cron": fm.get("cron"),
+            "active": fm.get("active", "true"),
+            "mode": fm.get("mode", "continuous"),
+            "concurrency_policy": fm.get("concurrency_policy", "allow"),
+            "timezone": fm.get("timezone"),
+            "timeout_minutes": int(fm.get("timeout_minutes"))
+            if fm.get("timeout_minutes")
+            else None,
+            "allowed_hours": fm.get("allowed_hours"),
+            "denied_hours": fm.get("denied_hours"),
+            "prompt": body_prompt if body_prompt.strip() else None,
+            "command": fm.get("command"),
+            "shell": fm.get("shell"),
+            "provider": fm.get("provider"),
+            "parser": fm.get("parser"),
+            "parser_args": fm.get("parser_args"),
+        }
 
-    task_data = {
-        "name": fm.get("name"),
-        "cron": fm.get("cron"),
-        "active": fm.get("active", "true"),
-        "mode": fm.get("mode", "continuous"),
-        "concurrency_policy": fm.get("concurrency_policy", "allow"),
-        "timezone": fm.get("timezone"),
-        "timeout_minutes": int(fm.get("timeout_minutes"))
-        if fm.get("timeout_minutes")
-        else None,
-        "allowed_hours": fm.get("allowed_hours"),
-        "denied_hours": fm.get("denied_hours"),
-        "prompt": body_prompt,
-        "provider": fm.get("provider"),
-        "parser": fm.get("parser"),
-        "parser_args": fm.get("parser_args"),
-    }
+        if not task_data["prompt"] and not task_data["command"]:
+            print(
+                f"Markdown task requires either a body prompt or a 'command' in front matter: {filepath}"
+            )
+            return []
 
     t = _parse_task_dict(task_data)
     return [("task", t)] if t else []

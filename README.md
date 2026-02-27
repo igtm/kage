@@ -10,6 +10,7 @@ English | [日本語](./README_JA.md)
 
 - **Autonomous Agent Logic**: Automatically decomposes tasks into GFM checklists and tracks progress.
 - **Persistent Memory**: Stores task state in `.kage/memory/` to maintain context.
+- **Hybrid Tasks**: Supports both AI prompts (Markdown body) and direct shell commands (`command` in front matter).
 - **Advanced Workflow Controls**:
     - **Execution Modes**: `continuous`, `once`, `autostop`.
     - **Concurrency Policy**: `allow`, `forbid` (skip if running), `replace` (kill old).
@@ -25,20 +26,27 @@ curl -sSL https://raw.githubusercontent.com/igtm/kage/main/install.sh | bash
 
 ## Task Example (`.kage/tasks/audit.md`)
 
+### AI Task
 ```markdown
 ---
 name: Project Auditor
 cron: "0 * * * *"
-mode: continuous
-concurrency_policy: forbid
-allowed_hours: "9-18"
-denied_hours: "12"
-timezone: "Asia/Tokyo"
 provider: gemini
 ---
 
 # Task: Continuous Health Check
 Analyze the current codebase for architectural drifts.
+```
+
+### Shell-Command Task
+```markdown
+---
+name: Log Cleanup
+cron: "0 0 * * *"
+command: "rm -rf ./logs/*.log"
+shell: "bash"
+---
+Cleanup old logs every midnight.
 ```
 
 ## Commands
@@ -49,6 +57,7 @@ Analyze the current codebase for architectural drifts.
 - `kage task list`: List all tasks.
 - `kage task show <name>`: Show detailed configuration.
 - `kage doctor`: Diagnose configuration health.
+- `kage skill`: Display agent skill guidelines (SKILL.md).
 
 ## Configuration
 

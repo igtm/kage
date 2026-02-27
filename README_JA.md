@@ -10,6 +10,7 @@
 
 - **自律型エージェント・ロジック**: タスクを自動的に Todo リストに分解し、進捗を追跡します。
 - **永続メモリ**: `.kage/memory/` にタスクの状態を保存し、コンテキストを引き継ぎます。
+- **ハイブリッド・タスク**: AI プロンプト（Markdown 本文）と直接コマンド実行（Front Matter 内の `command`）の両方をサポート。
 - **高度な制御 (Workflow)**:
     - **実行モード**: `continuous` (常時), `once` (一回), `autostop` (AIが完了判断時に停止)。
     - **多重起動制御**: `allow`, `forbid` (重複スキップ), `replace` (古い方を終了)。
@@ -25,20 +26,27 @@ curl -sSL https://raw.githubusercontent.com/igtm/kage/main/install.sh | bash
 
 ## タスク定義例 (`.kage/tasks/audit.md`)
 
+### AI タスク
 ```markdown
 ---
 name: プロジェクト監査役
 cron: "0 * * * *"
-mode: continuous
-concurrency_policy: forbid
-allowed_hours: "9-18"
-denied_hours: "12"
-timezone: "Asia/Tokyo"
 provider: gemini
 ---
 
 # タスク: 継続的ヘルスチェック
 現在のコードベースを分析し、アーキテクチャの乖離を確認してください。
+```
+
+### シェルコマンド・タスク
+```markdown
+---
+name: ログクリーンアップ
+cron: "0 0 * * *"
+command: "rm -rf ./logs/*.log"
+shell: "bash"
+---
+毎日深夜に古いログを削除します。
 ```
 
 ## コマンド
@@ -49,6 +57,7 @@ provider: gemini
 - `kage task list`: タスク一覧を表示。
 - `kage task show <name>`: 詳細設定を表示。
 - `kage doctor`: 設定と環境の健全性を診断。
+- `kage skill`: エージェントの指針（SKILL.md）を表示。
 
 ## 設定ファイル
 

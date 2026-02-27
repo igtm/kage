@@ -14,6 +14,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
     - `continuous`: Default cron-based execution.
     - `once`: Runs once and deactivates.
     - `autostop`: Stops when AI signals 'status: Completed' in Memory.
+- **Hybrid Task Types**: Supports both AI-driven prompts (Markdown body) and direct shell commands (`command` in front matter).
 - **Concurrency Control**: 
     - `allow`: Multiple instances allowed.
     - `forbid`: Skips if already running.
@@ -37,21 +38,27 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 
 ## Task Configuration (.kage/tasks/*.md)
 
+### AI-Driven Task
 ```markdown
 ---
 name: Code Auditor
 cron: "0 * * * *"
-mode: continuous
-concurrency_policy: forbid
-allowed_hours: "9-18"
-denied_hours: "12"
-timezone: "Asia/Tokyo"
-timeout_minutes: 30
 provider: claude
 ---
 
 # Task: Continuous Health Check
 Analyze the 'src/' directory and report findings.
+```
+
+### Shell-Command Task
+```markdown
+---
+name: Database Backup
+cron: "0 3 * * *"
+command: "./scripts/backup_db.sh"
+shell: "bash"
+---
+Backup the production database every night.
 ```
 
 ## Configuration Hierarchy
