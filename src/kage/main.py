@@ -115,7 +115,7 @@ def project_remove(
 def task_list(
     project: Optional[str] = typer.Option(None, "--project", "-p", help="Filter by project path")
 ):
-    """List all registered tasks across projects."""
+    """List all registered tasks and their status (ON/OFF)."""
     from .scheduler import get_projects
     from .parser import load_project_tasks
     from rich.console import Console
@@ -131,6 +131,7 @@ def task_list(
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("Project", style="dim")
     table.add_column("Task Name", style="bold")
+    table.add_column("Active")
     table.add_column("Schedule")
     table.add_column("Type")
     table.add_column("Provider/Command")
@@ -144,9 +145,11 @@ def task_list(
             t = local_task.task
             task_type = "AI Prompt" if t.prompt else "Shell"
             provider_info = t.provider or (t.ai.engine if t.ai and t.ai.engine else "") if t.prompt else (t.command or "")[:40]
+            status = "[green]ON[/green]" if t.active else "[red]OFF[/red]"
             table.add_row(
                 str(proj_dir),
                 t.name,
+                status,
                 t.cron,
                 task_type,
                 provider_info or "-",
@@ -157,6 +160,116 @@ def task_list(
         console.print("[yellow]No tasks found.[/yellow]")
     else:
         console.print(table)
+
+@task_app.command("new")
+def task_new(
+    file_name: str = typer.Argument(..., help="Name of the task file (without extension)")
+):
+    """Create a new kage task file in .kage/tasks/."""
+    from pathlib import Path
+    from rich.console import Console
+    
+    console = Console()
+    tasks_dir = Path.cwd() / ".kage" / "tasks"
+    
+    if not tasks_dir.parent.exists():
+        console.print("[red]Not in a kage project. Run 'kage init' first.[/red]")
+        raise typer.Exit(1)
+        
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    target_path = tasks_dir / f"{file_name}.md"
+    
+    if target_path.exists():
+        console.print(f"[yellow]Task file already exists: {target_path}[/yellow]")
+        raise typer.Exit(1)
+        
+    template = f"""---
+name: {file_name.replace("_", " ").title()}
+cron: "0 * * * *"
+active: true
+provider: claude
+---
+
+Summarize recent changes in this directory.
+Focus on key architectural decisions and potential security risks.
+Output as a concise report.
+"""
+    target_path.write_text(template, encoding="utf-8")
+    console.print(f"[green]✔ Created new task file:[/green] {target_path}")
+
+
+def _set_task_active_state(name: Optional[str], active: bool, all_tasks: bool = False):
+    from .scheduler import get_projects
+    from .parser import load_project_tasks
+    import tomlkit
+    from rich.console import Console
+    from pathlib import Path
+    import re
+
+    console = Console()
+    projects = get_projects()
+    found_any = False
+
+    for proj_dir in projects:
+        tasks = load_project_tasks(proj_dir)
+        for task_file, local_task in tasks:
+            t = local_task.task
+            if all_tasks or t.name == name:
+                found_any = True
+                # ファイルを直接書き換える
+                content = task_file.read_text(encoding="utf-8")
+                
+                if task_file.suffix == ".md":
+                    # Markdown の Front Matter を書き換える
+                    # シンプルに正規表現で active: ... を置換
+                    new_val = "true" if active else "false"
+                    if "active:" in content:
+                        content = re.sub(r"active:\s*(true|false)", f"active: {new_val}", content)
+                    else:
+                        # active が無い場合は cron: の後に追加
+                        content = re.sub(r"(cron:.*?\n)", rf"\1active: {new_val}\n", content)
+                else:
+                    # TOML を書き換える
+                    doc = tomlkit.load(content)
+                    if "task" in doc:
+                        doc["task"]["active"] = active
+                    else:
+                        for k, v in doc.items():
+                            if k.startswith("task") and isinstance(v, dict):
+                                if all_tasks or v.get("name") == name:
+                                    v["active"] = active
+                    content = tomlkit.dumps(doc)
+                
+                task_file.write_text(content, encoding="utf-8")
+                state_str = "[green]ENABLED[/green]" if active else "[red]DISABLED[/red]"
+                console.print(f"{state_str}: {t.name} ({task_file})")
+
+    if not found_any and not all_tasks:
+        console.print(f"[red]Task '{name}' not found.[/red]")
+        raise typer.Exit(1)
+
+
+@task_app.command("on")
+def task_on(
+    name: Optional[str] = typer.Argument(None, help="Task name to enable"),
+    all_tasks: bool = typer.Option(False, "--all", help="Enable all tasks")
+):
+    """Enable a specific task or all tasks."""
+    if not name and not all_tasks:
+        typer.echo("Error: Must specify a task name or use --all")
+        raise typer.Exit(1)
+    _set_task_active_state(name, True, all_tasks)
+
+@task_app.command("off")
+def task_off(
+    name: Optional[str] = typer.Argument(None, help="Task name to disable"),
+    all_tasks: bool = typer.Option(False, "--all", help="Disable all tasks")
+):
+    """Disable a specific task or all tasks."""
+    if not name and not all_tasks:
+        typer.echo("Error: Must specify a task name or use --all")
+        raise typer.Exit(1)
+    _set_task_active_state(name, False, all_tasks)
 
 @task_app.command("show")
 def task_show(

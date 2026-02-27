@@ -68,6 +68,7 @@ kage onboard
 [task_refactor]
 name = "Daily Refactor"
 cron = "0 3 * * *"
+active = true
 prompt = "src/ 内のコードを綺麗にしてください"
 provider = "claude"
 
@@ -75,6 +76,7 @@ provider = "claude"
 [task_labels]
 name = "Ticket Labeling"
 cron = "*/30 * * * *"
+active = true
 prompt = "Issueを分類して JSON '{\"label\":\"...\"}' で返して: 'ログイン不可'"
 provider = "codex_json"
 parser_args = ".label"
@@ -83,6 +85,7 @@ parser_args = ".label"
 [task_cleanup]
 name = "Log Cleanup"
 cron = "0 0 * * 0"
+active = true
 command = "rm -rf ./logs/*.log"
 shell = "bash"
 ```
@@ -91,6 +94,7 @@ shell = "bash"
 ---
 name: Nightly Research
 cron: "0 2 * * *"
+active: true
 provider: codex
 ---
 
@@ -110,10 +114,12 @@ markdownタスクでは、front matter の下に書いた本文全体が prompt 
 - `kage config <key> <value> [--global]`: CLIから設定を更新。
 - `kage config-show [--workspace <path>]`: マージ後の設定（defaults/user/workspace）と読み込み済み `providers` / `commands` を表示。
 - `kage doctor`: セットアップ状態に加えて設定・タスクファイルの妥当性（未知キー、型不一致、cron不正、front matter不備など）を診断。
-- `kage ui`: Webダッシュボードの起動（デフォルト: [http://localhost:8484](http://localhost:8484)）。
+- `kage ui`: Webダッシュボードの起動（デフォルト: [http://localhost:8484](http://localhost:8484)）。ON/OFFの切り替えも可能。
 - `kage logs`: ターミナルで実行履歴を表示。
 - `kage run`: スケジュールされたタスクを即時一括実行（通常は cron/launchd から呼ばれます）。
-- `kage task list`: すべての登録タスク一覧を表示。
+- `kage task list`: すべての登録タスクとその状態（ON/OFF）を表示。
+- `kage task new <file_name>`: 新しいMarkdown形式のタスクファイルを作成。
+- `kage task on/off <name> [--all]`: 指定タスクまたは全タスクを有効化/無効化。
 - `kage task show <name>`: 指定タスクの詳細を表示。
 - `kage task run <name>`: 指定タスクを即時実行。
 - `kage project list`: 登録済みプロジェクト一覧を表示。

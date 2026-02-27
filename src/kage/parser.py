@@ -13,6 +13,7 @@ class AIEngineConfig(BaseModel):
 class TaskDef(BaseModel):
     name: str
     cron: str
+    active: bool = True
     command: Optional[str] = None
     shell: Optional[str] = None
     prompt: Optional[str] = None
@@ -33,6 +34,12 @@ def _parse_task_dict(data: dict) -> Optional[TaskDef]:
         if "ai" in data and isinstance(data["ai"], dict):
             data = dict(data)
             data["ai"] = AIEngineConfig(**data["ai"])
+        
+        # 'active' field conversion if it's a string from Markdown
+        if "active" in data:
+            if isinstance(data["active"], str):
+                data["active"] = data["active"].lower() == "true"
+        
         return TaskDef(**data)
     except Exception:
         return None
@@ -117,6 +124,7 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
         task_data = {
             "name": fm.get("name"),
             "cron": fm.get("cron"),
+            "active": fm.get("active", "true"),
             "prompt": body_prompt,
             "provider": fm.get("provider"),
             "parser": fm.get("parser"),

@@ -173,6 +173,7 @@ def setup_local(target_dir: Path = None):
         task1 = tomlkit.table()
         task1.add("name", "Daily Code Review")
         task1.add("cron", "0 3 * * *")
+        task1.add("active", False)
         task1.add("prompt", "Summarize today's changes and suggest improvements in bullet points.")
         task1.add("provider", "claude")
         doc.add("task_basic", task1)
@@ -184,6 +185,7 @@ def setup_local(target_dir: Path = None):
         task2 = tomlkit.table()
         task2.add("name", "Ticket Labeling")
         task2.add("cron", "*/30 * * * *")
+        task2.add("active", False)
         task2.add("prompt", "Classify this issue into [bug, feature, docs] and output as {\"label\": \"...\"}: 'login is failing'")
         task2.add("provider", "codex_json")  # A provider pre-configured with the jq parser
         task2.add("parser_args", ".label")  # Override parser args to extract just the label
@@ -196,6 +198,7 @@ def setup_local(target_dir: Path = None):
         task3 = tomlkit.table()
         task3.add("name", "Custom Tool Task")
         task3.add("cron", "0 0 * * *")
+        task3.add("active", False)
         task3.add("prompt", "Text to analyze")
         task3.add("command_template", ["my-custom-cli", "--output", "json", "--input", "{prompt}"])
         task3.add("parser", "jq")
@@ -214,6 +217,7 @@ def setup_local(target_dir: Path = None):
         task4 = tomlkit.table()
         task4.add("name", "Cleanup Logs")
         task4.add("cron", "0 4 * * 0")
+        task4.add("active", False)
         task4.add("command", "rm -rf ./logs/*.log && touch ./logs/.gitkeep")
         task4.add("shell", "bash")
         doc.add("task_shell", task4)
@@ -224,6 +228,7 @@ def setup_local(target_dir: Path = None):
         doc.add(tomlkit.comment("================================================================"))
         doc.add(tomlkit.comment(" name             : Task name (Required)"))
         doc.add(tomlkit.comment(" cron             : Cron schedule expression (Required)"))
+        doc.add(tomlkit.comment(" active           : Set to false to disable this task (Default: true)"))
         doc.add(tomlkit.comment(" prompt           : Instruction for the AI (Required for AI tasks)"))
         doc.add(tomlkit.comment(" provider         : AI provider to use (Must match [providers] in config.toml)"))
         doc.add(tomlkit.comment(" command          : Shell command to run directly (For non-AI tasks)"))
@@ -245,6 +250,7 @@ def setup_local(target_dir: Path = None):
             """---
 name: Nightly Research
 cron: \"0 2 * * *\"
+active: false
 provider: codex
 ---
 

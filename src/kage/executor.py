@@ -6,20 +6,13 @@ from .parser import TaskDef
 from .db import log_execution
 from .config import get_global_config
 
-def _normalize_codex_headless_args(cmd: list[str]) -> list[str]:
-    """When running without a TTY, avoid interactive approval prompts in codex exec."""
+def _normalize_headless_args(cmd: list[str]) -> list[str]:
+    """When running without a TTY, avoid interactive approval prompts for AI CLIs."""
     if not cmd:
         return cmd
 
     exe = Path(cmd[0]).name
-    if exe != "codex":
-        return cmd
-
-    try:
-        exec_idx = cmd.index("exec")
-    except ValueError:
-        return cmd
-
+    
     try:
         is_tty = sys.stdin.isatty()
     except Exception:
@@ -27,32 +20,59 @@ def _normalize_codex_headless_args(cmd: list[str]) -> list[str]:
     if is_tty:
         return cmd
 
-    # Split into codex-global args and exec args
-    head = cmd[:exec_idx]
-    tail = cmd[exec_idx + 1 :]
+    if exe == "codex":
+        try:
+            exec_idx = cmd.index("exec")
+        except ValueError:
+            return cmd
 
-    # Remove exec-scoped convenience that can prompt on non-TTY
-    tail = [part for part in tail if part != "--full-auto"]
+        # Split into codex-global args and exec args
+        head = cmd[:exec_idx]
+        tail = cmd[exec_idx + 1 :]
 
-    def _drop_flag_with_value(parts: list[str], flag: str) -> list[str]:
-        out: list[str] = []
-        i = 0
-        while i < len(parts):
-            if parts[i] == flag:
-                i += 2
-                continue
-            out.append(parts[i])
-            i += 1
-        return out
+        # Remove exec-scoped convenience that can prompt on non-TTY
+        tail = [part for part in tail if part != "--full-auto"]
 
-    # Ensure global non-interactive policy before subcommand.
-    head = _drop_flag_with_value(head, "--ask-for-approval")
-    head = _drop_flag_with_value(head, "--sandbox")
-    head = head + ["--ask-for-approval", "never", "--sandbox", "workspace-write"]
+        def _drop_flag_with_value(parts: list[str], flag: str) -> list[str]:
+            out: list[str] = []
+            i = 0
+            while i < len(parts):
+                if parts[i] == flag:
+                    i += 2
+                    continue
+                out.append(parts[i])
+                i += 1
+            return out
 
-    return head + ["exec"] + tail
+        # Ensure global non-interactive policy before subcommand.
+        head = _drop_flag_with_value(head, "--ask-for-approval")
+        head = _drop_flag_with_value(head, "--sandbox")
+        head = head + ["--ask-for-approval", "never", "--sandbox", "workspace-write"]
+
+        return head + ["exec"] + tail
+
+    if exe == "claude":
+        # Ensure --dangerously-skip-permissions is present for claude
+        # We also prefer -p (print mode) for non-interactive execution
+        new_cmd = list(cmd)
+        if "-p" not in new_cmd and "--print" not in new_cmd:
+            # Insert -p after 'claude' if not present
+            new_cmd.insert(1, "-p")
+        
+        if "--dangerously-skip-permissions" not in new_cmd:
+            new_cmd.insert(1, "--dangerously-skip-permissions")
+        if "--allow-dangerously-skip-permissions" not in new_cmd:
+            new_cmd.insert(1, "--allow-dangerously-skip-permissions")
+            
+        return new_cmd
+
+    return cmd
 
 def execute_task(project_dir: Path, task: TaskDef):
+    if not task.active:
+        print(f"Skipping inactive task '{task.name}' in {project_dir}")
+        return
+
     global_config = get_global_config(workspace_dir=project_dir)
     
     provider = None
@@ -122,7 +142,7 @@ def execute_task(project_dir: Path, task: TaskDef):
             exe_path = shutil.which(cmd[0], path=env.get("PATH"))
             if exe_path:
                 cmd[0] = exe_path
-        cmd = _normalize_codex_headless_args(cmd)
+        cmd = _normalize_headless_args(cmd)
 
         result = subprocess.run(
             cmd,

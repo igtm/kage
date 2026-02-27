@@ -117,6 +117,9 @@ INDEX_HTML = """
             margin-bottom: 20px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
+        .task-list-item.inactive {
+            opacity: 0.6;
+        }
         .task-list-item h3 { margin-top: 0; color: var(--accent-color); }
         .task-list-head {
             display: flex;
@@ -125,6 +128,11 @@ INDEX_HTML = """
             gap: 12px;
         }
         .task-list-head h3 { margin: 0; color: var(--accent-color); }
+        .task-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
         .task-run-button {
             background-color: var(--success-color);
             color: white;
@@ -143,6 +151,34 @@ INDEX_HTML = """
             color: var(--secondary-text);
             cursor: not-allowed;
         }
+        /* Toggle Switch */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 22px;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: var(--border-color);
+            transition: .4s;
+            border-radius: 22px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px; width: 16px;
+            left: 3px; bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider { background-color: var(--accent-color); }
+        input:checked + .slider:before { transform: translateX(22px); }
+
         .task-run-message {
             margin-top: 10px;
             font-size: 0.85rem;
@@ -399,17 +435,28 @@ INDEX_HTML = """
                 if (config.tasks && config.tasks.length > 0) {
                     config.tasks.forEach(task => {
                         tasksHtml += `
-                            <div class="task-list-item">
+                            <div class="task-list-item ${task.active ? '' : 'inactive'}">
                                 <div class="task-list-head">
                                     <h3>${escapeHtml(task.name)}</h3>
-                                    <button
-                                        class="task-run-button"
-                                        data-project-path="${escapeHtml(task.project_path)}"
-                                        data-task-name="${escapeHtml(task.name)}"
-                                        data-file="${escapeHtml(task.file || '')}"
-                                    >
-                                        Run now
-                                    </button>
+                                    <div class="task-controls">
+                                        <label class="switch" title="Enable/Disable task">
+                                            <input type="checkbox" class="task-toggle" 
+                                                data-project-path="${escapeHtml(task.project_path)}"
+                                                data-task-name="${escapeHtml(task.name)}"
+                                                data-file="${escapeHtml(task.file || '')}"
+                                                ${task.active ? 'checked' : ''}>
+                                            <span class="slider"></span>
+                                        </label>
+                                        <button
+                                            class="task-run-button"
+                                            data-project-path="${escapeHtml(task.project_path)}"
+                                            data-task-name="${escapeHtml(task.name)}"
+                                            data-file="${escapeHtml(task.file || '')}"
+                                            ${task.active ? '' : 'disabled'}
+                                        >
+                                            Run now
+                                        </button>
+                                    </div>
                                 </div>
                                 <div class="details">
                                     <div><strong>Project:</strong> ${escapeHtml(task.project_path)}</div>
@@ -483,6 +530,44 @@ INDEX_HTML = """
                         }
                     } finally {
                         button.disabled = false;
+                    }
+                });
+            });
+
+            document.querySelectorAll('.task-toggle').forEach(toggle => {
+                toggle.addEventListener('change', async () => {
+                    const projectPath = toggle.getAttribute('data-project-path') || '';
+                    const taskName = toggle.getAttribute('data-task-name') || '';
+                    const file = toggle.getAttribute('data-file') || '';
+                    const active = toggle.checked;
+                    const card = toggle.closest('.task-list-item');
+                    const runBtn = card?.querySelector('.task-run-button');
+
+                    try {
+                        const response = await fetch('/api/tasks/toggle', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                project_path: projectPath,
+                                task_name: taskName,
+                                file: file || null,
+                                active: active
+                            })
+                        });
+                        if (!response.ok) {
+                            throw new Error('Failed to toggle task');
+                        }
+                        
+                        if (card) {
+                            if (active) card.classList.remove('inactive');
+                            else card.classList.add('inactive');
+                        }
+                        if (runBtn) {
+                            runBtn.disabled = !active;
+                        }
+                    } catch (error) {
+                        alert(error.message);
+                        toggle.checked = !active;
                     }
                 });
             });
@@ -575,6 +660,12 @@ class RunTaskRequest(BaseModel):
     task_name: str
     file: str | None = None
 
+class ToggleTaskRequest(BaseModel):
+    project_path: str
+    task_name: str
+    active: bool
+    file: str | None = None
+
 @app.get("/", response_class=HTMLResponse)
 def root():
     return INDEX_HTML
@@ -626,6 +717,7 @@ def get_config_api():
             all_tasks.append({
                 "name": t.name,
                 "cron": t.cron,
+                "active": t.active,
                 "next_run": next_run_str,
                 "prompt": t.prompt,
                 "command": t.command,
@@ -670,6 +762,40 @@ def run_task_now(req: RunTaskRequest):
     ).start()
 
     return {"message": f"Task '{req.task_name}' started."}
+
+@app.post("/api/tasks/toggle")
+def toggle_task(req: ToggleTaskRequest):
+    import tomlkit
+    import re
+    from pathlib import Path
+
+    task_file = Path(req.file) if req.file else None
+    if not task_file or not task_file.exists():
+        return JSONResponse(status_code=404, content={"error": "Task file not found."})
+
+    try:
+        content = task_file.read_text(encoding="utf-8")
+        if task_file.suffix == ".md":
+            new_val = "true" if req.active else "false"
+            if "active:" in content:
+                content = re.sub(r"active:\s*(true|false)", f"active: {new_val}", content)
+            else:
+                content = re.sub(r"(cron:.*?\n)", rf"\1active: {new_val}\n", content)
+        else:
+            doc = tomlkit.load(content)
+            if "task" in doc:
+                doc["task"]["active"] = req.active
+            else:
+                for k, v in doc.items():
+                    if k.startswith("task") and isinstance(v, dict):
+                        if v.get("name") == req.task_name:
+                            v["active"] = req.active
+            content = tomlkit.dumps(doc)
+            
+        task_file.write_text(content, encoding="utf-8")
+        return {"message": f"Task '{req.task_name}' {'enabled' if req.active else 'disabled'}."}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/api/chat")
 def handle_chat(req: ChatRequest):

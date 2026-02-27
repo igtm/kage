@@ -30,7 +30,9 @@ description: AI native cron task runner. Allows scheduling AI prompts and shell 
 - `kage run`: Manually trigger all scheduled tasks for registered projects (used by daemon).
 - `kage ui`: Start the web-based dashboard.
 - `kage logs`: View the recent execution history in the terminal.
-- `kage task list`: Show all tasks across registered projects.
+- `kage task list`: Show all tasks and their status (ON/OFF).
+- `kage task new <name>`: Create a new Markdown task file.
+- `kage task on/off <name> [--all]`: Enable or disable tasks.
 - `kage task show <name>`: Show a task's resolved configuration.
 - `kage task run <name>`: Run one task immediately (ignore schedule).
 
@@ -40,14 +42,15 @@ description: AI native cron task runner. Allows scheduling AI prompts and shell 
 - `kage daemon status`: Check if the background runner is active.
 - `kage daemon start/stop/restart`: Control the background runner without uninstalling.
 
-## Task Configuration (.kage/tasks/*.toml)
+## Task Configuration (.kage/tasks/*.toml or *.md)
 
-Tasks are defined in TOML files. A typical task looks like this:
+Tasks can be defined in TOML or Markdown files. A typical task looks like this:
 
 ```toml
 [task_my_task]
 name = "Daily Report"
 cron = "0 9 * * *"
+active = true
 prompt = "Analyze the logs in ./logs/ and summarize the key findings."
 provider = "claude"
 ```
@@ -55,6 +58,7 @@ provider = "claude"
 ### Available Fields
 - `name`: Human-readable task name.
 - `cron`: Crontab expression for scheduling.
+- `active`: Boolean flag to enable/disable the task (default: true).
 - `prompt`: The AI prompt to execute.
 - `command`: Alternative to `prompt`, a shell command to run.
 - `provider`: Which AI config to use (defined in `config.toml`).

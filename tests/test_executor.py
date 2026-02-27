@@ -149,6 +149,27 @@ def test_execute_inline_jq_parser(tmp_path: Path, mock_global_config, mocker):
     assert args_jq[0] == ["jq", "-r", ".output.text"]
 
 
+def test_execute_claude_normalization(tmp_path: Path, mock_global_config, mocker):
+    """claudeコマンドは非TTY環境で自動的に権限スキップフラグが付与される"""
+    mock_run = mocker.patch("subprocess.run")
+    mock_run.return_value = MagicMock(returncode=0, stdout="claude response", stderr="")
+    
+    # configに無い未知のプロバイダーとして'claude'を直接使う（フォールバック）
+    task = TaskDef(name="claude_task", cron="* * * * *", prompt="Fix this", provider="claude")
+    
+    # configにclaudeが無い場合に備え、モックのconfigにclaudeプロバイダーが無い状態にする
+    # (実際にはdefault_config.tomlにあるが、ここではnormalizationのみを見る)
+    execute_task(tmp_path, task)
+    
+    args, _ = mock_run.call_args
+    # 実行ファイルが claude であることを確認 (shutil.whichで解決される想定)
+    assert "claude" in args[0][0]
+    # 正規化によってフラグが挿入されていることを確認
+    assert "-p" in args[0]
+    assert "--dangerously-skip-permissions" in args[0]
+    assert "--allow-dangerously-skip-permissions" in args[0]
+
+
 # --- config 層別マージのテスト ---
 
 def test_config_default_loaded():

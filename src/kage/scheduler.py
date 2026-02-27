@@ -51,6 +51,8 @@ def run_all_scheduled_tasks():
     for proj_dir in projects:
         tasks = load_project_tasks(proj_dir)
         for toml_file, local_task in tasks:
+            if not local_task.task.active:
+                continue
             if should_run(local_task.task.cron, now, tz_name):
                 # 実行条件を満たした場合、非同期またはバックグラウンドで実行
                 # 今回はPython内のサブプロセスとして呼び出す

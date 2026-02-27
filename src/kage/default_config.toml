@@ -17,10 +17,10 @@ template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-writ
 template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "{prompt}\n\nPlease output ONLY valid JSON without Markdown formatting."]
 
 [commands.claude]
-template = ["claude", "-p", "--dangerously-skip-permissions", "{prompt}"]
+template = ["claude", "-p", "--allow-dangerously-skip-permissions", "--dangerously-skip-permissions", "{prompt}"]
 
 [commands.claude_json]
-template = ["claude", "-p", "--dangerously-skip-permissions", "{prompt}\n\nPlease output ONLY valid JSON without Markdown formatting."]
+template = ["claude", "-p", "--allow-dangerously-skip-permissions", "--dangerously-skip-permissions", "{prompt}\n\nPlease output ONLY valid JSON without Markdown formatting."]
 
 [commands.copilot]
 template = ["copilot", "-p", "{prompt}", "--allow-all-tools"]

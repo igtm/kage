@@ -1,0 +1,24 @@
+{
+  "security": {
+    "auth": {
+      "selectedType": "oauth-personal"
+    },
+    "environmentVariableRedaction": {
+      "enabled": true
+    }
+  },
+  "general": {
+    "previewFeatures": true,
+    "sessionRetention": {
+      "enabled": true,
+      "maxAge": "30d",
+      "warningAcknowledged": true
+    }
+  },
+  "telemetry": {
+    "enabled": false
+  },
+  "privacy": {
+    "usageStatisticsEnabled": false
+  }
+}

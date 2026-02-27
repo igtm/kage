@@ -68,6 +68,7 @@ Define tasks in `.toml` **or** `.md` files under `.kage/tasks/`.
 [task_refactor]
 name = "Daily Refactor"
 cron = "0 3 * * *"
+active = true
 prompt = "Please clean up the code in src/"
 provider = "claude"
 
@@ -75,6 +76,7 @@ provider = "claude"
 [task_labels]
 name = "Ticket Labeling"
 cron = "*/30 * * * *"
+active = true
 prompt = "Classify this issue as JSON '{\"label\":\"...\"}': 'Cannot login'"
 provider = "codex_json"
 parser_args = ".label"
@@ -83,6 +85,7 @@ parser_args = ".label"
 [task_cleanup]
 name = "Log Cleanup"
 cron = "0 0 * * 0"
+active = true
 command = "rm -rf ./logs/*.log"
 shell = "bash"
 ```
@@ -91,6 +94,7 @@ shell = "bash"
 ---
 name: Nightly Research
 cron: "0 2 * * *"
+active: true
 provider: codex
 ---
 
@@ -110,10 +114,12 @@ In markdown tasks, the entire body after front matter is treated as the prompt.
 - `kage config <key> <value> [--global]`: Update configuration via CLI.
 - `kage config-show [--workspace <path>]`: Show resolved config (merged defaults/user/workspace), including loaded `providers` and `commands`.
 - `kage doctor`: Check setup health and validate config/task files (unknown keys, type errors, invalid cron, missing front matter, etc).
-- `kage ui`: Launch web dashboard (default: [http://localhost:8484](http://localhost:8484)).
+- `kage ui`: Launch web dashboard (default: [http://localhost:8484](http://localhost:8484)). Toggle task ON/OFF directly from the UI.
 - `kage logs`: View execution history.
 - `kage run`: Force run all scheduled tasks (normally executed by cron/launchd).
-- `kage task list`: List all tasks across all registered projects.
+- `kage task list`: List all tasks with their status (ON/OFF).
+- `kage task new <file_name>`: Create a new Markdown task file.
+- `kage task on/off <name> [--all]`: Enable or disable tasks.
 - `kage task show <name>`: Show details for one task.
 - `kage task run <name>`: Run one task immediately.
 - `kage project list`: List registered projects.
