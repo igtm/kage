@@ -795,6 +795,13 @@ def doctor():
         allowed = {
             "name",
             "cron",
+            "active",
+            "mode",
+            "concurrency_policy",
+            "timezone",
+            "timeout_minutes",
+            "allowed_hours",
+            "denied_hours",
             "command",
             "shell",
             "prompt",
@@ -897,15 +904,15 @@ def doctor():
             "name",
             "cron",
             "active",
-            "provider",
-            "parser",
-            "parser_args",
             "mode",
             "concurrency_policy",
             "timezone",
             "timeout_minutes",
             "allowed_hours",
             "denied_hours",
+            "provider",
+            "parser",
+            "parser_args",
         }
         for k in fm.keys():
             if k not in allowed:
