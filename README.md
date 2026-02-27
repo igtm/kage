@@ -1,156 +1,67 @@
-# kage 影 - AI Native Cron Task Runner
+# kage 影 - Autonomous AI Project Agent
 
 ![kage hero](./hero.png)
 
 English | [日本語](./README_JA.md)
 
-`kage` is a tool for running scheduled tasks using AI CLIs (codex, claude, gemini, etc.) or standard shell commands, managed on a per-project basis.
+`kage` is an autonomous execution layer for project-specific AI agents. It schedules AI-driven tasks via cron, maintains state across runs using a persistent memory system, and allows for layered configuration.
 
 ## Features
 
-- **AI Native**: Run AI prompts directly from a `cron` schedule.
-- **Flexible AI Providers**: Built-in support for `codex`, `claude`, `gemini`, and `copilot` with easy customization.
-- **Inline Overrides**: Customize commands, AI models, or parsers (like jq) for each specific task.
-- **3-Layer Configuration**: Configuration is merged from library defaults, user overrides (~/.kage), and workspace-specific settings (.kage).
-- **Web UI**: Monitor task execution and logs through a sleek browser dashboard.
+- **Autonomous Agent Logic**: Automatically decomposes tasks into GFM checklists and tracks progress.
+- **Persistent Memory**: Stores task state in `.kage/memory/` to maintain context across cron cycles.
+- **Markdown-First**: Define tasks using simple Markdown files with YAML front matter.
+- **Layered System Prompts**: Customize AI behavior globally or per-project using `system_prompt.md`.
+- **Flexible Configuration**: 4-layer configuration: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > defaults.
+- **Web Dashboard**: Monitor execution history and real-time logs at `http://localhost:8484`.
 
 ## Installation
-
-The easiest way to install kage is via the interactive installer:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/igtm/kage/main/install.sh | bash
 ```
 
-Or install from PyPI:
-
+Or via PyPI:
 ```bash
 pip install kage-ai
 ```
 
-Alternatively, install with `uv`:
+## Quick Start
 
-```bash
-uv tool install git+https://github.com/igtm/kage.git
-kage onboard
-```
+1. **Onboard**: `kage onboard` (Setup global dirs and daemon)
+2. **Configure**: Set `default_ai_engine = "claude"` in `~/.kage/config.toml`.
+3. **Initialize Project**: `kage init` in your repo.
+4. **Define Task**: Edit `.kage/tasks/daily_audit.md`.
 
-## Getting Started
+## Task Example (`.kage/tasks/audit.md`)
 
-1. **Global Setup (First time only)**:
-   ```bash
-   kage onboard
-   ```
-   This initializes `~/.kage/`, the database, and the crontab entries.
-
-2. **Configure AI Engine**:
-   Create `~/.kage/config.toml` and specify your default engine.
-   ```toml
-   default_ai_engine = "codex"
-   ```
-
-3. **Initialize Project**:
-   Run this in your project directory.
-   ```bash
-   kage init
-   ```
-   This creates `.kage/tasks/sample.toml`.
-
-## Task Definition Samples
-
-Define tasks in `.toml` **or** `.md` files under `.kage/tasks/`.
-
-- `*.toml`: existing format (single or multiple tasks per file)
-- `*.md`: front matter + markdown body, **one file = one prompt task only**
-
-```toml
-# Auto-refactor using AI
-[task_refactor]
-name = "Daily Refactor"
-cron = "0 3 * * *"
-active = true
-prompt = "Please clean up the code in src/"
-provider = "claude"
-
-# Classification with JSON/JQ parsing
-[task_labels]
-name = "Ticket Labeling"
-cron = "*/30 * * * *"
-active = true
-prompt = "Classify this issue as JSON '{\"label\":\"...\"}': 'Cannot login'"
-provider = "codex_json"
-parser_args = ".label"
-
-# Standard Shell Command
-[task_cleanup]
-name = "Log Cleanup"
-cron = "0 0 * * 0"
-active = true
-command = "rm -rf ./logs/*.log"
-shell = "bash"
-```
-
-```md
+```markdown
 ---
-name: Nightly Research
-cron: "0 2 * * *"
-active: true
-provider: codex
+name: Project Auditor
+cron: "0 9 * * *"
+provider: gemini
 ---
 
-Collect benchmark updates and summarize differences.
-Add comparison points for quality, speed, and cost.
+# Task: Continuous Health Check
+Analyze the current codebase for architectural drifts.
+On the first run, create a Todo list in the Memory.
+In subsequent runs, pick one item and provide a detailed report.
 ```
-
-In markdown tasks, the entire body after front matter is treated as the prompt.
 
 ## Commands
 
-- `kage onboard`: Initialize global settings and OS-level daemon.
-- `kage init`: Initialize current directory as a kage project.
-- `kage daemon install`: Register kage to system scheduler (cron/launchd).
-- `kage daemon remove`: Unregister kage from system scheduler.
-- `kage daemon status`: Check daemon registration status.
-- `kage config <key> <value> [--global]`: Update configuration via CLI.
-- `kage config-show [--workspace <path>]`: Show resolved config (merged defaults/user/workspace), including loaded `providers` and `commands`.
-- `kage doctor`: Check setup health and validate config/task files (unknown keys, type errors, invalid cron, missing front matter, etc).
-- `kage ui`: Launch web dashboard (default: [http://localhost:8484](http://localhost:8484)). Toggle task ON/OFF directly from the UI.
-- `kage logs`: View execution history.
-- `kage run`: Force run all scheduled tasks (normally executed by cron/launchd).
-- `kage task list`: List all tasks with their status (ON/OFF).
-- `kage task new <file_name>`: Create a new Markdown task file.
-- `kage task on/off <name> [--all]`: Enable or disable tasks.
-- `kage task show <name>`: Show details for one task.
-- `kage task run <name>`: Run one task immediately.
-- `kage project list`: List registered projects.
-- `kage project remove [path]`: Unregister a project.
+- `kage onboard`: Global setup.
+- `kage init`: Initialize kage in the current directory.
+- `kage run`: Manually trigger all scheduled tasks.
+- `kage ui`: Launch web dashboard.
+- `kage task list`: List all tasks.
+- `kage task run <name>`: Run a specific task immediately.
+- `kage doctor`: Diagnose configuration and environment health.
 
-## Release / Publish
+## Configuration
 
-```bash
-# 1) Build package
-uv build
-
-# 2) Create release (example: v0.0.1)
-gh release create v0.0.1 --title "kage v0.0.1" --generate-notes
-
-# 3) Publish to PyPI (token auth)
-TWINE_USERNAME=__token__ \
-TWINE_PASSWORD='<pypi-token>' \
-uvx twine upload dist/*
-```
-
-## Codex Provider Note (Headless / launchd)
-
-When defining a custom codex command template, place global flags **before** `exec`:
-
-```toml
-[commands.codex]
-template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "{prompt}"]
-```
-
-`codex exec --ask-for-approval ...` may fail depending on CLI version.
-
-## License
-
-MIT
+- `~/.kage/config.toml`: Global settings.
+- `.kage/config.toml`: Project-shared settings.
+- `.kage/config.local.toml`: Local overrides (usually git-ignored).
+- `~/.kage/system_prompt.md`: Global system prompt.
+- `.kage/system_prompt.md`: Project-specific system prompt.

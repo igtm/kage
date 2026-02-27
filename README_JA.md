@@ -1,156 +1,67 @@
-# kage 影 - AI Native Cron Task Runner
+# kage 影 - 自律型 AI プロジェクトエージェント
 
 ![kage hero](./hero.png)
 
 [English](./README.md) | 日本語
 
-`kage` は、プロジェクトごとのタスクを AI CLI（codex, claude, gemini等）や標準のシェルコマンドを使って定期的に実行するためのツールです。
+`kage` は、プロジェクト固有の AI エージェントのための自律実行レイヤーです。cron による定期実行、実行間での状態維持（メモリシステム）、および多層的な設定管理を提供します。
 
 ## 特徴
 
-- **AIネイティブ**: プロンプトを直接 `cron` スケジュールで実行可能。
-- **柔軟なAIプロバイダー**: `codex`, `claude`, `gemini`, `copilot` などを標準サポートし、カスタマイズも容易。
-- **インライン設定**: 個別のタスクごとに実行コマンドやAIモデル、パーサー（jq等）を自由に上書き可能。
-- **3層の設定マージ**: システムデフォルト、ユーザー（~/.kage）、ワークスペース（.kage）の順に設定を重ね合わせ。
-- **Web UI**: タスクの実行状態やログをブラウザで確認可能。
+- **自律型エージェント・ロジック**: タスクを自動的に Todo リストに分解し、進捗を追跡します。
+- **永続メモリ**: `.kage/memory/` にタスクの状態を保存し、次回の実行にコンテキストを引き継ぎます。
+- **Markdown 本位**: YAML front matter を持つシンプルな Markdown ファイルでタスクを定義します。
+- **多層的なシステムプロンプト**: `system_prompt.md` を使用して、グローバルまたはプロジェクト単位で AI の振る舞いをカスタマイズ。
+- **柔軟な設定管理**: 4層の設定: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > デフォルト。
+- **Web ダッシュボード**: `http://localhost:8484` で実行履歴とログをリアルタイムに確認。
 
 ## インストール
-
-最も簡単なインストール方法は、以下のワンライナーを実行することです：
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/igtm/kage/main/install.sh | bash
 ```
 
-または PyPI からインストールできます：
-
+または PyPI から:
 ```bash
 pip install kage-ai
 ```
 
-`uv` を使ってインストールすることも可能です：
+## クイックスタート
 
-```bash
-uv tool install git+https://github.com/igtm/kage.git
-kage onboard
-```
+1. **オンボード**: `kage onboard` (グローバルディレクトリとデーモンのセットアップ)
+2. **設定**: `~/.kage/config.toml` に `default_ai_engine = "claude"` を設定。
+3. **プロジェクト初期化**: リポジトリ内で `kage init` を実行。
+4. **タスク定義**: `.kage/tasks/daily_audit.md` を編集。
 
-## セットアップ
+## タスク定義例 (`.kage/tasks/audit.md`)
 
-1. **初期設定（初回のみ）**:
-   ```bash
-   kage onboard
-   ```
-   `~/.kage/` ディレクトリとデータベース、crontab のエントリーが作成されます。
-
-2. **AIエンジンの設定**:
-   `~/.kage/config.toml` を作成し、デフォルトで使用するモデルを指定します。
-   ```toml
-   default_ai_engine = "codex"
-   ```
-
-3. **プロジェクトの初期化**:
-   タスクを実行したいプロジェクトのディレクトリで実行します。
-   ```bash
-   kage init
-   ```
-   `.kage/tasks/sample.toml` が作成されます。
-
-## タスクの定義例
-
-`.kage/tasks/` 内の `.toml` または `.md`（front matter）でタスクを定義できます。
-
-- `*.toml`: 既存形式（1ファイルに複数タスクも可）
-- `*.md`: front matter + 本文、**1ファイル1タスク（promptタスクのみ）**
-
-```toml
-# AIを使った自動リファクタリング
-[task_refactor]
-name = "Daily Refactor"
-cron = "0 3 * * *"
-active = true
-prompt = "src/ 内のコードを綺麗にしてください"
-provider = "claude"
-
-# JSON出力のパース例
-[task_labels]
-name = "Ticket Labeling"
-cron = "*/30 * * * *"
-active = true
-prompt = "Issueを分類して JSON '{\"label\":\"...\"}' で返して: 'ログイン不可'"
-provider = "codex_json"
-parser_args = ".label"
-
-# 標準のシェルコマンド
-[task_cleanup]
-name = "Log Cleanup"
-cron = "0 0 * * 0"
-active = true
-command = "rm -rf ./logs/*.log"
-shell = "bash"
-```
-
-```md
+```markdown
 ---
-name: Nightly Research
-cron: "0 2 * * *"
-active: true
-provider: codex
+name: プロジェクト監査役
+cron: "0 9 * * *"
+provider: gemini
 ---
 
-候補ライブラリを比較して、品質・速度・コスト差分を要約して。
-最後に推奨案も書いて。
+# タスク: 継続的ヘルスチェック
+現在のコードベースを分析し、アーキテクチャの乖離を確認してください。
+初回実行時に、メモリ内に Todo リストを作成してください。
+次回以降の実行では、リストから項目を1つ選び、詳細なレポートを提供してください。
 ```
 
-markdownタスクでは、front matter の下に書いた本文全体が prompt として扱われます。
+## コマンド
 
-## コマンド一覧
+- `kage onboard`: グローバルセットアップ。
+- `kage init`: 現在のディレクトリに kage を初期化。
+- `kage run`: スケジュールされたすべてのタスクを手動でトリガー。
+- `kage ui`: Web ダッシュボードを起動。
+- `kage task list`: タスク一覧を表示。
+- `kage task run <name>`: 特定のタスクを即座に実行。
+- `kage doctor`: 設定と環境の健全性を診断。
 
-- `kage onboard`: グローバル設定とOSレベルのデーモン初期化。
-- `kage init`: カレントディレクトリを kage プロジェクトとして初期化。
-- `kage daemon install`: OSのスケジューラ（cron/launchd）への登録。
-- `kage daemon remove`: OSのスケジューラからの登録解除。
-- `kage daemon status`: デーモンの登録状態を確認。
-- `kage config <key> <value> [--global]`: CLIから設定を更新。
-- `kage config-show [--workspace <path>]`: マージ後の設定（defaults/user/workspace）と読み込み済み `providers` / `commands` を表示。
-- `kage doctor`: セットアップ状態に加えて設定・タスクファイルの妥当性（未知キー、型不一致、cron不正、front matter不備など）を診断。
-- `kage ui`: Webダッシュボードの起動（デフォルト: [http://localhost:8484](http://localhost:8484)）。ON/OFFの切り替えも可能。
-- `kage logs`: ターミナルで実行履歴を表示。
-- `kage run`: スケジュールされたタスクを即時一括実行（通常は cron/launchd から呼ばれます）。
-- `kage task list`: すべての登録タスクとその状態（ON/OFF）を表示。
-- `kage task new <file_name>`: 新しいMarkdown形式のタスクファイルを作成。
-- `kage task on/off <name> [--all]`: 指定タスクまたは全タスクを有効化/無効化。
-- `kage task show <name>`: 指定タスクの詳細を表示。
-- `kage task run <name>`: 指定タスクを即時実行。
-- `kage project list`: 登録済みプロジェクト一覧を表示。
-- `kage project remove [path]`: プロジェクト登録を解除。
+## 設定ファイル
 
-## リリース / 公開
-
-```bash
-# 1) パッケージをビルド
-uv build
-
-# 2) GitHub Release を作成（例: v0.0.1）
-gh release create v0.0.1 --title "kage v0.0.1" --generate-notes
-
-# 3) PyPI に公開（トークン認証）
-TWINE_USERNAME=__token__ \
-TWINE_PASSWORD='<pypi-token>' \
-uvx twine upload dist/*
-```
-
-## Codex プロバイダー注意点（headless / launchd）
-
-`codex` のコマンドテンプレートを自前定義する場合、グローバル引数は `exec` の前に置いてください。
-
-```toml
-[commands.codex]
-template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "{prompt}"]
-```
-
-CLIバージョンによっては `codex exec --ask-for-approval ...` が失敗します。
-
-## ライセンス
-
-MIT
+- `~/.kage/config.toml`: グローバル設定。
+- `.kage/config.toml`: プロジェクト共有設定。
+- `.kage/config.local.toml`: ローカル上書き設定 (通常は git-ignore します)。
+- `~/.kage/system_prompt.md`: グローバルシステムプロンプト。
+- `.kage/system_prompt.md`: プロジェクト固有のシステムプロンプト。

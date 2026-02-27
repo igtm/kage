@@ -219,26 +219,14 @@ def _set_task_active_state(name: Optional[str], active: bool, all_tasks: bool = 
                 # ファイルを直接書き換える
                 content = task_file.read_text(encoding="utf-8")
                 
-                if task_file.suffix == ".md":
-                    # Markdown の Front Matter を書き換える
-                    # シンプルに正規表現で active: ... を置換
-                    new_val = "true" if active else "false"
-                    if "active:" in content:
-                        content = re.sub(r"active:\s*(true|false)", f"active: {new_val}", content)
-                    else:
-                        # active が無い場合は cron: の後に追加
-                        content = re.sub(r"(cron:.*?\n)", rf"\1active: {new_val}\n", content)
+                # Markdown の Front Matter を書き換える
+                # シンプルに正規表現で active: ... を置換
+                new_val = "true" if active else "false"
+                if "active:" in content:
+                    content = re.sub(r"active:\s*(true|false)", f"active: {new_val}", content)
                 else:
-                    # TOML を書き換える
-                    doc = tomlkit.load(content)
-                    if "task" in doc:
-                        doc["task"]["active"] = active
-                    else:
-                        for k, v in doc.items():
-                            if k.startswith("task") and isinstance(v, dict):
-                                if all_tasks or v.get("name") == name:
-                                    v["active"] = active
-                    content = tomlkit.dumps(doc)
+                    # active が無い場合は cron: の後に追加
+                    content = re.sub(r"(cron:.*?\n)", rf"\1active: {new_val}\n", content)
                 
                 task_file.write_text(content, encoding="utf-8")
                 state_str = "[green]ENABLED[/green]" if active else "[red]DISABLED[/red]"
@@ -735,65 +723,42 @@ def doctor():
 
     def _validate_task_file(task_file: Path, merged_cfg):
         label = str(task_file)
-        if task_file.suffix.lower() == ".toml":
-            data, err = _load_toml(task_file)
-            if err:
-                fail(label, f"parse error: {err}")
-                return
-            if not isinstance(data, dict):
-                fail(label, "must be TOML table/object")
-                return
-
-            sections = []
-            if isinstance(data.get("task"), dict):
-                sections.append(("task", data["task"]))
-            else:
-                for key, val in data.items():
-                    if key.startswith("task"):
-                        if isinstance(val, dict):
-                            sections.append((key, val))
-                        else:
-                            fail(label, f"{key} must be a table")
-            if not sections:
-                warn(label, "no valid [task] or [task_*] section found")
-                return
-            for sec, task_data in sections:
-                _validate_task_mapping(task_data, f"{label}#{sec}", merged_cfg)
+        if task_file.suffix.lower() != ".md":
+            warn(label, "Only .md task files are supported. TOML tasks are deprecated.")
             return
 
-        if task_file.suffix.lower() == ".md":
-            try:
-                text = task_file.read_text(encoding="utf-8")
-            except Exception as e:
-                fail(label, f"read error: {e}")
-                return
+        try:
+            text = task_file.read_text(encoding="utf-8")
+        except Exception as e:
+            fail(label, f"read error: {e}")
+            return
 
-            fm, body = _split_markdown_front_matter(text)
-            if not fm:
-                fail(label, "missing markdown front matter")
-                return
+        fm, body = _split_markdown_front_matter(text)
+        if not fm:
+            fail(label, "missing markdown front matter")
+            return
 
-            allowed = {"name", "cron", "provider", "parser", "parser_args"}
-            for k in fm.keys():
-                if k not in allowed:
-                    warn(label, f"front matter unknown key: {k}")
-            if "command" in fm:
-                fail(label, "markdown task does not allow command")
-            if not isinstance(fm.get("name"), str) or not fm.get("name", "").strip():
-                fail(label, "front matter name is required")
-            _validate_cron(fm.get("cron"), label)
-            if not body.strip():
-                fail(label, "markdown body prompt is empty")
+        allowed = {"name", "cron", "active", "provider", "parser", "parser_args"}
+        for k in fm.keys():
+            if k not in allowed:
+                warn(label, f"front matter unknown key: {k}")
+        
+        if not isinstance(fm.get("name"), str) or not fm.get("name", "").strip():
+            fail(label, "front matter name is required")
+        _validate_cron(fm.get("cron"), label)
+        if not body.strip():
+            fail(label, "markdown body prompt is empty")
 
-            task_data = {
-                "name": fm.get("name"),
-                "cron": fm.get("cron"),
-                "prompt": body,
-                "provider": fm.get("provider"),
-                "parser": fm.get("parser"),
-                "parser_args": fm.get("parser_args"),
-            }
-            _validate_task_mapping(task_data, f"{label}#task", merged_cfg)
+        task_data = {
+            "name": fm.get("name"),
+            "cron": fm.get("cron"),
+            "active": fm.get("active", "true"),
+            "prompt": body,
+            "provider": fm.get("provider"),
+            "parser": fm.get("parser"),
+            "parser_args": fm.get("parser_args"),
+        }
+        _validate_task_mapping(task_data, f"{label}#task", merged_cfg)
 
     # 1. Directory
     if KAGE_GLOBAL_DIR.exists():
@@ -861,7 +826,7 @@ def doctor():
             continue
 
         merged_cfg = get_global_config(workspace_dir=proj_dir)
-        for task_file in sorted(list(tasks_dir.glob("*.toml")) + list(tasks_dir.glob("*.md"))):
+        for task_file in sorted(list(tasks_dir.glob("*.md"))):
             _validate_task_file(task_file, merged_cfg)
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))

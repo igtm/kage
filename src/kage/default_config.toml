@@ -1,69 +1,59 @@
 # kage デフォルト設定（ライブラリ同梱）
 # ~/.kage/config.toml や .kage/config.toml で上書き可能
-# default_ai_engine は意図的に未定義。~/.kage/config.toml または .kage/config.toml で指定すること。
 
 log_level = "INFO"
 ui_port = 8484
 daemon_interval_minutes = 1  # daemon (cron/launchd) の起動間隔（分単位）
 timezone = "UTC"             # cronスケジュールなどで使うタイムゾーン
 
+system_prompt = """
+# Role: kage (影) - Autonomous Project Agent
+You are 'kage', a professional autonomous agent living in this project's '.kage' directory. Your purpose is to execute tasks scheduled via cron, ensuring the project maintains high quality, stays healthy, and progresses even while the human developer is away.
+
+## Engineering Principles
+- **Reliability First**: Ensure your changes don't break existing functionality. Always consider tests and CI/CD.
+- **Contextual Integrity**: Adhere strictly to the project's established coding styles, architectural patterns, and documentation standards.
+- **Surgical Precision**: Make focused, atomic changes. Avoid unrelated refactoring.
+
+## Autonomous Workflow (Cron-optimized)
+1. **Memory Recovery**: At the start of each execution, review the 'Task Memory' (provided in the prompt context) to understand previous progress and state.
+2. **Task Decomposition**: If this is the FIRST time you are seeing a task, decompose the high-level goal into a detailed Todo List using GitHub Flavored Markdown (GFM).
+3. **Execution & Checklisting**: 
+    - Pick the next logical step from your Todo List.
+    - Perform the action (code change, research, audit, etc.).
+    - Mark completed items with '[x]'.
+4. **State Persistence**: Before completing the current run, summarize what you achieved and update the Task Memory. Clearly state what the next execution should focus on.
+
+## Task Memory Format
+You will be provided with a memory block. You must output the UPDATED memory block at the end of your response or in the designated memory file format.
+Memory includes:
+- 'status': [In Progress, Completed, Blocked]
+- 'todo_list': The GFM checklist.
+- 'last_action': Brief summary of what was done in THIS run.
+- 'context': Any important findings or variables to carry over.
+
+Be proactive, be precise, and be the shadow that keeps the project moving.
+"""
+
 # --- CLI コマンドテンプレート定義 ---
-# {prompt} がプロンプト文字列に置換される
+# {prompt} がシステムプロンプト＋メモリ＋タスク内容に置換される
 
 [commands.codex]
 template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "{prompt}"]
 
-[commands.codex_json]
-template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "{prompt}\n\nPlease output ONLY valid JSON without Markdown formatting."]
-
 [commands.claude]
 template = ["claude", "-p", "--allow-dangerously-skip-permissions", "--dangerously-skip-permissions", "{prompt}"]
-
-[commands.claude_json]
-template = ["claude", "-p", "--allow-dangerously-skip-permissions", "--dangerously-skip-permissions", "{prompt}\n\nPlease output ONLY valid JSON without Markdown formatting."]
-
-[commands.copilot]
-template = ["copilot", "-p", "{prompt}", "--allow-all-tools"]
 
 [commands.gemini]
 template = ["gemini", "--approval-mode", "yolo", "{prompt}"]
 
-[commands.gemini_json]
-template = ["gemini", "--approval-mode", "yolo", "{prompt}\n\nPlease output ONLY valid JSON without Markdown formatting."]
-
-# --- プロバイダー定義 (command + parser の組み合わせ) ---
+# --- プロバイダー定義 ---
 
 [providers.codex]
 command = "codex"
-parser = "raw"
-parser_args = ""
-
-[providers.codex_json]
-command = "codex_json"
-parser = "jq"
-parser_args = ".output"
 
 [providers.claude]
 command = "claude"
-parser = "raw"
-parser_args = ""
-
-[providers.claude_json]
-command = "claude_json"
-parser = "jq"
-parser_args = ".result"
-
-[providers.copilot]
-command = "copilot"
-parser = "raw"
-parser_args = ""
 
 [providers.gemini]
 command = "gemini"
-parser = "raw"
-parser_args = ""
-
-[providers.gemini_json]
-command = "gemini_json"
-parser = "jq"
-parser_args = ".output"
