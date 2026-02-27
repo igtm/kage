@@ -1,8 +1,20 @@
+from enum import Enum
 from pathlib import Path
 from typing import List, Optional
 
 from pydantic import BaseModel
-import tomlkit
+
+
+class ExecutionMode(str, Enum):
+    CONTINUOUS = "continuous"  # 常時実行（デフォルト）
+    AUTOSTOP = "autostop"  # AIが完了と判断したら停止
+    ONCE = "once"  # 一回実行したら停止
+
+
+class ConcurrencyPolicy(str, Enum):
+    ALLOW = "allow"  # 多重起動を許可（デフォルト）
+    FORBID = "forbid"  # 前のが終わってなければ起動しない
+    REPLACE = "replace"  # 前のを強制終了して新しく起動する
 
 
 class AIEngineConfig(BaseModel):
@@ -14,6 +26,12 @@ class TaskDef(BaseModel):
     name: str
     cron: str
     active: bool = True
+    mode: ExecutionMode = ExecutionMode.CONTINUOUS
+    concurrency_policy: ConcurrencyPolicy = ConcurrencyPolicy.ALLOW
+    timezone: Optional[str] = None  # タスク固有のタイムゾーン設定
+    timeout_minutes: Optional[int] = None  # タイムアウト設定
+    allowed_hours: Optional[str] = None  # 実行を許可する時間（例: "9-17,21"）
+    denied_hours: Optional[str] = None  # 実行を禁止する時間（例: "0-5,23"）
     command: Optional[str] = None
     shell: Optional[str] = None
     prompt: Optional[str] = None
@@ -34,12 +52,16 @@ def _parse_task_dict(data: dict) -> Optional[TaskDef]:
         if "ai" in data and isinstance(data["ai"], dict):
             data = dict(data)
             data["ai"] = AIEngineConfig(**data["ai"])
-        
+
         # 'active' field conversion if it's a string from Markdown
         if "active" in data:
             if isinstance(data["active"], str):
                 data["active"] = data["active"].lower() == "true"
-        
+
+        # 'mode' field normalization
+        if "mode" in data and isinstance(data["mode"], str):
+            data["mode"] = data["mode"].lower()
+
         return TaskDef(**data)
     except Exception:
         return None
@@ -75,7 +97,9 @@ def _split_markdown_front_matter(text: str) -> tuple[Optional[dict], str]:
         k, v = line.split(":", 1)
         key = k.strip()
         val = v.strip()
-        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        if (val.startswith('"') and val.endswith('"')) or (
+            val.startswith("'") and val.endswith("'")
+        ):
             val = val[1:-1]
         data[key] = val
 
@@ -118,6 +142,14 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
         "name": fm.get("name"),
         "cron": fm.get("cron"),
         "active": fm.get("active", "true"),
+        "mode": fm.get("mode", "continuous"),
+        "concurrency_policy": fm.get("concurrency_policy", "allow"),
+        "timezone": fm.get("timezone"),
+        "timeout_minutes": int(fm.get("timeout_minutes"))
+        if fm.get("timeout_minutes")
+        else None,
+        "allowed_hours": fm.get("allowed_hours"),
+        "denied_hours": fm.get("denied_hours"),
         "prompt": body_prompt,
         "provider": fm.get("provider"),
         "parser": fm.get("parser"),

@@ -5,20 +5,25 @@ import sys
 import os
 from pathlib import Path
 
+
 def get_platform():
     return sys.platform
+
 
 def get_kage_path():
     return shutil.which("kage") or "kage"
 
+
 # --- Linux (cron) Implementation ---
+
 
 def _setup_linux_cron():
     """Add kage run to crontab with configurable interval."""
     from .config import get_global_config
+
     cfg = get_global_config()
     interval = max(1, cfg.daemon_interval_minutes)
-    
+
     # cron式を間隔から生成
     if interval == 1:
         cron_expr = "* * * * *"
@@ -26,7 +31,9 @@ def _setup_linux_cron():
         cron_expr = f"*/{interval} * * * *"
 
     try:
-        current_cron = subprocess.check_output(["crontab", "-l"], text=True, stderr=subprocess.DEVNULL)
+        current_cron = subprocess.check_output(
+            ["crontab", "-l"], text=True, stderr=subprocess.DEVNULL
+        )
     except subprocess.CalledProcessError:
         current_cron = ""
 
@@ -37,7 +44,7 @@ def _setup_linux_cron():
     kage_path = get_kage_path()
     log_file = Path.home() / ".kage" / "cron.log"
     new_job = f"{cron_expr} {kage_path} run >> {log_file} 2>&1\n"
-    
+
     new_cron = current_cron
     if current_cron and not current_cron.endswith("\n"):
         new_cron += "\n"
@@ -53,22 +60,25 @@ def _setup_linux_cron():
     except Exception as e:
         typer.echo(f"Failed to update crontab: {e}")
 
+
 def _remove_linux_cron():
     try:
-        current_cron = subprocess.check_output(["crontab", "-l"], text=True, stderr=subprocess.DEVNULL)
+        current_cron = subprocess.check_output(
+            ["crontab", "-l"], text=True, stderr=subprocess.DEVNULL
+        )
     except subprocess.CalledProcessError:
         typer.echo("No crontab found.")
         return
 
     lines = current_cron.splitlines()
     new_lines = [line for line in lines if "kage run" not in line]
-    
+
     if len(lines) == len(new_lines):
         typer.echo("No kage entry found in crontab.")
         return
 
     new_cron = "\n".join(new_lines) + ("\n" if new_lines else "")
-    
+
     try:
         if not new_lines:
             subprocess.run(["crontab", "-r"])
@@ -79,10 +89,13 @@ def _remove_linux_cron():
     except Exception as e:
         typer.echo(f"Failed to update crontab: {e}")
 
+
 def _stop_linux_cron():
     """Disable kage entry by commenting it out."""
     try:
-        current_cron = subprocess.check_output(["crontab", "-l"], text=True, stderr=subprocess.DEVNULL)
+        current_cron = subprocess.check_output(
+            ["crontab", "-l"], text=True, stderr=subprocess.DEVNULL
+        )
     except subprocess.CalledProcessError:
         typer.echo("No crontab found.")
         return
@@ -96,7 +109,7 @@ def _stop_linux_cron():
             found = True
         else:
             new_lines.append(line)
-    
+
     if not found:
         typer.echo("kage is already stopped or not installed.")
         return
@@ -106,10 +119,13 @@ def _stop_linux_cron():
     proc.communicate(new_cron)
     typer.echo("kage background tasks stopped (commented out in crontab).")
 
+
 def _start_linux_cron():
     """Enable kage entry by uncommenting it."""
     try:
-        current_cron = subprocess.check_output(["crontab", "-l"], text=True, stderr=subprocess.DEVNULL)
+        current_cron = subprocess.check_output(
+            ["crontab", "-l"], text=True, stderr=subprocess.DEVNULL
+        )
     except subprocess.CalledProcessError:
         typer.echo("No crontab found.")
         return
@@ -123,9 +139,9 @@ def _start_linux_cron():
             found = True
         else:
             new_lines.append(line)
-    
+
     if not found:
-        if any("kage run" in l for l in lines):
+        if any("kage run" in line for line in lines):
             typer.echo("kage is already started.")
         else:
             typer.echo("kage is not installed in crontab. Use install first.")
@@ -136,33 +152,53 @@ def _start_linux_cron():
     proc.communicate(new_cron)
     typer.echo("kage background tasks started (uncommented in crontab).")
 
+
 # --- macOS (launchd) Implementation ---
 
 LAUNCHD_PLIST_ID = "com.user.kage"
-LAUNCHD_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_PLIST_ID}.plist"
+LAUNCHD_PLIST_PATH = (
+    Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_PLIST_ID}.plist"
+)
+
 
 def _launchd_domain() -> str:
     return f"gui/{os.getuid()}"
 
+
 def _launchd_label() -> str:
     return f"{_launchd_domain()}/{LAUNCHD_PLIST_ID}"
 
+
 def _bootout_macos_launchd():
     """Unload launchd agent if loaded. Ignore errors."""
-    subprocess.run(["launchctl", "bootout", _launchd_label()], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run(["launchctl", "bootout", _launchd_domain(), str(LAUNCHD_PLIST_PATH)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        ["launchctl", "bootout", _launchd_label()],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        ["launchctl", "bootout", _launchd_domain(), str(LAUNCHD_PLIST_PATH)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     # Fallback for older launchctl behavior.
-    subprocess.run(["launchctl", "unload", str(LAUNCHD_PLIST_PATH)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        ["launchctl", "unload", str(LAUNCHD_PLIST_PATH)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
 
 def _setup_macos_launchd():
     """Create a launchd plist to run kage at a configurable interval."""
     from .config import get_global_config
+
     cfg = get_global_config()
     interval_seconds = max(60, cfg.daemon_interval_minutes * 60)
 
     kage_path = get_kage_path()
     log_file = Path.home() / ".kage" / "launchd.log"
-    
+
     env_block = ""
     if cfg.env_path:
         env_block = f"""
@@ -192,29 +228,36 @@ def _setup_macos_launchd():
 </dict>
 </plist>
 """
-    
+
     LAUNCHD_PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     LAUNCHD_PLIST_PATH.write_text(plist_content)
-    
+
     try:
         _bootout_macos_launchd()
-        subprocess.run(["launchctl", "bootstrap", _launchd_domain(), str(LAUNCHD_PLIST_PATH)], check=True)
+        subprocess.run(
+            ["launchctl", "bootstrap", _launchd_domain(), str(LAUNCHD_PLIST_PATH)],
+            check=True,
+        )
         subprocess.run(["launchctl", "kickstart", "-k", _launchd_label()], check=True)
-        typer.echo(f"Successfully registered kage to launchd (every {cfg.daemon_interval_minutes} min). Agent ID: {LAUNCHD_PLIST_ID}")
+        typer.echo(
+            f"Successfully registered kage to launchd (every {cfg.daemon_interval_minutes} min). Agent ID: {LAUNCHD_PLIST_ID}"
+        )
     except Exception as e:
         typer.echo(f"Failed to register launchd agent: {e}")
+
 
 def _remove_macos_launchd():
     if not LAUNCHD_PLIST_PATH.exists():
         typer.echo("No launchd agent found for kage.")
         return
-        
+
     try:
         _bootout_macos_launchd()
         LAUNCHD_PLIST_PATH.unlink()
         typer.echo("Successfully removed kage from launchd.")
     except Exception as e:
         typer.echo(f"Failed to remove launchctl agent: {e}")
+
 
 def _start_macos_launchd():
     if not LAUNCHD_PLIST_PATH.exists():
@@ -232,6 +275,7 @@ def _start_macos_launchd():
     except Exception as e:
         typer.echo(f"Failed to start launchctl agent: {e}")
 
+
 def _stop_macos_launchd():
     if not LAUNCHD_PLIST_PATH.exists():
         typer.echo("kage launchd agent is not installed.")
@@ -243,18 +287,24 @@ def _stop_macos_launchd():
             stderr=subprocess.DEVNULL,
         )
         if result.returncode != 0:
-            subprocess.run(["launchctl", "bootout", _launchd_domain(), str(LAUNCHD_PLIST_PATH)], check=True)
+            subprocess.run(
+                ["launchctl", "bootout", _launchd_domain(), str(LAUNCHD_PLIST_PATH)],
+                check=True,
+            )
         typer.echo("kage background tasks stopped (launchctl unloaded).")
     except Exception as e:
         typer.echo(f"Failed to stop launchctl agent: {e}")
 
+
 # --- Public API ---
+
 
 def install():
     typer.echo("Installing kage daemon...")
 
     # PATHを保存して、cron実行時に復元できるようにする
     from .config import set_config_value
+
     current_path = os.environ.get("PATH", "")
     if current_path:
         set_config_value("env_path", current_path, is_global=True)
@@ -266,12 +316,14 @@ def install():
     elif plat == "darwin":
         _setup_macos_launchd()
 
+
 def remove():
     plat = get_platform()
     if plat == "linux":
         _remove_linux_cron()
     elif plat == "darwin":
         _remove_macos_launchd()
+
 
 def start():
     platform = get_platform()
@@ -280,6 +332,7 @@ def start():
     else:
         _start_linux_cron()
 
+
 def stop():
     platform = get_platform()
     if platform == "darwin":
@@ -287,9 +340,11 @@ def stop():
     else:
         _stop_linux_cron()
 
+
 def restart():
     stop()
     start()
+
 
 def status():
     platform = get_platform()
@@ -302,19 +357,30 @@ def status():
                     stderr=subprocess.DEVNULL,
                 )
                 if result.returncode == 0:
-                    typer.echo(f"[ACTIVE] launchd agent '{LAUNCHD_PLIST_ID}' is loaded.")
+                    typer.echo(
+                        f"[ACTIVE] launchd agent '{LAUNCHD_PLIST_ID}' is loaded."
+                    )
                 else:
-                    typer.echo(f"[STOPPED] launchd agent exists at {LAUNCHD_PLIST_PATH} but is not loaded.")
-            except:
+                    typer.echo(
+                        f"[STOPPED] launchd agent exists at {LAUNCHD_PLIST_PATH} but is not loaded."
+                    )
+            except Exception:
                 typer.echo(f"[ACTIVE] launchd agent present at {LAUNCHD_PLIST_PATH}")
         else:
             typer.echo("[NOT INSTALLED] No launchd agent found.")
     else:
         try:
-            current_cron = subprocess.check_output(["crontab", "-l"], text=True, stderr=subprocess.DEVNULL)
+            current_cron = subprocess.check_output(
+                ["crontab", "-l"], text=True, stderr=subprocess.DEVNULL
+            )
             if "kage run" in current_cron:
-                if any(line.strip().startswith("#") and "kage run" in line for line in current_cron.splitlines()):
-                    typer.echo("[STOPPED] kage entry exists but is commented out in crontab.")
+                if any(
+                    line.strip().startswith("#") and "kage run" in line
+                    for line in current_cron.splitlines()
+                ):
+                    typer.echo(
+                        "[STOPPED] kage entry exists but is commented out in crontab."
+                    )
                 else:
                     typer.echo("[ACTIVE] kage entry found in crontab.")
             else:

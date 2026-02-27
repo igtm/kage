@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from importlib import resources
 import tomlkit
@@ -10,15 +9,20 @@ KAGE_CONFIG_PATH = KAGE_GLOBAL_DIR / "config.toml"
 KAGE_PROJECTS_LIST = KAGE_GLOBAL_DIR / "projects.list"
 KAGE_DB_PATH = KAGE_GLOBAL_DIR / "kage.db"
 
+
 class CommandDef(BaseModel):
     """CLIの呼び出しテンプレートを定義する（パーサー設定は含まない）"""
+
     template: list[str]
+
 
 class ProviderConfig(BaseModel):
     """commandを参照し、パーサー設定を付与したプロバイダー定義"""
+
     command: str
     parser: str = "raw"
     parser_args: str = ""
+
 
 class GlobalConfig(BaseModel):
     default_ai_engine: Optional[str] = None
@@ -71,7 +75,7 @@ def _load_default_config() -> dict:
 def get_global_config(workspace_dir: Optional[Path] = None) -> GlobalConfig:
     """
     設定をマージして GlobalConfig を返す。
-    優先度（高い順）: 
+    優先度（高い順）:
     1. .kage/config.local.toml
     2. .kage/config.toml
     3. ~/.kage/config.toml
@@ -79,11 +83,11 @@ def get_global_config(workspace_dir: Optional[Path] = None) -> GlobalConfig:
     """
     # 1. ライブラリデフォルト
     merged = _load_default_config()
-    
+
     # 2. ユーザーグローバル設定 (~/.kage/config.toml)
     user_config = _load_toml_file(KAGE_CONFIG_PATH)
     merged = _deep_merge(merged, user_config)
-    
+
     # 3. ワークスペース設定 (.kage/config.toml)
     ws_dir = workspace_dir or Path.cwd()
     ws_config_path = ws_dir / ".kage" / "config.toml"
@@ -94,7 +98,7 @@ def get_global_config(workspace_dir: Optional[Path] = None) -> GlobalConfig:
     ws_local_config_path = ws_dir / ".kage" / "config.local.toml"
     ws_local_config = _load_toml_file(ws_local_config_path)
     merged = _deep_merge(merged, ws_local_config)
-    
+
     try:
         return GlobalConfig(**merged)
     except Exception:
@@ -107,17 +111,17 @@ def get_system_prompt(workspace_dir: Optional[Path] = None) -> str:
     優先度: .kage/system_prompt.md > ~/.kage/system_prompt.md > config内のsystem_prompt
     """
     ws_dir = workspace_dir or Path.cwd()
-    
+
     # 1. Workspace MD
     ws_md = ws_dir / ".kage" / "system_prompt.md"
     if ws_md.exists():
         return ws_md.read_text(encoding="utf-8").strip()
-        
+
     # 2. Global MD
     global_md = KAGE_GLOBAL_DIR / "system_prompt.md"
     if global_md.exists():
         return global_md.read_text(encoding="utf-8").strip()
-        
+
     # 3. Config
     config = get_global_config(workspace_dir=ws_dir)
     return config.system_prompt
@@ -132,11 +136,13 @@ def get_user_overrides(workspace_dir: Optional[Path] = None) -> dict:
     ws_dir = workspace_dir or Path.cwd()
     ws_config_path = ws_dir / ".kage" / "config.toml"
     ws_config = _load_toml_file(ws_config_path)
-    
+
     return _deep_merge(user_config, ws_config)
 
 
-def set_config_value(key: str, value: str, is_global: bool = True, workspace_dir: Optional[Path] = None):
+def set_config_value(
+    key: str, value: str, is_global: bool = True, workspace_dir: Optional[Path] = None
+):
     """
     設定値を TOML ファイルに保存する。階層化されたキー (e.g. 'ui_port') に対応。
     """
@@ -145,7 +151,7 @@ def set_config_value(key: str, value: str, is_global: bool = True, workspace_dir
     else:
         ws_dir = workspace_dir or Path.cwd()
         path = ws_dir / ".kage" / "config.toml"
-    
+
     # 既存のファイルを読み込む（コメント等を保持するため tomlkit をそのまま使う）
     if path.exists():
         with open(path, "r", encoding="utf-8") as f:
@@ -154,7 +160,7 @@ def set_config_value(key: str, value: str, is_global: bool = True, workspace_dir
         doc = tomlkit.document()
         if not path.parent.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            
+
     # 型推論: 数字やブール値への変換
     if value.lower() == "true":
         v = True
@@ -164,9 +170,9 @@ def set_config_value(key: str, value: str, is_global: bool = True, workspace_dir
         v = int(value)
     else:
         v = value
-        
+
     doc[key] = v
-    
+
     with open(path, "w", encoding="utf-8") as f:
         tomlkit.dump(doc, f)
     # typer.echo は main.py 側で出すか、ここで行うならインポートが必要
@@ -186,11 +192,11 @@ def setup_global():
 def setup_local(target_dir: Path = None):
     if target_dir is None:
         target_dir = Path.cwd()
-        
+
     kage_local_dir = target_dir / ".kage"
     tasks_dir = kage_local_dir / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
-    
+
     sample_md_path = tasks_dir / "daily_audit.md"
     if not sample_md_path.exists():
         sample_md_path.write_text(
@@ -208,12 +214,12 @@ In subsequent runs, pick one area, audit it, and update the memory.
 """,
             encoding="utf-8",
         )
-            
+
     # Add to global projects list
     if KAGE_PROJECTS_LIST.exists():
         with open(KAGE_PROJECTS_LIST, "r", encoding="utf-8") as f:
             projects = [line.strip() for line in f if line.strip()]
-        
+
         current_str = str(target_dir.absolute())
         if current_str not in projects:
             with open(KAGE_PROJECTS_LIST, "a", encoding="utf-8") as f:

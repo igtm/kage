@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -652,13 +652,16 @@ INDEX_HTML = """
 </html>
 """
 
+
 class ChatRequest(BaseModel):
     message: str
+
 
 class RunTaskRequest(BaseModel):
     project_path: str
     task_name: str
     file: str | None = None
+
 
 class ToggleTaskRequest(BaseModel):
     project_path: str
@@ -666,9 +669,11 @@ class ToggleTaskRequest(BaseModel):
     active: bool
     file: str | None = None
 
+
 @app.get("/", response_class=HTMLResponse)
 def root():
     return INDEX_HTML
+
 
 @app.get("/api/logs")
 def get_logs():
@@ -676,10 +681,24 @@ def get_logs():
         return []
     conn = sqlite3.connect(KAGE_DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('SELECT id, project_path, task_name, run_at, status, stdout, stderr FROM executions ORDER BY run_at DESC LIMIT 50')
+    cursor.execute(
+        "SELECT id, project_path, task_name, run_at, status, stdout, stderr FROM executions ORDER BY run_at DESC LIMIT 50"
+    )
     rows = cursor.fetchall()
     conn.close()
-    return [{"id": r[0], "project_path": r[1], "task_name": r[2], "run_at": r[3], "status": r[4], "stdout": r[5], "stderr": r[6]} for r in rows]
+    return [
+        {
+            "id": r[0],
+            "project_path": r[1],
+            "task_name": r[2],
+            "run_at": r[3],
+            "status": r[4],
+            "stdout": r[5],
+            "stderr": r[6],
+        }
+        for r in rows
+    ]
+
 
 @app.get("/api/config")
 def get_config_api():
@@ -688,10 +707,10 @@ def get_config_api():
     from datetime import datetime, timezone as dt_timezone
     import zoneinfo
     from croniter import croniter
-    
+
     config = get_global_config()
     projects = get_projects()
-    
+
     # Setup timezone for calculating next run
     tz_name = config.timezone
     try:
@@ -699,40 +718,44 @@ def get_config_api():
     except Exception:
         tz = dt_timezone.utc
     now = datetime.now(tz)
-    
+
     all_tasks = []
     for proj_dir in projects:
         tasks = load_project_tasks(proj_dir)
         for toml_path, task_def in tasks:
             t = task_def.task
-            
+
             next_run_str = ""
             try:
                 itr = croniter(t.cron, now)
                 next_dt = itr.get_next(datetime)
-                next_run_str = next_dt.strftime('%Y-%m-%d %H:%M:%S')
+                next_run_str = next_dt.strftime("%Y-%m-%d %H:%M:%S")
             except Exception:
                 next_run_str = "Invalid cron"
 
-            all_tasks.append({
-                "name": t.name,
-                "cron": t.cron,
-                "active": t.active,
-                "next_run": next_run_str,
-                "prompt": t.prompt,
-                "command": t.command,
-                "provider": t.provider or (t.ai.engine if (t.ai and t.ai.engine) else None),
-                "project_path": str(proj_dir),
-                "file": str(toml_path)
-            })
+            all_tasks.append(
+                {
+                    "name": t.name,
+                    "cron": t.cron,
+                    "active": t.active,
+                    "next_run": next_run_str,
+                    "prompt": t.prompt,
+                    "command": t.command,
+                    "provider": t.provider
+                    or (t.ai.engine if (t.ai and t.ai.engine) else None),
+                    "project_path": str(proj_dir),
+                    "file": str(toml_path),
+                }
+            )
 
     return {
         "default_ai_engine": config.default_ai_engine,
         "log_level": config.log_level,
         "ui_port": config.ui_port,
         "timezone": config.timezone,
-        "tasks": all_tasks
+        "tasks": all_tasks,
     }
+
 
 @app.post("/api/tasks/run")
 def run_task_now(req: RunTaskRequest):
@@ -741,7 +764,9 @@ def run_task_now(req: RunTaskRequest):
 
     proj_dir = Path(req.project_path).expanduser()
     if not proj_dir.exists():
-        return JSONResponse(status_code=404, content={"error": "Project path does not exist."})
+        return JSONResponse(
+            status_code=404, content={"error": "Project path does not exist."}
+        )
 
     matched_task = None
     for toml_path, local_task in load_project_tasks(proj_dir):
@@ -753,15 +778,17 @@ def run_task_now(req: RunTaskRequest):
         break
 
     if matched_task is None:
-        return JSONResponse(status_code=404, content={"error": "Task not found in the specified project."})
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Task not found in the specified project."},
+        )
 
     threading.Thread(
-        target=execute_task,
-        args=(proj_dir, matched_task),
-        daemon=True
+        target=execute_task, args=(proj_dir, matched_task), daemon=True
     ).start()
 
     return {"message": f"Task '{req.task_name}' started."}
+
 
 @app.post("/api/tasks/toggle")
 def toggle_task(req: ToggleTaskRequest):
@@ -778,7 +805,9 @@ def toggle_task(req: ToggleTaskRequest):
         if task_file.suffix == ".md":
             new_val = "true" if req.active else "false"
             if "active:" in content:
-                content = re.sub(r"active:\s*(true|false)", f"active: {new_val}", content)
+                content = re.sub(
+                    r"active:\s*(true|false)", f"active: {new_val}", content
+                )
             else:
                 content = re.sub(r"(cron:.*?\n)", rf"\1active: {new_val}\n", content)
         else:
@@ -791,65 +820,76 @@ def toggle_task(req: ToggleTaskRequest):
                         if v.get("name") == req.task_name:
                             v["active"] = req.active
             content = tomlkit.dumps(doc)
-            
+
         task_file.write_text(content, encoding="utf-8")
-        return {"message": f"Task '{req.task_name}' {'enabled' if req.active else 'disabled'}."}
+        return {
+            "message": f"Task '{req.task_name}' {'enabled' if req.active else 'disabled'}."
+        }
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 @app.post("/api/chat")
 def handle_chat(req: ChatRequest):
     import subprocess
     import os
     from pathlib import Path
-    
+
     config = get_global_config()
     engine_name = config.default_ai_engine
     if not engine_name:
-        return JSONResponse(status_code=400, content={"error": "default_ai_engine is not set in global config."})
-        
+        return JSONResponse(
+            status_code=400,
+            content={"error": "default_ai_engine is not set in global config."},
+        )
+
     provider = config.providers.get(engine_name)
     if not provider:
-        return JSONResponse(status_code=400, content={"error": f"Provider '{engine_name}' is not defined in providers."})
-        
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Provider '{engine_name}' is not defined in providers."},
+        )
+
     cmd_def = config.commands.get(provider.command)
     if not cmd_def:
-        return JSONResponse(status_code=400, content={"error": f"Command template '{provider.command}' is not defined."})
-        
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Command template '{provider.command}' is not defined."},
+        )
+
     template = cmd_def.template
     cmd = [part.replace("{prompt}", req.message) for part in template]
-    
+
     # Resolve the executable via env_path if set
     env = os.environ.copy()
     if config.env_path:
         env["PATH"] = config.env_path
-        
+
     import shutil
+
     if cmd and cmd[0]:
         exe_path = shutil.which(cmd[0], path=env.get("PATH"))
         if exe_path:
             cmd[0] = exe_path
-            
+
     try:
         # Run subprocess blockingly and capture output
         res = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd=str(Path.cwd()),
-            env=env
+            cmd, capture_output=True, text=True, cwd=str(Path.cwd()), env=env
         )
         return {
             "stdout": res.stdout,
             "stderr": res.stderr,
-            "returncode": res.returncode
+            "returncode": res.returncode,
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+
 def open_browser(url: str):
-    time.sleep(1) # wait for server to start
+    time.sleep(1)  # wait for server to start
     webbrowser.open(url)
+
 
 def start_ui(port: int = 8080):
     url = f"http://127.0.0.1:{port}"
