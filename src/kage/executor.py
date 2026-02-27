@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from .config import get_global_config
+from .config import KAGE_GLOBAL_DIR, get_global_config
 from .db import log_execution
 from .parser import TaskDef
 
@@ -111,8 +111,9 @@ def _deactivate_task(task_file: Path):
 
 
 def _get_lock_path(project_dir: Path, task_name: str) -> Path:
-    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", task_name)
-    path = project_dir / ".kage" / "locks" / f"{safe_name}.lock"
+    safe_proj = re.sub(r"[^a-zA-Z0-9_\-]", "_", project_dir.name)
+    safe_task = re.sub(r"[^a-zA-Z0-9_\-]", "_", task_name)
+    path = KAGE_GLOBAL_DIR / "locks" / f"{safe_proj}_{safe_task}.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
