@@ -1,0 +1,28 @@
+#!/bin/bash
+# Post-add hook for easy-worktree
+# This script is automatically executed after creating a new worktree
+#
+# Available environment variables:
+#   WT_WORKTREE_PATH  - Path to the created worktree
+#   WT_WORKTREE_NAME  - Name of the worktree
+#   WT_BASE_DIR       - Path to the main repository directory
+#   WT_BRANCH         - Branch name
+#   WT_ACTION         - Action name (add)
+#
+# Example: Install dependencies and copy configuration files
+#
+# set -e
+#
+# echo "Initializing worktree: $WT_WORKTREE_NAME"
+#
+# # Install npm packages
+# if [ -f package.json ]; then
+#     npm install
+# fi
+#
+# # Copy .env file
+# if [ -f "$WT_BASE_DIR/.env.example" ]; then
+#     cp "$WT_BASE_DIR/.env.example" .env
+# fi
+#
+# echo "Setup completed!"

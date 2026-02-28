@@ -1,0 +1,2 @@
+worktrees_dir = "../kage-worktrees"
+setup_files = [".env"]
