@@ -649,7 +649,7 @@ def config_show(
     summary.add_row("ui_port", str(cfg.ui_port))
     summary.add_row("log_level", str(cfg.log_level))
     summary.add_row("timezone", str(cfg.timezone))
-    summary.add_row("daemon_interval_minutes", str(cfg.daemon_interval_minutes))
+    summary.add_row("cron_interval_minutes", str(cfg.cron_interval_minutes))
     summary.add_row("env_path", str(cfg.env_path or "None"))
     console.print(summary)
 
@@ -780,7 +780,7 @@ def doctor():
             "default_ai_engine",
             "log_level",
             "ui_port",
-            "daemon_interval_minutes",
+            "cron_interval_minutes",
             "timezone",
             "env_path",
             "commands",
@@ -796,7 +796,7 @@ def doctor():
             "default_ai_engine": (str,),
             "log_level": (str,),
             "ui_port": (int,),
-            "daemon_interval_minutes": (int,),
+            "cron_interval_minutes": (int,),
             "timezone": (str,),
             "env_path": (str,),
             "system_prompt": (str,),

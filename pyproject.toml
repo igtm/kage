@@ -1,6 +1,6 @@
 [project]
 name = "kage-ai"
-version = "0.2.2"
+version = "0.2.3"
 description = "AI-native cron task runner for per-project scheduled prompts and commands."
 readme = "README.md"
 requires-python = ">=3.13"
