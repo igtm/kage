@@ -49,6 +49,7 @@ class GlobalConfig(BaseModel):
     default_ai_engine: Optional[str] = None
     log_level: str = "INFO"
     ui_port: int = 8484
+    ui_host: str = "127.0.0.1"
     cron_interval_minutes: int = 1  # cron/launchd の起動間隔（分単位）
     darwin_launchd_interval_seconds: Optional[int] = None  # macOS launchd 専用: 秒単位の間隔
     darwin_launchd_keep_alive: bool = False  # macOS launchd 専用: KeepAlive を有効にするか

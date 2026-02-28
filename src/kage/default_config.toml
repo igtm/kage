@@ -3,6 +3,7 @@
 
 log_level = "INFO"
 ui_port = 8484
+ui_host = "127.0.0.1"
 cron_interval_minutes = 1
   # daemon (cron/launchd) の起動間隔（分単位）
 # darwin_launchd_interval_seconds = 60  # macOS launchd専用 (秒単位)

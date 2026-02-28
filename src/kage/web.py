@@ -1824,10 +1824,10 @@ def open_browser(url: str):
     webbrowser.open(url)
 
 
-def start_ui(port: int = 8080):
-    url = f"http://127.0.0.1:{port}"
+def start_ui(host: str = "127.0.0.1", port: int = 8080):
+    url = f"http://{host}:{port}"
     threading.Thread(target=open_browser, args=(url,), daemon=True).start()
-    uvicorn.run(app, host="127.0.0.1", port=port)
+    uvicorn.run(app, host=host, port=port)
 
 @app.get("/api/connectors")
 def get_connectors():

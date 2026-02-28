@@ -587,14 +587,19 @@ def logs(limit: int = 10):
 
 
 @app.command()
-def ui():
+def ui(
+    host: Optional[str] = typer.Option(None, "--host", "-h", help="Bind host (e.g., '0.0.0.0' for external access)"),
+    port: Optional[int] = typer.Option(None, "--port", "-p", help="Bind port"),
+):
     """Launch the web UI dashboard."""
     from .config import get_global_config
     from .web import start_ui
 
     cfg = get_global_config()
-    typer.echo(f"Starting web UI on port {cfg.ui_port}...")
-    start_ui(port=cfg.ui_port)
+    target_host = host or cfg.ui_host
+    target_port = port or cfg.ui_port
+    typer.echo(f"Starting web UI on {target_host}:{target_port}...")
+    start_ui(host=target_host, port=target_port)
 
 
 @app.command()
@@ -647,6 +652,7 @@ def config_show(
     )
     summary.add_row("default_ai_engine", str(cfg.default_ai_engine or "None"))
     summary.add_row("ui_port", str(cfg.ui_port))
+    summary.add_row("ui_host", str(cfg.ui_host))
     summary.add_row("log_level", str(cfg.log_level))
     summary.add_row("timezone", str(cfg.timezone))
     summary.add_row("cron_interval_minutes", str(cfg.cron_interval_minutes))
@@ -780,6 +786,7 @@ def doctor():
             "default_ai_engine",
             "log_level",
             "ui_port",
+            "ui_host",
             "cron_interval_minutes",
             "timezone",
             "env_path",
@@ -796,6 +803,7 @@ def doctor():
             "default_ai_engine": (str,),
             "log_level": (str,),
             "ui_port": (int,),
+            "ui_host": (str,),
             "cron_interval_minutes": (int,),
             "timezone": (str,),
             "env_path": (str,),
