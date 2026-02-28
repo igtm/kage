@@ -904,6 +904,9 @@ def doctor():
             "parser",
             "parser_args",
             "ai",
+            "connector",
+            "connectors",
+            "notify_connectors",
         }
         for k in task_data.keys():
             if k not in allowed:
@@ -1009,6 +1012,9 @@ def doctor():
             "shell",
             "parser",
             "parser_args",
+            "connector",
+            "connectors",
+            "notify_connectors",
         }
         for k in fm.keys():
             if k not in allowed:
@@ -1034,6 +1040,9 @@ def doctor():
             "provider": fm.get("provider"),
             "parser": fm.get("parser"),
             "parser_args": fm.get("parser_args"),
+            "connector": fm.get("connector"),
+            "connectors": fm.get("connectors"),
+            "notify_connectors": fm.get("notify_connectors"),
         }
         _validate_task_mapping(task_data, f"{label}#task", merged_cfg)
 
