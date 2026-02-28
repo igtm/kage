@@ -174,11 +174,9 @@ def _notify_connectors(task: TaskDef, status: str, stdout: str, stderr: str):
     msg = f"**[{task.name}]** Execution completed with status: `{status}`"
     
     if stdout:
-        msg += "\n```\n"
-        msg += f"{stdout[:1000]}"
-        if len(stdout) > 1000:
+        msg += f"\n{stdout[:2000]}"
+        if len(stdout) > 2000:
             msg += "\n...(truncated)"
-        msg += "\n```"
         
     for c_name in task.notify_connectors:
         connector = get_connector(c_name)
