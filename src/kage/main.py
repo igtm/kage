@@ -435,7 +435,7 @@ def logs(limit: int = 10):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT run_at, project_path, task_name, status, stdout, stderr
+        SELECT run_at, project_path, task_name, status, stdout, stderr, finished_at
         FROM executions 
         ORDER BY run_at DESC LIMIT ?
     """,
@@ -449,19 +449,32 @@ def logs(limit: int = 10):
     table.add_column("Project")
     table.add_column("Task")
     table.add_column("Status")
+    table.add_column("Duration", justify="right")
     table.add_column("Output (stdout / stderr)", style="dim")
 
     for row in rows:
-        run_at, proj, name, status, stdout_val, stderr_val = row
+        run_at, proj, name, status, stdout_val, stderr_val, finished_at = row
 
         # 整形: "2026-02-23T18:28:01.032891" -> "02/23 18:28:01"
         try:
             from datetime import datetime
 
-            dt = datetime.fromisoformat(run_at)
-            run_at_str = dt.strftime("%m/%d %H:%M:%S")
+            dt_start = datetime.fromisoformat(run_at)
+            run_at_str = dt_start.strftime("%m/%d %H:%M:%S")
+            
+            if finished_at:
+                dt_end = datetime.fromisoformat(finished_at)
+                duration_sec = (dt_end - dt_start).total_seconds()
+                duration_str = f"{int(duration_sec)}s"
+            else:
+                if status == "RUNNING":
+                    duration_sec = (datetime.now() - dt_start).total_seconds()
+                    duration_str = f"{int(duration_sec)}s+"
+                else:
+                    duration_str = "-"
         except ValueError:
             run_at_str = run_at[:19].replace("T", " ")
+            duration_str = "-"
 
         # Output 整形
         out_str = []
@@ -477,11 +490,12 @@ def logs(limit: int = 10):
             final_out = final_out[:62] + "..."
 
         # ステータスの色付け
-        status_colored = (
-            f"[green]{status}[/green]"
-            if status == "SUCCESS"
-            else f"[red]{status}[/red]"
-        )
+        if status == "SUCCESS":
+            status_colored = f"[green]{status}[/green]"
+        elif status == "RUNNING":
+            status_colored = f"[yellow]{status}[/yellow]"
+        else:
+            status_colored = f"[red]{status}[/red]"
 
         # プロジェクトパスの短縮 (最後の2ディレクトリなどを表示)
         from pathlib import Path
@@ -489,7 +503,7 @@ def logs(limit: int = 10):
         p = Path(proj)
         proj_str = f".../{p.parent.name}/{p.name}" if len(p.parts) > 2 else proj
 
-        table.add_row(run_at_str, proj_str, str(name), status_colored, final_out)
+        table.add_row(run_at_str, proj_str, str(name), status_colored, duration_str, final_out)
 
     console.print(table)
     conn.close()

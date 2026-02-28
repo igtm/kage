@@ -27,7 +27,7 @@ template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-writ
 template = ["claude", "-p", "--allow-dangerously-skip-permissions", "--dangerously-skip-permissions", "{prompt}"]
 
 [commands.gemini]
-template = ["gemini", "--approval-mode", "yolo", "{prompt}"]
+template = ["gemini", "--approval-mode", "yolo", "--prompt", "{prompt}"]
 
 # --- プロバイダー定義 ---
 

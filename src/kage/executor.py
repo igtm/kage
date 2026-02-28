@@ -74,6 +74,16 @@ def _normalize_headless_args(cmd: list[str]) -> list[str]:
 
         return new_cmd
 
+    if exe == "gemini":
+        # Ensure --prompt (or -p) is used for headless mode.
+        if "--prompt" not in cmd and "-p" not in cmd:
+            new_cmd = list(cmd)
+            if len(new_cmd) > 1:
+                new_cmd.insert(-1, "-p")
+            else:
+                new_cmd.append("-p")
+            return new_cmd
+
     return cmd
 
 
@@ -225,6 +235,10 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             return
 
         try:
+            from .db import init_db, start_execution, update_execution
+            init_db()  # Migration ensure
+            exec_id = start_execution(str(project_dir), task.name)
+
             print(f"Executing task '{task.name}' in {project_dir}")
             env = os.environ.copy()
             if global_config.env_path:
@@ -300,19 +314,16 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                     result.stderr += f"\n[jq exc]: {str(jq_e)}"
 
             status = "SUCCESS" if result.returncode == 0 else "FAILED"
-            log_execution(
-                str(project_dir), task.name, status, result.stdout, result.stderr
-            )
+            update_execution(exec_id, status, result.stdout, result.stderr)
         except subprocess.TimeoutExpired:
-            log_execution(
-                str(project_dir),
-                task.name,
+            update_execution(
+                exec_id,
                 "TIMEOUT",
                 "",
                 f"Task timed out after {task.timeout_minutes} minutes",
             )
         except Exception as e:
-            log_execution(str(project_dir), task.name, "ERROR", "", str(e))
+            update_execution(exec_id, "ERROR", "", str(e))
     finally:
         if lock_path.exists():
             lock_path.unlink()
