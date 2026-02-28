@@ -32,6 +32,7 @@ class GlobalConfig(BaseModel):
     timezone: str = "UTC"  # cron式のタイムゾーン評価基準
     env_path: Optional[str] = None  # cron実行時に復元するPATH環境変数
     system_prompt: str = ""  # デフォルトのシステムプロンプト
+    memory_max_entries: int = 5  # プロンプトに注入する直近メモリの最大件数
     commands: dict[str, CommandDef] = {}
     providers: dict[str, ProviderConfig] = {}
 
@@ -197,23 +198,67 @@ def setup_local(target_dir: Path = None):
     tasks_dir = kage_local_dir / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
 
-    sample_md_path = tasks_dir / "daily_audit.md"
+    import locale
+
+    sample_md_path = tasks_dir / "ocr_benchmark.md"
     if not sample_md_path.exists():
-        sample_md_path.write_text(
-            """---
-name: Daily Audit
-cron: \"0 9 * * *\"
+        # Locale detection for default language
+        lang = "en"
+        try:
+            loc, _ = locale.getlocale()
+            if loc and loc.startswith("ja"):
+                lang = "ja"
+        except Exception:
+            pass
+        
+        # Check env var for overriding locale (useful for tests or specific environments)
+        import os
+        if os.environ.get("LANG", "").startswith("ja"):
+            lang = "ja"
+
+        if lang == "ja":
+            template = """---
+name: OCR Benchmark (Sample)
+cron: "0 3 * * *"
 active: false
+mode: autostop
 ---
 
-# Task: Project Health Audit
-Please review the codebase for any obvious architectural drifts or missing tests.
-Focus on the 'src/' directory.
-On the first run, create a Todo list of areas to investigate.
-In subsequent runs, pick one area, audit it, and update the memory.
-""",
-            encoding="utf-8",
-        )
+# Task: PDFのOCR精度測定ベンチマーク
+
+PDFからテキストを抽出する最適な無料OCRモデルを選定するため、ベンチマークテストを実施してください。一晩かけて1つずつモデルを検証し、最終的な比較レポートを作成してください。
+
+1. **データ準備**: サンプルPDFが存在しない場合は、テスト用に適当な日本語のダミーPDFを作成（またはダウンロード）してください。
+2. **モデル検証**: 以下のOCRツールを1回の実行（run）につき1つずつインストール・実行し、テキスト抽出の精度と処理速度を計測してください。
+   - Tesseract OCR (with jpn data)
+   - EasyOCR
+   - PaddleOCR
+   - marker (Surya)
+3. **レポート作成**: すべての検証が完了したら、`ocr_benchmark_report.md` をルートディレクトリに作成し、各モデルの精度、速度、導入のしやすさなどを比較した表を出力してください。
+4. **終了**: レポートが出力されたら、すべてのサブタスクを 'done' にしてこのタスクを停止してください。
+"""
+        else:
+            template = """---
+name: OCR Benchmark (Sample)
+cron: "0 3 * * *"
+active: false
+mode: autostop
+---
+
+# Task: PDF OCR Accuracy Benchmark
+
+We need to select the best free OCR model for extracting text from PDFs. Please conduct a benchmark test overnight, evaluating one model per run, and create a final comparison report.
+
+1. **Data Prep**: If a sample PDF doesn't exist, create (or download) a dummy PDF with varied text layouts for testing.
+2. **Model Evaluation**: Install and run one of the following OCR tools per execution run. Measure text extraction accuracy and processing speed.
+   - Tesseract OCR
+   - EasyOCR
+   - PaddleOCR
+   - marker (Surya)
+3. **Reporting**: Once all evaluations are complete, generate `ocr_benchmark_report.md` in the root directory. Include a comparison table showing accuracy, speed, and ease of setup for each model.
+4. **Completion**: After the report is generated, mark all sub-tasks as 'done' to stop this task automatically.
+"""
+        sample_md_path.write_text(template, encoding="utf-8")
 
     # Add to global projects list
     if KAGE_PROJECTS_LIST.exists():

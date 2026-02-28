@@ -762,7 +762,7 @@ INDEX_HTML = """
             </div>
         </nav>
         <div class="sidebar-footer">
-            v0.1.9 - Autonomous Exec layer
+            v0.1.10 - Autonomous Exec layer
         </div>
     </aside>
 
@@ -783,6 +783,9 @@ INDEX_HTML = """
                     <div class="search-container">
                         <input type="text" id="log-search" class="search-input" placeholder="Search logs (task name, project, output)...">
                     </div>
+                    <select id="log-filter-project" class="filter-select">
+                        <option value="ALL">All Projects</option>
+                    </select>
                     <select id="log-filter-task" class="filter-select">
                         <option value="ALL">All Tasks</option>
                     </select>
@@ -799,6 +802,11 @@ INDEX_HTML = """
 
             <!-- Config Section -->
             <div id="config-section" class="section">
+                <div class="toolbar">
+                    <select id="config-filter-project" class="filter-select">
+                        <option value="ALL">All Projects</option>
+                    </select>
+                </div>
                 <div id="config-container">Loading...</div>
             </div>
 
@@ -819,7 +827,15 @@ INDEX_HTML = """
     <script>
         let lastLogsSignature = null;
         let allLogsData = [];
+        let allConfigData = null;
         let autoScrollEnabled = true;
+
+        // Helper: Get project short name (last directory)
+        function getProjectShortName(path) {
+            if (!path) return "Unknown";
+            const parts = path.split('/');
+            return parts[parts.length - 1] || path;
+        }
 
         function escapeHtml(text) {
             if (!text) return "";
@@ -928,6 +944,7 @@ INDEX_HTML = """
             const searchTerm = document.getElementById('log-search').value.toLowerCase();
             const statusFilter = document.getElementById('log-filter-status').value;
             const taskFilter = document.getElementById('log-filter-task').value;
+            const projectFilter = document.getElementById('log-filter-project').value;
             const container = document.getElementById('logs-container');
             
             const filtered = allLogsData.filter(log => {
@@ -939,8 +956,9 @@ INDEX_HTML = """
                 
                 const matchesStatus = statusFilter === 'ALL' || log.status === statusFilter;
                 const matchesTask = taskFilter === 'ALL' || log.task_name === taskFilter;
+                const matchesProject = projectFilter === 'ALL' || log.project_path === projectFilter;
                 
-                return matchesSearch && matchesStatus && matchesTask;
+                return matchesSearch && matchesStatus && matchesTask && matchesProject;
             });
 
             const signature = JSON.stringify(filtered);
@@ -972,7 +990,7 @@ INDEX_HTML = """
                         <div class="log-info">
                             <span class="status-badge ${log.status}">${log.status}</span>
                             <span class="log-name">${escapeHtml(log.task_name)}</span>
-                            <span class="log-meta">${start.toLocaleTimeString()} · ${escapeHtml(log.project_path.split('/').pop())}</span>
+                            <span class="log-meta">${start.toLocaleTimeString()} · ${escapeHtml(getProjectShortName(log.project_path))}</span>
                         </div>
                         <div class="log-meta">
                             <span class="duration-value">${formatDuration(duration)}</span>
@@ -1012,29 +1030,63 @@ INDEX_HTML = """
         }
 
         function updateTaskFilterOptions() {
-            const filter = document.getElementById('log-filter-task');
-            const currentSelection = filter.value;
-            const tasks = [...new Set(allLogsData.map(l => l.task_name))].sort();
+            const taskFilter = document.getElementById('log-filter-task');
+            const projFilter = document.getElementById('log-filter-project');
+            const currentTask = taskFilter.value;
+            const currentProj = projFilter.value;
             
-            let html = '<option value="ALL">All Tasks</option>';
+            const tasks = [...new Set(allLogsData.map(l => l.task_name))].sort();
+            const projects = [...new Set(allLogsData.map(l => l.project_path))].sort();
+            
+            let tHtml = '<option value="ALL">All Tasks</option>';
             tasks.forEach(t => {
-                html += `<option value="${escapeHtml(t)}" ${t === currentSelection ? 'selected' : ''}>${escapeHtml(t)}</option>`;
+                tHtml += `<option value="${escapeHtml(t)}" ${t === currentTask ? 'selected' : ''}>${escapeHtml(t)}</option>`;
             });
-            filter.innerHTML = html;
+            taskFilter.innerHTML = tHtml;
+
+            let pHtml = '<option value="ALL">All Projects</option>';
+            projects.forEach(p => {
+                pHtml += `<option value="${escapeHtml(p)}" ${p === currentProj ? 'selected' : ''}>${escapeHtml(getProjectShortName(p))}</option>`;
+            });
+            projFilter.innerHTML = pHtml;
         }
 
         document.getElementById('log-search').addEventListener('input', renderLogs);
         document.getElementById('log-filter-status').addEventListener('change', renderLogs);
         document.getElementById('log-filter-task').addEventListener('change', renderLogs);
+        document.getElementById('log-filter-project').addEventListener('change', renderLogs);
+        document.getElementById('config-filter-project').addEventListener('change', renderConfig);
 
         // Config & Chat (Simplified for current overhaul focus)
         async function fetchConfig() {
             const response = await fetch('/api/config');
-            const config = await response.json();
+            allConfigData = await response.json();
+            
+            // Populate config project filter
+            const projFilter = document.getElementById('config-filter-project');
+            const currentProj = projFilter.value;
+            const projects = [...new Set(allConfigData.tasks.map(t => t.project_path))].sort();
+            
+            let pHtml = '<option value="ALL">All Projects</option>';
+            projects.forEach(p => {
+                pHtml += `<option value="${escapeHtml(p)}" ${p === currentProj ? 'selected' : ''}>${escapeHtml(getProjectShortName(p))}</option>`;
+            });
+            projFilter.innerHTML = pHtml;
+            
+            renderConfig();
+        }
+
+        function renderConfig() {
+            if (!allConfigData) return;
+            const config = allConfigData;
             const container = document.getElementById('config-container');
+            const projFilter = document.getElementById('config-filter-project').value;
             
             let tasksHtml = '';
-            config.tasks.forEach(task => {
+            
+            const filteredTasks = config.tasks.filter(t => projFilter === 'ALL' || t.project_path === projFilter);
+            
+            filteredTasks.forEach(task => {
                 let nextRunDisplay = 'Not scheduled';
                 if (task.next_run && task.active) {
                     try {
@@ -1098,7 +1150,7 @@ INDEX_HTML = """
                         </div>
                         <div class="kv-row"><span class="kv-key">Schedule</span><span class="kv-val"><code>${escapeHtml(task.cron)}</code> <small style="color: var(--text-dim); margin-left: 4px;">(${escapeHtml(task.task_timezone)})</small></span></div>
                         <div class="kv-row"><span class="kv-key">Next Run</span><span class="kv-val">${escapeHtml(nextRunDisplay)}</span></div>
-                        <div class="kv-row"><span class="kv-key">Project</span><span class="kv-val">${escapeHtml(task.project_path)}</span></div>
+                        <div class="kv-row"><span class="kv-key">Project</span><span class="kv-val">${escapeHtml(getProjectShortName(task.project_path))}</span></div>
                         
                         <div class="task-details-content">
                              ${detailsHtml}

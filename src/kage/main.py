@@ -204,16 +204,60 @@ def task_new(
         console.print(f"[yellow]Task file already exists: {target_path}[/yellow]")
         raise typer.Exit(1)
 
-    template = f"""---
+    import locale
+    lang = "en"
+    try:
+        loc, _ = locale.getlocale()
+        if loc and loc.startswith("ja"):
+            lang = "ja"
+    except Exception:
+        pass
+    
+    import os
+    if os.environ.get("LANG", "").startswith("ja"):
+        lang = "ja"
+
+    if lang == "ja":
+        template = f"""---
 name: {file_name.replace("_", " ").title()}
-cron: "0 * * * *"
-active: true
-provider: claude
+cron: "0 3 * * *"
+active: false
+mode: autostop
 ---
 
-Summarize recent changes in this directory.
-Focus on key architectural decisions and potential security risks.
-Output as a concise report.
+# Task: PDFのOCR精度測定ベンチマーク
+
+PDFからテキストを抽出する最適な無料OCRモデルを選定するため、ベンチマークテストを実施してください。一晩かけて1つずつモデルを検証し、最終的な比較レポートを作成してください。
+
+1. **データ準備**: サンプルPDFが存在しない場合は、テスト用に適当な日本語のダミーPDFを作成（またはダウンロード）してください。
+2. **モデル検証**: 以下のOCRツールを1回の実行（run）につき1つずつインストール・実行し、テキスト抽出の精度と処理速度を計測してください。
+   - Tesseract OCR (with jpn data)
+   - EasyOCR
+   - PaddleOCR
+   - marker (Surya)
+3. **レポート作成**: すべての検証が完了したら、`ocr_benchmark_report.md` をルートディレクトリに作成し、各モデルの精度、速度、導入のしやすさなどを比較した表を出力してください。
+4. **終了**: レポートが出力されたら、すべてのサブタスクを 'done' にしてこのタスクを停止してください。
+"""
+    else:
+        template = f"""---
+name: {file_name.replace("_", " ").title()}
+cron: "0 3 * * *"
+active: false
+mode: autostop
+---
+
+# Task: PDF OCR Accuracy Benchmark
+
+We need to select the best free OCR model for extracting text from PDFs. Please conduct a benchmark test overnight, evaluating one model per run, and create a final comparison report.
+
+1. **Data Prep**: If a sample PDF doesn't exist, create (or download) a dummy PDF with varied text layouts for testing.
+2. **Model Evaluation**: Install and run one of the following OCR tools per execution run. Measure text extraction accuracy and processing speed.
+   - Tesseract OCR
+   - EasyOCR
+   - PaddleOCR
+   - marker (Surya)
+3. **Reporting**: Once all evaluations are complete, generate `ocr_benchmark_report.md` in the root directory. Include a comparison table showing accuracy, speed, and ease of setup for each model.
+4. **Completion**: After the report is generated, mark all sub-tasks as 'done' to stop this task automatically.
 """
     target_path.write_text(template, encoding="utf-8")
     console.print(f"[green]✔ Created new task file:[/green] {target_path}")
@@ -393,22 +437,52 @@ def daemon_restart():
     daemon.restart()
 
 
+def _is_ja() -> bool:
+    import locale
+    import os
+    if os.environ.get("LANG", "").startswith("ja"):
+        return True
+    try:
+        loc, _ = locale.getlocale()
+        if loc and loc.startswith("ja"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 @app.command()
 def onboard():
     """Initial setup for kage: Create ~/.kage and default configuration."""
-    typer.echo("Initializing kage onboard...")
+    if _is_ja():
+        typer.echo("kage の初期セットアップを実行中...")
+    else:
+        typer.echo("Initializing kage onboard...")
+    
     config_mod.setup_global()
     daemon.install()
     db.init_db()
-    typer.echo("Successfully set up global configuration and database.")
+    
+    if _is_ja():
+        typer.echo("グローバル設定とデータベースのセットアップが完了しました。")
+    else:
+        typer.echo("Successfully set up global configuration and database.")
 
 
 @app.command()
 def init():
     """Initialize a kage project in the current directory."""
-    typer.echo("Initializing kage project...")
+    if _is_ja():
+        typer.echo("プロジェクトを初期化中...")
+    else:
+        typer.echo("Initializing kage project...")
+    
     config_mod.setup_local()
-    typer.echo("Project initialized.")
+    
+    if _is_ja():
+        typer.echo("初期化が完了しました。")
+    else:
+        typer.echo("Project initialized.")
 
 
 @app.command()

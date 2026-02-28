@@ -120,7 +120,20 @@ echo "$MSG_UI"
 echo "$MSG_INIT"
 echo "$MSG_LOGS"
 echo ""
-echo "$MSG_AI"
-echo "$MSG_AI_CMD"
-echo ""
+
+# 5. AIエンジン未設定の場合は案内を出す
+HAS_AI=false
+if command -v kage >/dev/null 2>&1; then
+    # default_ai_engine None をチェック
+    if ! kage config-show 2>/dev/null | grep -q "default_ai_engine.*None"; then
+        HAS_AI=true
+    fi
+fi
+
+if ! $HAS_AI; then
+    echo "$MSG_AI"
+    echo "$MSG_AI_CMD"
+    echo ""
+fi
+
 echo "$MSG_HACK"
