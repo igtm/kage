@@ -12,6 +12,7 @@ from typing import Optional
 from .config import KAGE_GLOBAL_DIR, get_global_config
 from .db import log_execution
 from .parser import TaskDef
+from .ai.chat import clean_ai_reply
 
 
 def _normalize_headless_args(cmd: list[str]) -> list[str]:
@@ -379,6 +380,9 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                     result.stderr += f"\n[jq exc]: {str(jq_e)}"
 
             status = "SUCCESS" if result.returncode == 0 else "FAILED"
+            # Clean thinking tags from AI output before storing and notifying
+            if task.prompt:
+                result.stdout = clean_ai_reply(result.stdout)
             update_execution(exec_id, status, result.stdout, result.stderr)
             _notify_connectors(task, status, result.stdout, result.stderr)
         except subprocess.TimeoutExpired:
