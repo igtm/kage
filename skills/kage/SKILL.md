@@ -37,12 +37,14 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 ---
 name: <Task Name>
 cron: "<cron expression>"
-provider: <provider name>      # e.g. claude, gemini, codex
-mode: continuous               # continuous | once | autostop
-policy: forbid                 # allow | forbid | replace
-timeout: 3600                  # seconds
-allowed_hours: ""              # e.g. "9-17" (optional)
-denied_hours: ""               # e.g. "0-8,18-23" (optional)
+provider: <provider name>           # e.g. claude, gemini, codex
+mode: continuous                    # continuous | once | autostop
+concurrency_policy: allow           # allow | forbid | replace
+timeout_minutes: 60                 # minutes (optional)
+timezone: "Asia/Tokyo"              # e.g. "UTC", "Asia/Tokyo" (optional)
+allowed_hours: "9-17"               # e.g. "9-17,21" (optional)
+denied_hours: "0-5"                 # e.g. "0-5,12" (optional)
+notify_connectors: ["discord"]      # list of connector names (optional)
 active: true
 ---
 

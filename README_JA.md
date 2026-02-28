@@ -34,6 +34,7 @@
     - **時間枠制限**: `allowed_hours: "9-17"`, `denied_hours: "12"` のように実行時間を制限。
 - **Markdown 本位**: YAML front matter を持つシンプルな Markdown ファイルでタスクを定義。
 - **コネクター**: Discord や Slack との双方向連携。実行結果の通知やチャットの自動応答。
+- **思考プロセスの隔離**: AIエージェントの推論過程を `<think>` タグで隔離し、通知やログから自動的に除外してクリーンな結果のみを表示します。
 - **多層的な設定**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > デフォルト。
 - **Webダッシュボード**: 実行履歴、タスク管理、AIチャットを一箇所で提供。
 
@@ -203,7 +204,7 @@ macOS では `cron` の代わりに `launchd` が使用されます。`config.to
 
 | ファイル | スコープ |
 |------|-------|
-| `~/.kage/config.toml` | グローバル設定 |
+| `~/.kage/config.toml` | グローバル設定 (`default_ai_engine`, `ui_port`, `ui_host` 等) |
 | `.kage/config.toml` | プロジェクト共有設定 |
 | `.kage/config.local.toml` | ローカル上書き設定 (git-ignored) |
 | `.kage/system_prompt.md` | プロジェクト固有の AI 指針 |

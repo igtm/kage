@@ -35,6 +35,7 @@ English | [日本語](./README_JA.md)
 - **Markdown-First**: Define tasks using simple Markdown files with YAML front matter.
 - **Layered Configuration**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > defaults.
 - **Connectors**: Bi-directional integration with external services like Discord and Slack.
+- **Thinking Process Isolation**: AI workers automatically wrap reasoning in `<think>` tags, which are hidden from notifications and logs for a cleaner experience.
 - **Web Dashboard**: Execution history, task management, and AI chat — all in one place.
 
 Check out the [Technical Architecture](ARCHITECTURE.md) for more details.
@@ -204,7 +205,7 @@ On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its
 
 | File | Scope |
 |------|-------|
-| `~/.kage/config.toml` | Global settings |
+| `~/.kage/config.toml` | Global settings (`default_ai_engine`, `ui_port`, `ui_host`, etc.) |
 | `.kage/config.toml` | Project-shared settings |
 | `.kage/config.local.toml` | Local overrides (git-ignored) |
 | `.kage/system_prompt.md` | Project-specific AI instructions |
