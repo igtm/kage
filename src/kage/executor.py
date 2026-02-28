@@ -87,25 +87,51 @@ def _normalize_headless_args(cmd: list[str]) -> list[str]:
     return cmd
 
 
-def _get_memory_path(project_dir: Path, task_name: str) -> Path:
+def _get_memory_dir(project_dir: Path, task_name: str) -> Path:
+    """タスクのメモリディレクトリパスを返す。ディレクトリがなければ作成する。"""
     safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", task_name)
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    path = project_dir / ".kage" / "memory" / safe_name / f"{date_str}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
+    memory_dir = project_dir / ".kage" / "memory" / safe_name
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    return memory_dir
 
 
-def _load_memory(path: Path) -> dict:
-    if path.exists():
+def _load_recent_memories(memory_dir: Path, max_entries: int = 5) -> str:
+    """直近N日分のメモリファイルを読み込み、結合した文字列として返す。"""
+    date_files = sorted(memory_dir.glob("*.json"), reverse=True)
+    # task.json はメモリファイルではないので除外
+    date_files = [f for f in date_files if f.name != "task.json"]
+    date_files = date_files[:max_entries]
+    date_files.reverse()  # 古い順に並べる
+
+    if not date_files:
+        return ""
+
+    parts = []
+    for f in date_files:
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            content = f.read_text(encoding="utf-8")
+            date_label = f.stem  # e.g. "2026-02-28"
+            parts.append(f"--- {date_label} ---\n{content}")
+        except Exception:
+            continue
+    return "\n\n".join(parts)
+
+
+def _load_task_json(memory_dir: Path) -> dict:
+    """task.json を読み込む。存在しなければ空dictを返す。"""
+    task_json_path = memory_dir / "task.json"
+    if task_json_path.exists():
+        try:
+            return json.loads(task_json_path.read_text(encoding="utf-8"))
         except Exception:
             return {}
     return {}
 
 
-def _save_memory(path: Path, data: dict):
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+def _compute_prompt_hash(prompt: str) -> str:
+    """プロンプト本文のSHA256ハッシュを返す。"""
+    import hashlib
+    return hashlib.sha256(prompt.strip().encode("utf-8")).hexdigest()
 
 
 def _deactivate_task(task_file: Path):
@@ -137,6 +163,26 @@ def _check_running(lock_path: Path) -> Optional[int]:
         return pid
     except (ProcessLookupError, ValueError, OverflowError):
         return None
+
+def _notify_connectors(task: TaskDef, status: str, stdout: str, stderr: str):
+    if not task.notify_connectors:
+        return
+        
+    from .connectors.runner import get_connector
+    
+    msg = f"**[{task.name}]** Execution completed with status: `{status}`"
+    
+    if stdout:
+        msg += "\n```\n"
+        msg += f"{stdout[:1000]}"
+        if len(stdout) > 1000:
+            msg += "\n...(truncated)"
+        msg += "\n```"
+        
+    for c_name in task.notify_connectors:
+        connector = get_connector(c_name)
+        if connector:
+            connector.send_message(msg)
 
 
 def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = None):
@@ -173,9 +219,11 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
     try:
         lock_path.write_text(str(os.getpid()))
 
-        # メモリの読み込み
-        memory_path = _get_memory_path(project_dir, task.name)
-        memory_data = _load_memory(memory_path)
+        # メモリの読み込み（直近N件）
+        memory_dir = _get_memory_dir(project_dir, task.name)
+        memory_context_str = _load_recent_memories(
+            memory_dir, max_entries=global_config.memory_max_entries
+        )
 
         provider = None
         parser_type = "raw"
@@ -183,13 +231,47 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
         cmd = []
 
         if task.prompt:
-            # プロンプトの構築: System Prompt + Memory + Task Prompt
-            memory_context = (
-                f"\n\n## Task Memory (Current State)\n{json.dumps(memory_data, indent=2, ensure_ascii=False)}"
-                if memory_data
-                else "\n\n## Task Memory\nNo previous memory found for this task on this date."
-            )
-            full_prompt = f"{system_prompt}{memory_context}\n\n## Task Instructions\n{task.prompt}"
+            # タスク管理 (task.json) の読み込みと prompt_hash チェック
+            task_plan = _load_task_json(memory_dir)
+            current_hash = _compute_prompt_hash(task.prompt)
+
+            task_plan_context = ""
+            if task_plan:
+                stored_hash = task_plan.get("prompt_hash", "")
+                plan_json = json.dumps(task_plan, indent=2, ensure_ascii=False)
+                if stored_hash == current_hash:
+                    task_plan_context = (
+                        f"\n\n## Task Plan (.kage/memory/{re.sub(r'[^a-zA-Z0-9_-]', '_', task.name)}/task.json)\n"
+                        f"{plan_json}"
+                    )
+                else:
+                    task_plan_context = (
+                        f"\n\n## Task Plan (.kage/memory/{re.sub(r'[^a-zA-Z0-9_-]', '_', task.name)}/task.json)\n"
+                        f"\u26a0 **The task prompt has been updated** (hash mismatch). "
+                        f"Review the previous task plan below and regenerate it based on the new instructions. "
+                        f"Reuse completed work where applicable. Update `prompt_hash` to `{current_hash}`.\n\n"
+                        f"Previous plan:\n{plan_json}"
+                    )
+            else:
+                task_plan_context = (
+                    f"\n\n## Task Plan\n"
+                    f"No task plan found. Create one by writing to "
+                    f"`.kage/memory/{re.sub(r'[^a-zA-Z0-9_-]', '_', task.name)}/task.json`.\n"
+                    f"Use `prompt_hash`: `{current_hash}`"
+                )
+
+            # メモリコンテキスト
+            if memory_context_str:
+                memory_section = f"\n\n## Recent Memory (most recent {global_config.memory_max_entries} entries)\n{memory_context_str}"
+            else:
+                memory_section = (
+                    f"\n\n## Recent Memory\n"
+                    f"No previous memory found. You can write memory files to "
+                    f"`.kage/memory/{re.sub(r'[^a-zA-Z0-9_-]', '_', task.name)}/YYYY-MM-DD.json`."
+                )
+
+            # プロンプトの構築: System Prompt + Task Plan + Memory + Task Instructions
+            full_prompt = f"{system_prompt}{task_plan_context}{memory_section}\n\n## Task Instructions\n{task.prompt}"
 
             # プロバイダーの解決
             engine_name = task.provider or global_config.default_ai_engine
@@ -262,36 +344,19 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 timeout=timeout,
             )
 
-            # AIタスクの場合、出力を解析してメモリを更新する試み
-            if task.prompt:
-                new_memory = {
-                    "last_updated": datetime.now().isoformat(),
-                    "raw_output": result.stdout,
-                }
-                json_match = re.search(r"```json\n(.*?)\n```", result.stdout, re.DOTALL)
-                if json_match:
-                    try:
-                        extracted_json = json.loads(json_match.group(1))
-                        new_memory.update(extracted_json)
-                    except Exception:
-                        pass
-                elif result.stdout.strip().startswith(
-                    "{"
-                ) and result.stdout.strip().endswith("}"):
-                    try:
-                        extracted_json = json.loads(result.stdout)
-                        new_memory.update(extracted_json)
-                    except Exception:
-                        pass
-
-                memory_data.update(new_memory)
-                _save_memory(memory_path, memory_data)
-
-                if (
-                    task.mode == ExecutionMode.AUTOSTOP
-                    and memory_data.get("status") == "Completed"
-                    and task_file
-                ):
+            # autostop チェック: task.json の sub_tasks が全て done の場合
+            if task.prompt and task.mode == ExecutionMode.AUTOSTOP and task_file:
+                should_stop = False
+                # task.json による判定
+                updated_plan = _load_task_json(memory_dir)
+                if updated_plan.get("sub_tasks"):
+                    all_done = all(
+                        t.get("status") == "done"
+                        for t in updated_plan["sub_tasks"]
+                    )
+                    if all_done:
+                        should_stop = True
+                if should_stop:
                     _deactivate_task(task_file)
 
             if task.mode == ExecutionMode.ONCE and task_file:
@@ -315,15 +380,19 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
 
             status = "SUCCESS" if result.returncode == 0 else "FAILED"
             update_execution(exec_id, status, result.stdout, result.stderr)
+            _notify_connectors(task, status, result.stdout, result.stderr)
         except subprocess.TimeoutExpired:
+            stderr = f"Task timed out after {task.timeout_minutes} minutes"
             update_execution(
                 exec_id,
                 "TIMEOUT",
                 "",
-                f"Task timed out after {task.timeout_minutes} minutes",
+                stderr,
             )
+            _notify_connectors(task, "TIMEOUT", "", stderr)
         except Exception as e:
             update_execution(exec_id, "ERROR", "", str(e))
+            _notify_connectors(task, "ERROR", "", str(e))
     finally:
         if lock_path.exists():
             lock_path.unlink()

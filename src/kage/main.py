@@ -8,14 +8,17 @@ app = typer.Typer(
     add_completion=False,
 )
 
-daemon_app = typer.Typer(help="OS-level daemon (cron/launchd) management")
-app.add_typer(daemon_app, name="daemon")
+cron_app = typer.Typer(help="OS-level scheduler (cron/launchd) management")
+app.add_typer(cron_app, name="cron")
 
 task_app = typer.Typer(help="Manage kage tasks")
 app.add_typer(task_app, name="task")
 
 project_app = typer.Typer(help="Manage registered projects")
 app.add_typer(project_app, name="project")
+
+connector_app = typer.Typer(help="Manage chat connectors (Discord, etc.)")
+app.add_typer(connector_app, name="connector")
 
 
 def _resolve_version() -> str:
@@ -401,38 +404,38 @@ def task_run(name: str = typer.Argument(..., help="Task name to run immediately"
     raise typer.Exit(1)
 
 
-@daemon_app.command("install")
-def daemon_install():
+@cron_app.command("install")
+def cron_install():
     """Register kage run to system scheduler (cron/launchd)."""
     daemon.install()
 
 
-@daemon_app.command("remove")
-def daemon_remove():
+@cron_app.command("remove")
+def cron_remove():
     """Unregister kage run from system scheduler."""
     daemon.remove()
 
 
-@daemon_app.command("status")
-def daemon_status():
+@cron_app.command("status")
+def cron_status():
     """Check if kage is registered in system scheduler."""
     daemon.status()
 
 
-@daemon_app.command("start")
-def daemon_start():
+@cron_app.command("start")
+def cron_start():
     """Start/Enable background tasks."""
     daemon.start()
 
 
-@daemon_app.command("stop")
-def daemon_stop():
+@cron_app.command("stop")
+def cron_stop():
     """Stop/Disable background tasks."""
     daemon.stop()
 
 
-@daemon_app.command("restart")
-def daemon_restart():
+@cron_app.command("restart")
+def cron_restart():
     """Restart background tasks."""
     daemon.restart()
 
@@ -783,6 +786,7 @@ def doctor():
             "commands",
             "providers",
             "system_prompt",
+            "connectors",
         }
         for k in data.keys():
             if k not in allowed_top:
@@ -1160,6 +1164,141 @@ def skill():
             "[yellow]Hint:[/yellow] Make sure you are using a tagged version and have internet access."
         )
 
+@connector_app.command("setup")
+def connector_setup(
+    ctype: Optional[str] = typer.Argument(None, help="Connector type (discord, slack)")
+):
+    """Show setup instructions for a connector type."""
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.markdown import Markdown
+
+    console = Console()
+
+    if not ctype:
+        console.print("[bold]Available Connector Types:[/bold]")
+        console.print("- [bold magenta]discord[/bold magenta]")
+        console.print("- [bold blue]slack[/bold blue]")
+        console.print("\nRun [bold]kage connector setup discord[/bold] for instructions.")
+        return
+
+    ctype = ctype.lower()
+    if ctype == "discord":
+        text = """
+# Discord Connector Setup Guide
+
+1. **Create Application**: Go to [Discord Developer Portal](https://discord.com/developers/applications) and click **"New Application"**.
+2. **Setup Bot**:
+   - Go to the **"Bot"** tab.
+   - Click **"Reset Token"** to get your **Bot Token**.
+   - **CRITICAL**: Scroll down to "Privileged Gateway Intents" and enable **"Message Content Intent"**.
+3. **Invite Bot**:
+   - Go to **"OAuth2" -> "URL Generator"**.
+   - Select scopes: `bot`.
+   - Select bot permissions: `Send Messages`, `Read Messages/View Channels`, `Read Message History`.
+   - Copy the generated URL and open it in your browser to invite the bot to your server.
+4. **Get Channel ID**:
+   - In Discord (User Settings -> Advanced), enable **"Developer Mode"**.
+   - Right-click the target channel and select **"Copy Channel ID"**.
+5. **Config**: Add the following to your `.kage/config.toml`:
+
+```toml
+[connectors.my_discord]
+type = "discord"
+active = true
+bot_token = "YOUR_BOT_TOKEN"
+channel_id = "YOUR_CHANNEL_ID"
+persona = "Optional custom bot personality"
+```
+"""
+        console.print(Panel(Markdown(text), title="Discord Setup", border_style="magenta"))
+    elif ctype == "slack":
+        text = """
+# Slack Connector Setup Guide
+
+1. **Create App**: Go to [Slack API Apps](https://api.slack.com/apps) and click **"Create New App"** (From scratch).
+2. **Permissions**:
+   - Go to **"OAuth & Permissions"**.
+   - Scroll to **"Bot Token Scopes"** and add:
+     - `channels:history`
+     - `chat:write`
+     - `groups:history` (if using private channels)
+3. **Install**:
+   - Scroll up and click **"Install to Workspace"**.
+   - Copy the **"Bot User OAuth Token"** (starts with `xoxb-`).
+4. **Get Channel ID**:
+   - In Slack, right-click the channel name -> **"View channel details"**.
+   - The Channel ID is at the very bottom (e.g., `C1234567890`).
+5. **Invite Bot**: In the target channel, type `/invite @YourBotName`.
+6. **Config**: Add the following to your `.kage/config.toml`:
+
+```toml
+[connectors.my_slack]
+type = "slack"
+active = true
+bot_token = "xoxb-YOUR_TOKEN"
+channel_id = "YOUR_CHANNEL_ID"
+persona = "Optional custom bot personality"
+```
+"""
+        console.print(Panel(Markdown(text), title="Slack Setup", border_style="blue"))
+    else:
+        console.print(f"[red]Unknown connector type: {ctype}[/red]")
+        console.print("Available types: discord, slack")
 
 if __name__ == "__main__":
     app()
+@connector_app.command("list")
+def connector_list():
+    """List all configured connectors."""
+    from .config import get_global_config
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    config = get_global_config()
+    
+    if not config.connectors:
+        console.print("[yellow]No connectors configured.[/yellow]")
+        console.print("Add [[connectors.name]] blocks to your config.toml.")
+        return
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Name", style="bold")
+    table.add_column("Type")
+    table.add_column("Status")
+    table.add_column("Details")
+
+    for name, c_dict in config.connectors.items():
+        c_type = c_dict.get("type", "unknown")
+        # Handle tomlkit boolean types or standard ones
+        is_active = c_dict.get("active", True)
+        if hasattr(is_active, "unwrap"):
+            is_active = is_active.unwrap()
+            
+        status = "[green]Enabled[/green]" if is_active else "[dim]Disabled[/dim]"
+        
+        details = []
+        if c_type == "discord":
+            details.append(f"Channel: {c_dict.get('channel_id', 'N/A')}")
+            if c_dict.get("user_id"):
+                details.append(f"User Filter: {str(c_dict.get('user_id'))}")
+        
+        table.add_row(name, c_type, status, ", ".join(details))
+
+    console.print(table)
+
+
+@connector_app.command("poll")
+def connector_poll():
+    """Poll and reply messages for all active connectors immediately."""
+    from .connectors.runner import run_connectors
+    from rich.console import Console
+    
+    console = Console()
+    console.print("[bold blue]Polling connectors...[/bold blue]")
+    try:
+        run_connectors()
+        console.print("[green]✔ Polling completed.[/green]")
+    except Exception as e:
+        console.print(f"[red]✘ Polling failed: {e}[/red]")

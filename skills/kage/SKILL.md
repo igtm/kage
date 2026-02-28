@@ -10,55 +10,56 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 ## Core Features
 
 - **Autonomous Workflow**: Decomposes tasks into Markdown checklists and tracks progress via Memory.
-- **Execution Modes**:
-    - `continuous`: Default cron-based execution.
-    - `once`: Runs once and deactivates.
-    - `autostop`: Stops when AI signals 'status: Completed' in Memory.
-- **Hybrid Task Types**: Supports both AI-driven prompts (Markdown body) and direct shell commands (`command` in front matter).
-- **Concurrency Control**: 
-    - `allow`: Multiple instances allowed.
-    - `forbid`: Skips if already running.
-    - `replace`: Kills old instance and starts fresh.
-- **Time Windows**: Restrict execution to specific hours (e.g., `allowed_hours: "9-17"`, `denied_hours: "12"`).
-- **State Persistence**: Maintains `.kage/memory/{task}/{date}.json`.
-- **Project-Centric Config**: Layered configuration with `.kage/config.local.toml`.
+- **Execution Modes**: `continuous` (default), `once` (run once and deactivate), `autostop` (stop when AI signals completion).
+- **Hybrid Task Types**: AI-driven prompts (Markdown body) or direct shell commands (`command` front matter).
+- **Concurrency Control**: `allow`, `forbid` (skip if running), `replace` (kill old and restart).
+- **Time Windows**: `allowed_hours: "9-17"` or `denied_hours: "12"`.
+- **State Persistence**: `.kage/memory/{task}/{date}.json`.
+- **Connectors**: Sync AI chat with external services like Discord/Slack for project-specific automation.
+- **Layered Config**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > defaults.
 
-## CLI Usage
+## CLI
 
-### Setup & Project Management
-- `kage onboard`: Global setup (daemons, directories, DB).
-- `kage init`: Initialize a new project.
-- `kage doctor`: Diagnose configs, tasks, and environment.
+- `kage onboard` — Setup global directories and `kage cron`.
+- `kage init` — Initialize in current directory.
+- `kage run` — Execute due tasks manually.
+- `kage task list` — List tasks with status and schedule.
+- `kage task show <name>` — Detailed task configuration.
+- `kage connector list` — List all configured connectors.
+- `kage connector setup <type>` — Show setup guide for a connector (discord, slack).
+- `kage connector poll` — Manually trigger polling for all connectors.
+- `kage doctor` — Diagnose config and environment.
+- `kage ui` — Open web dashboard.
 
-### Execution & Monitoring
-- `kage run`: Execute due tasks (manual trigger).
-- `kage task list`: See status and schedule of all tasks.
-- `kage task show <name>`: Display detailed task configuration.
-- `kage ui`: Web dashboard for execution history and logs.
+## Task File Template (`.kage/tasks/*.md`)
 
-## Task Configuration (.kage/tasks/*.md)
-
-### AI-Driven Task
 ```markdown
 ---
-name: Code Auditor
-cron: "0 * * * *"
-provider: claude
+name: <Task Name>
+cron: "<cron expression>"
+provider: <provider name>      # e.g. claude, gemini, codex
+mode: continuous               # continuous | once | autostop
+policy: forbid                 # allow | forbid | replace
+timeout: 3600                  # seconds
+allowed_hours: ""              # e.g. "9-17" (optional)
+denied_hours: ""               # e.g. "0-8,18-23" (optional)
+active: true
 ---
 
-# Task: Continuous Health Check
-Analyze the 'src/' directory and report findings.
+# Task: <Title>
+
+<Describe what the AI agent should do here.>
 ```
 
-### Shell-Command Task
+### Shell-Command Task Variant
+
 ```markdown
 ---
-name: Database Backup
-cron: "0 3 * * *"
-command: "./scripts/backup_db.sh"
-shell: "bash"
+name: <Task Name>
+cron: "<cron expression>"
+command: "<shell command>"
+shell: bash
 ---
-Backup the production database every night.
 ```
 
 ## Configuration Hierarchy
@@ -67,3 +68,4 @@ Backup the production database every night.
 2. `.kage/config.toml` (Project-shared)
 3. `~/.kage/config.toml` (User-global)
 4. Library Defaults
+- **Background Loop**: Runs via `kage cron install` (cron/launchd).

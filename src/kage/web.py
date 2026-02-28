@@ -9,6 +9,7 @@ import threading
 import time
 from pathlib import Path
 from .config import KAGE_DB_PATH, get_global_config
+from .ai.chat import generate_chat_reply, clean_ai_reply
 
 app = FastAPI(title="kage UI")
 
@@ -737,6 +738,62 @@ INDEX_HTML = """
             0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
             40% { transform: scale(1); opacity: 1; }
         }
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .modal.active {
+            display: flex;
+            opacity: 1;
+        }
+        .modal-content {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-base);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            position: relative;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            animation: modalIn 0.3s ease-out;
+        }
+        @keyframes modalIn {
+            from { transform: scale(0.95); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+        .modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-base);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-body {
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .close-modal {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
     </style>
 </head>
 <body>
@@ -759,6 +816,10 @@ INDEX_HTML = """
             <div class="nav-item" data-section="chat" id="nav-chat" data-label="AI Chat">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.1a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
                 <span class="nav-text">AI Chat</span>
+            </div>
+            <div class="nav-item" data-section="connectors" id="nav-connectors" data-label="Connectors">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2v4"/><path d="M16 2v4"/><rect x="4" y="8" width="16" height="12" rx="2"/></svg>
+                <span class="nav-text">Connectors</span>
             </div>
         </nav>
         <div class="sidebar-footer">
@@ -821,13 +882,49 @@ INDEX_HTML = """
                     <button id="chat-submit" class="btn" style="height: 60px; padding: 0 24px;">Send</button>
                 </div>
             </div>
+
+            <!-- Connectors Section -->
+            <div id="connectors-section" class="section">
+                <div class="toolbar">
+                    <button class="btn" onclick="fetchConnectors()">Refresh</button>
+                    <select id="connector-select" class="filter-select" style="margin-left: 10px;" onchange="selectConnector()">
+                        <option value="">Select a Connector...</option>
+                    </select>
+                    <button class="btn" style="margin-left:auto; background:var(--accent-muted); border:1px solid var(--accent); color:var(--accent); font-size:0.85rem;" onclick="showConnectorHelp()">Setup Help</button>
+                </div>
+                <div id="connectors-container" style="display: flex; gap: 20px; padding: 20px; height: calc(100% - 60px);">
+                    <div style="flex: 1; max-width: 400px; display: flex; flex-direction: column;">
+                        <div class="card" id="connector-config-card" style="flex-grow: 1; overflow-y: auto;">
+                            Select a connector to view details.
+                        </div>
+                    </div>
+                    <div style="flex: 2; display: flex; flex-direction: column; background: var(--bg-card); border: 1px solid var(--border-base); border-radius: 8px;">
+                        <h3 style="margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--border-base); font-size: 1rem;">Message History</h3>
+                        <div id="connector-history" class="chat-container" style="flex-grow: 1; overflow-y: auto;">
+                        </div>
+                    </div>
+                </div>
+            </div>
         </section>
     </main>
+
+    <!-- Modal -->
+    <div id="help-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title" style="margin:0;">Setup Help</h3>
+                <button class="close-modal" onclick="closeModal()">&times;</button>
+            </div>
+            <div id="modal-body" class="modal-body">
+            </div>
+        </div>
+    </div>
 
     <script>
         let lastLogsSignature = null;
         let allLogsData = [];
         let allConfigData = null;
+        let allConnectorsData = [];
         let autoScrollEnabled = true;
 
         // Helper: Get project short name (last directory)
@@ -861,6 +958,7 @@ INDEX_HTML = """
                 if (section === 'config') fetchConfig();
                 if (section === 'logs') fetchLogs();
                 if (section === 'chat') fetchChatProviderInfo();
+                if (section === 'connectors') fetchConnectors();
                 
                 if (push) {
                     const path = section === 'logs' ? '/' : '/' + section;
@@ -888,7 +986,7 @@ INDEX_HTML = """
         // Initial landing
         document.addEventListener('DOMContentLoaded', () => {
             const path = window.location.pathname.substring(1);
-            const validSections = ['logs', 'config', 'chat'];
+            const validSections = ['logs', 'config', 'chat', 'connectors'];
             const section = validSections.includes(path) ? path : 'logs';
             
             // Sidebar state
@@ -1372,6 +1470,138 @@ INDEX_HTML = """
                 fetchLogs();
             }
         }, 5000);
+        async function fetchConnectors() {
+            try {
+                const res = await fetch('/api/connectors');
+                allConnectorsData = await res.json();
+                renderConnectorsSelect();
+            } catch (err) {
+                console.error("Failed to load connectors", err);
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('help-modal').classList.remove('active');
+        }
+
+        const SETUP_GUIDES = {
+            discord: `
+# Discord Setup Guide
+1. **Developer Portal**: Create app at [discord.com/developers](https://discord.com/developers/applications).
+2. **Bot Token**: Reset Token in **Bot** tab. Enable **Message Content Intent**.
+3. **OAuth2**: URL Generator -> \`bot\` -> \`Send Messages\`, \`Read Message History\`.
+4. **Channel ID**: Enable Developer Mode in Discord, right-click channel -> **Copy Channel ID**.
+5. **Config**:
+\`\`\`toml
+[connectors.my_discord]
+type = "discord"
+bot_token = "..."
+channel_id = "..."
+\`\`\`
+`,
+            slack: `
+# Slack Setup Guide
+1. **Slack API**: Create app at [api.slack.com/apps](https://api.slack.com/apps) (From scratch).
+2. **Scopes**: OAuth & Permissions -> \`channels:history\`, \`chat:write\`.
+3. **Install**: Install to Workspace, copy **Bot User OAuth Token** (\`xoxb-...\`).
+4. **Channel ID**: Channel details -> find ID at bottom (starts with \`C\`).
+5. **Invite**: Type \`/invite @YourBotName\` in the channel.
+6. **Config**:
+\`\`\`toml
+[connectors.my_slack]
+type = "slack"
+bot_token = "xoxb-..."
+channel_id = "..."
+\`\`\`
+`
+        };
+
+        function showConnectorHelp() {
+            const select = document.getElementById('connector-select');
+            const name = select.value;
+            let type = 'discord';
+            
+            if (name) {
+                const c = allConnectorsData.find(x => x.name === name);
+                if (c) type = c.config.type;
+            }
+            
+            const modal = document.getElementById('help-modal');
+            const body = document.getElementById('modal-body');
+            const title = document.getElementById('modal-title');
+            
+            const guide = SETUP_GUIDES[type] || "# Guide not available\\nAvailable types: discord, slack";
+            title.textContent = "Setup Help: " + type.charAt(0).toUpperCase() + type.slice(1);
+            body.innerHTML = renderMarkdown(guide);
+            modal.classList.add('active');
+        }
+
+        function renderConnectorsSelect() {
+            const select = document.getElementById('connector-select');
+            const currentVal = select.value;
+            let html = '<option value="">Select a Connector...</option>';
+            allConnectorsData.forEach(c => {
+                html += `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)} (${escapeHtml(c.config.type)})</option>`;
+            });
+            select.innerHTML = html;
+            if (currentVal && allConnectorsData.some(c => c.name === currentVal)) {
+                select.value = currentVal;
+            } else if (allConnectorsData.length > 0) {
+                select.value = allConnectorsData[0].name;
+            }
+            selectConnector();
+        }
+
+        async function selectConnector() {
+            const name = document.getElementById('connector-select').value;
+            const configCard = document.getElementById('connector-config-card');
+            const historyContainer = document.getElementById('connector-history');
+            
+            if (!name) {
+                configCard.innerHTML = 'Select a connector to view details.';
+                historyContainer.innerHTML = '';
+                return;
+            }
+            
+            const connector = allConnectorsData.find(c => c.name === name);
+            if (!connector) return;
+            
+            // Render Config
+            let confHtml = `<h3 style="margin:0 0 10px 0;">${escapeHtml(connector.name)}</h3>`;
+            Object.entries(connector.config).forEach(([k, v]) => {
+                confHtml += `<div class="kv-row"><span class="kv-key">${escapeHtml(k)}</span><span class="kv-val">${escapeHtml(String(v))}</span></div>`;
+            });
+            configCard.innerHTML = confHtml;
+            
+            // Render History
+            historyContainer.innerHTML = 'Loading history...';
+            try {
+                const res = await fetch(`/api/connectors/${encodeURIComponent(name)}/history`);
+                const history = await res.json();
+                
+                if (history.length === 0) {
+                    historyContainer.innerHTML = '<div style="padding:16px; color:var(--text-dim);">No history found.</div>';
+                    return;
+                }
+                
+                let hHtml = '';
+                history.forEach(entry => {
+                    const date = new Date(entry.timestamp * 1000).toLocaleString();
+                    const isAssistant = entry.role.toLowerCase() === 'assistant';
+                    const roleClass = isAssistant ? 'assistant' : 'user';
+                    hHtml += `
+                        <div style="margin-bottom: 4px; font-size: 0.8rem; color: var(--text-dim); text-align: ${isAssistant ? 'left' : 'right'}">
+                            ${escapeHtml(entry.role)} · ${date}
+                        </div>
+                        <div class="message ${roleClass}">${renderMarkdown(entry.content)}</div>
+                    `;
+                });
+                historyContainer.innerHTML = hHtml;
+                historyContainer.scrollTop = historyContainer.scrollHeight;
+            } catch (err) {
+                historyContainer.innerHTML = '<div style="color:var(--error-text);">Failed to load history</div>';
+            }
+        }
     </script>
 </body>
 </html>
@@ -1575,57 +1805,16 @@ def toggle_task(req: ToggleTaskRequest):
 
 @app.post("/api/chat")
 def handle_chat(req: ChatRequest):
-    import subprocess
-    import os
-    from pathlib import Path
-
-    config = get_global_config()
-    engine_name = config.default_ai_engine
-    if not engine_name:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "default_ai_engine is not set in global config."},
-        )
-
-    provider = config.providers.get(engine_name)
-    if not provider:
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"Provider '{engine_name}' is not defined in providers."},
-        )
-
-    cmd_def = config.commands.get(provider.command)
-    if not cmd_def:
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"Command template '{provider.command}' is not defined."},
-        )
-
-    template = cmd_def.template
-    cmd = [part.replace("{prompt}", req.message) for part in template]
-
-    # Resolve the executable via env_path if set
-    env = os.environ.copy()
-    if config.env_path:
-        env["PATH"] = config.env_path
-
-    import shutil
-
-    if cmd and cmd[0]:
-        exe_path = shutil.which(cmd[0], path=env.get("PATH"))
-        if exe_path:
-            cmd[0] = exe_path
-
+    from .ai.chat import generate_chat_reply, clean_ai_reply
+    from fastapi.responses import JSONResponse
+    
     try:
-        # Run subprocess blockingly and capture output
-        res = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=str(Path.cwd()), env=env
-        )
-        return {
-            "stdout": res.stdout,
-            "stderr": res.stderr,
-            "returncode": res.returncode,
-        }
+        reply_data = generate_chat_reply(req.message)
+        # Clean thinking tags for the UI too
+        reply_data["stdout"] = clean_ai_reply(reply_data.get("stdout", ""))
+        return reply_data
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -1639,3 +1828,36 @@ def start_ui(port: int = 8080):
     url = f"http://127.0.0.1:{port}"
     threading.Thread(target=open_browser, args=(url,), daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=port)
+
+@app.get("/api/connectors")
+def get_connectors():
+    config = get_global_config()
+    res = []
+    for name, c in config.connectors.items():
+        masked_c = dict(c)
+        if "bot_token" in masked_c and masked_c["bot_token"]:
+            masked_c["bot_token"] = "***" + masked_c["bot_token"][-4:]
+        res.append({"name": name, "config": masked_c})
+    return res
+
+@app.get("/api/connectors/{name}/history")
+def get_connector_history(name: str):
+    import json
+    history_file = Path.home() / ".kage" / "connectors" / f"{name}_history.jsonl"
+    if not history_file.exists():
+        return []
+    
+    entries = []
+    try:
+        with history_file.open("r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    except Exception as e:
+        print(f"Error reading history for {name}: {e}")
+    # Return last 50 messages
+    return entries[-50:]

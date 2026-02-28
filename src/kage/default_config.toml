@@ -3,7 +3,10 @@
 
 log_level = "INFO"
 ui_port = 8484
-daemon_interval_minutes = 1  # daemon (cron/launchd) の起動間隔（分単位）
+cron_interval_minutes = 1
+  # daemon (cron/launchd) の起動間隔（分単位）
+# darwin_launchd_interval_seconds = 60  # macOS launchd専用 (秒単位)
+# darwin_launchd_keep_alive = false     # macOS launchd専用 (常駐させるか)
 timezone = "UTC"             # cronスケジュールなどで使うタイムゾーン
 memory_max_entries = 5       # プロンプトに注入する直近メモリの最大件数
 
@@ -103,6 +106,9 @@ Your task has a `mode` field that controls lifecycle behavior:
 [commands.codex]
 template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "{prompt}"]
 
+[commands.aider]
+template = ["aider", "--message", "{prompt}", "--auto-lint", "--auto-test", "--yes-always"]
+
 [commands.claude]
 template = ["claude", "-p", "--allow-dangerously-skip-permissions", "--dangerously-skip-permissions", "{prompt}"]
 
@@ -119,3 +125,22 @@ command = "claude"
 
 [providers.gemini]
 command = "gemini"
+
+[providers.aider]
+command = "aider"
+
+# ==============================================================================
+# Chat Connectors
+# Enable external chat apps to poll and interact with kage.
+# Since kage run is triggered every minute, polling happens per-minute (stateless),
+# requiring no complex webhooks or WebSocket daemons.
+# ==============================================================================
+
+[connectors.my_discord_bot]
+type = "discord"
+active = false
+bot_token = ""
+channel_id = ""
+user_id = "" # Optional: Only respond to this specific user ID
+history_limit = 10 # Optional: Number of previous messages to include as context
+persona = "" # Optional: Override the default AI persona/prompt for this connector

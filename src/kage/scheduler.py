@@ -124,3 +124,14 @@ def run_all_scheduled_tasks():
                 # 実行条件を満たした場合、非同期またはバックグラウンドで実行
                 # 今回はPython内のサブプロセスとして呼び出す
                 execute_task(proj_dir, local_task.task, task_file=toml_file)
+    
+    # Run active connectors
+    from .connectors.runner import run_connectors
+    import threading
+    
+    # Run connectors in a separate thread so it doesn't block if there are many tasks, 
+    # but since this is at the end, we can just call it synchronously or run it before tasks 
+    # in a background thread that we join at the end.
+    pass  # We will just run it at the end for simplicity.
+
+    run_connectors()

@@ -24,17 +24,41 @@ class ProviderConfig(BaseModel):
     parser_args: str = ""
 
 
+class DiscordConnectorConfig(BaseModel):
+    type: str = "discord"
+    active: bool = False
+    bot_token: str = ""
+    channel_id: str = ""
+    user_id: Optional[str] = None
+    history_limit: int = 10
+    max_age_seconds: int = 600
+    persona: Optional[str] = None
+
+class SlackConnectorConfig(BaseModel):
+    type: str = "slack"
+    active: bool = False
+    bot_token: str = ""
+    channel_id: str = ""
+    user_id: Optional[str] = None
+    history_limit: int = 10
+    max_age_seconds: int = 600
+    persona: Optional[str] = None
+
 class GlobalConfig(BaseModel):
+    model_config = {"extra": "ignore"}
     default_ai_engine: Optional[str] = None
     log_level: str = "INFO"
     ui_port: int = 8484
-    daemon_interval_minutes: int = 1  # cron/launchd の起動間隔（分単位）
+    cron_interval_minutes: int = 1  # cron/launchd の起動間隔（分単位）
+    darwin_launchd_interval_seconds: Optional[int] = None  # macOS launchd 専用: 秒単位の間隔
+    darwin_launchd_keep_alive: bool = False  # macOS launchd 専用: KeepAlive を有効にするか
     timezone: str = "UTC"  # cron式のタイムゾーン評価基準
     env_path: Optional[str] = None  # cron実行時に復元するPATH環境変数
     system_prompt: str = ""  # デフォルトのシステムプロンプト
     memory_max_entries: int = 5  # プロンプトに注入する直近メモリの最大件数
     commands: dict[str, CommandDef] = {}
     providers: dict[str, ProviderConfig] = {}
+    connectors: dict[str, dict] = {}
 
 
 def _load_toml_file(path: Path) -> dict:

@@ -22,7 +22,7 @@ def _setup_linux_cron():
     from .config import get_global_config
 
     cfg = get_global_config()
-    interval = max(1, cfg.daemon_interval_minutes)
+    interval = max(1, cfg.cron_interval_minutes)
 
     # cron式を間隔から生成
     if interval == 1:
@@ -194,7 +194,15 @@ def _setup_macos_launchd():
     from .config import get_global_config
 
     cfg = get_global_config()
-    interval_seconds = max(60, cfg.daemon_interval_minutes * 60)
+    
+    # Use macOS specific interval (seconds) if provided, otherwise fallback to minutes-based conversion
+    if cfg.darwin_launchd_interval_seconds is not None:
+        # Safety: Must be at least 15 seconds
+        interval_seconds = max(15, cfg.darwin_launchd_interval_seconds)
+    else:
+        interval_seconds = max(60, cfg.cron_interval_minutes * 60)
+
+    keep_alive = cfg.darwin_launchd_keep_alive
 
     kage_path = get_kage_path()
     log_file = Path.home() / ".kage" / "launchd.log"
@@ -221,6 +229,8 @@ def _setup_macos_launchd():
     </array>
     <key>StartInterval</key>
     <integer>{interval_seconds}</integer>
+    <key>KeepAlive</key>
+    <{"true" if keep_alive else "false"}/>
     <key>StandardOutPath</key>
     <string>{log_file}</string>
     <key>StandardErrorPath</key>
@@ -240,7 +250,7 @@ def _setup_macos_launchd():
         )
         subprocess.run(["launchctl", "kickstart", "-k", _launchd_label()], check=True)
         typer.echo(
-            f"Successfully registered kage to launchd (every {cfg.daemon_interval_minutes} min). Agent ID: {LAUNCHD_PLIST_ID}"
+            f"Successfully registered kage to launchd (every {cfg.cron_interval_minutes} min). Agent ID: {LAUNCHD_PLIST_ID}"
         )
     except Exception as e:
         typer.echo(f"Failed to register launchd agent: {e}")
@@ -300,7 +310,7 @@ def _stop_macos_launchd():
 
 
 def install():
-    typer.echo("Installing kage daemon...")
+    typer.echo("Installing kage cron (system scheduler)...")
 
     # PATHを保存して、cron実行時に復元できるようにする
     from .config import set_config_value

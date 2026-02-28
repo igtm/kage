@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from pydantic import BaseModel
+import pydantic
 
 
 class ExecutionMode(str, Enum):
@@ -31,8 +32,15 @@ class TaskDef(BaseModel):
     timezone: Optional[str] = None  # タスク固有のタイムゾーン設定
     timeout_minutes: Optional[int] = None  # タイムアウト設定
     allowed_hours: Optional[str] = None  # 実行を許可する時間（例: "9-17,21"）
-    denied_hours: Optional[str] = None  # 実行を禁止する時間（例: "0-5,23"）
-    command: Optional[str] = None
+    denied_hours: Optional[str] = pydantic.Field(
+        default=None, description="実行を禁止する時間帯（例: '0-5,12'）"
+    )
+    notify_connectors: Optional[list[str]] = pydantic.Field(
+        default=None, description="実行完了時に結果を通知するコネクター名のリスト（例: ['discord']）"
+    )
+    command: Optional[str] = pydantic.Field(
+        default=None, description="AIではなく通常のシェルコマンドを実行する場合"
+    )
     shell: Optional[str] = None
     prompt: Optional[str] = None
     provider: Optional[str] = None
@@ -49,9 +57,13 @@ class LocalTask(BaseModel):
 def _parse_task_dict(data: dict) -> Optional[TaskDef]:
     """dict から TaskDef を生成する。ai フィールドは入れ子 dict を許容。"""
     try:
-        if "ai" in data and isinstance(data["ai"], dict):
-            data = dict(data)
-            data["ai"] = AIEngineConfig(**data["ai"])
+        # Pydantic requires standard types, so we cleanly unwrap tomlkit proxy objects
+        clean_data = getattr(data, "unwrap", lambda: dict(data))()
+
+        if "ai" in clean_data and isinstance(clean_data["ai"], dict):
+            clean_data["ai"] = AIEngineConfig(**clean_data["ai"])
+
+        data = clean_data
 
         # 'active' field conversion if it's a string from Markdown
         if "active" in data:
@@ -62,8 +74,26 @@ def _parse_task_dict(data: dict) -> Optional[TaskDef]:
         if "mode" in data and isinstance(data["mode"], str):
             data["mode"] = data["mode"].lower()
 
+        # 'connector' / 'connectors' alias mapping
+        if "connector" in data:
+            val = data["connector"]
+            del data["connector"]
+            if isinstance(val, str):
+                data["notify_connectors"] = [v.strip() for v in val.split(",") if v.strip()]
+            elif isinstance(val, list):
+                data["notify_connectors"] = list(val)
+        elif "connectors" in data:
+            val = data["connectors"]
+            del data["connectors"]
+            if isinstance(val, str):
+                data["notify_connectors"] = [v.strip() for v in val.split(",") if v.strip()]
+            elif isinstance(val, list):
+                data["notify_connectors"] = list(val)
+
         return TaskDef(**data)
-    except Exception:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -110,58 +140,92 @@ def _split_markdown_front_matter(text: str) -> tuple[Optional[dict], str]:
 def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
     """
     タスクファイルから TaskDef のリストを返す。
-    Markdown: front matter 1ファイル1タスク（promptタスクのみ）のみをサポート。
+
+    対応フォーマット:
+      1. TOML: 単一タスク [task]
+      2. TOML: 複数タスク [task_xxx] 群
+      3. Markdown: front matter 1ファイル1タスク（promptタスクのみ）
     """
     suffix = filepath.suffix.lower()
 
-    if suffix != ".md":
-        return []
+    # Markdown front matter (1 task / file, prompt-only)
+    if suffix == ".md":
+        try:
+            text = filepath.read_text(encoding="utf-8")
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
+            return []
 
+        fm, body_prompt = _split_markdown_front_matter(text)
+        if not fm:
+            print(f"No valid front matter found in {filepath}")
+            return []
+
+        # md は prompt タスクのみ許可
+        if "command" in fm:
+            print(f"Markdown task must be prompt-only (command is not allowed): {filepath}")
+            return []
+
+        required = ["name", "cron"]
+        if not all(k in fm and str(fm[k]).strip() for k in required):
+            print(f"Markdown task requires front matter keys: {required} in {filepath}")
+            return []
+
+        if not body_prompt or not body_prompt.strip():
+            print(f"Markdown task requires a body prompt string: {filepath}")
+            return []
+
+        task_data = {
+            "name": fm.get("name"),
+            "cron": fm.get("cron"),
+            "active": fm.get("active", "true"),
+            "mode": fm.get("mode", "continuous"),
+            "concurrency_policy": fm.get("concurrency_policy", "allow"),
+            "timezone": fm.get("timezone"),
+            "timeout_minutes": int(fm.get("timeout_minutes")) if fm.get("timeout_minutes") else None,
+            "allowed_hours": fm.get("allowed_hours"),
+            "denied_hours": fm.get("denied_hours"),
+            "prompt": body_prompt.strip(),
+            "provider": fm.get("provider"),
+            "parser": fm.get("parser"),
+            "parser_args": fm.get("parser_args"),
+            "connector": fm.get("connector"),
+            "connectors": fm.get("connectors"),
+            "notify_connectors": fm.get("notify_connectors"),
+        }
+
+        t = _parse_task_dict(task_data)
+        return [("task", t)] if t else []
+
+    # TOML
     try:
-        text = filepath.read_text(encoding="utf-8")
+        import tomlkit
+        with open(filepath, "r", encoding="utf-8") as f:
+            doc = tomlkit.load(f)
+        data = doc.unwrap() if hasattr(doc, "unwrap") else dict(doc)
     except Exception as e:
         print(f"Error reading {filepath}: {e}")
         return []
 
-    fm, body_prompt = _split_markdown_front_matter(text)
-    if not fm:
-        print(f"Markdown task requires front matter block in {filepath}")
-        return []
+    results = []
 
-    # md は prompt または command タスクを許可
-    required = ["name", "cron"]
-    if not all(k in fm and str(fm[k]).strip() for k in required):
-        print(f"Markdown task requires front matter keys: {required} in {filepath}")
-        return []
+    # フォーマット 1: [task] セクション
+    if "task" in data and isinstance(data["task"], dict):
+        t = _parse_task_dict(data["task"])
+        if t:
+            results.append(("task", t))
+        return results
 
-    task_data = {
-        "name": fm.get("name"),
-        "cron": fm.get("cron"),
-        "active": fm.get("active", "true"),
-        "mode": fm.get("mode", "continuous"),
-        "concurrency_policy": fm.get("concurrency_policy", "allow"),
-        "timezone": fm.get("timezone"),
-        "timeout_minutes": int(fm.get("timeout_minutes"))
-        if fm.get("timeout_minutes")
-        else None,
-        "allowed_hours": fm.get("allowed_hours"),
-        "denied_hours": fm.get("denied_hours"),
-        "prompt": body_prompt if body_prompt.strip() else None,
-        "command": fm.get("command"),
-        "shell": fm.get("shell"),
-        "provider": fm.get("provider"),
-        "parser": fm.get("parser"),
-        "parser_args": fm.get("parser_args"),
-    }
+    # フォーマット 2: [task_xxx] セクション群
+    for key, val in data.items():
+        if key.startswith("task") and isinstance(val, dict) and "name" in val and "cron" in val:
+            t = _parse_task_dict(val)
+            if t:
+                results.append((key, t))
 
-    if not task_data["prompt"] and not task_data["command"]:
-        print(
-            f"Markdown task requires either a body prompt or a 'command' in front matter: {filepath}"
-        )
-        return []
-
-    t = _parse_task_dict(task_data)
-    return [("task", t)] if t else []
+    if not results:
+        print(f"No valid tasks found in {filepath}")
+    return results
 
 
 def load_project_tasks(project_dir: Path) -> List[tuple[Path, LocalTask]]:
@@ -170,8 +234,9 @@ def load_project_tasks(project_dir: Path) -> List[tuple[Path, LocalTask]]:
         return []
 
     tasks = []
-
-    for task_file in sorted(list(tasks_dir.glob("*.md"))):
+    
+    for task_file in sorted(list(tasks_dir.glob("*.toml")) + list(tasks_dir.glob("*.md"))):
         for _, task_def in parse_task_file(task_file):
             tasks.append((task_file, LocalTask(task=task_def)))
+            
     return tasks

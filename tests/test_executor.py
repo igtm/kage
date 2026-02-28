@@ -78,14 +78,10 @@ def test_execute_ai_via_provider(tmp_path: Path, mock_global_config, mocker):
 
     args, _ = mock_run.call_args
     assert Path(args[0][0]).name == "codex"
-    assert args[0][1:] == [
-        "--ask-for-approval",
-        "never",
-        "--sandbox",
-        "workspace-write",
-        "exec",
-        "Fix this",
-    ]
+    # prompt is now system_prompt + task_plan + memory + task instructions
+    full_prompt = args[0][-1]
+    assert "Fix this" in full_prompt
+    assert "## Task Instructions" in full_prompt
 
 
 def test_execute_explicit_provider(tmp_path: Path, mock_global_config, mocker):
@@ -102,16 +98,9 @@ def test_execute_explicit_provider(tmp_path: Path, mock_global_config, mocker):
     assert mock_run.call_count == 2
     args, _ = mock_run.call_args_list[0]
     assert Path(args[0][0]).name == "codex"
-    assert args[0][1:] == [
-        "--ask-for-approval",
-        "never",
-        "--sandbox",
-        "workspace-write",
-        "exec",
-        "--output-format",
-        "json",
-        "Fix this",
-    ]
+    full_prompt = args[0][-1]
+    assert "Fix this" in full_prompt
+    assert "## Task Instructions" in full_prompt
 
 
 def test_execute_inline_command_template(tmp_path: Path, mock_global_config, mocker):
@@ -128,7 +117,11 @@ def test_execute_inline_command_template(tmp_path: Path, mock_global_config, moc
     execute_task(tmp_path, task)
 
     args, _ = mock_run.call_args
-    assert args[0] == ["inline_cli", "-m", "10", "Fix this inline"]
+    # inline template should use the prompt directly (no system prompt injection)
+    assert args[0][0] == "inline_cli"
+    assert args[0][1] == "-m"
+    assert args[0][2] == "10"
+    assert "Fix this inline" in args[0][3]
 
 
 def test_execute_provider_with_jq(tmp_path: Path, mock_global_config, mocker):
@@ -152,7 +145,8 @@ def test_execute_provider_with_jq(tmp_path: Path, mock_global_config, mocker):
     assert mock_run.call_count == 2
     args_cli, _ = mock_run.call_args_list[0]
     args_jq, _ = mock_run.call_args_list[1]
-    assert args_cli[0] == ["custom_cli", "Test JQ"]
+    assert args_cli[0][0] == "custom_cli"
+    assert "Test JQ" in args_cli[0][-1]
     assert args_jq[0] == ["jq", "-r", ".result"]
 
 
