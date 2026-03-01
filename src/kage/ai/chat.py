@@ -10,7 +10,7 @@ Your role is to support the user in their daily tasks, acting like a proactive s
 Since you operate directly on the host machine, you have powerful access to the file system, databases, and local tools.
 
 [CRITICAL: THINKING PROCESS ISOLATION]
-- Before providing your final response, you MUST wrap ALL internal reasoning, plans, or "chain of thought" inside `<think>` and `</think>` tags.
+- Before providing your final response, you MUST wrap ALL internal reasoning, plans, or "chain of thought" inside `<{thinking_tag}>` and `</{thinking_tag}>` tags.
 - Everything OUTSIDE these tags will be treated as the final output visible to the user.
 - If you fail to use these tags, your internal reflections will leak and confuse the user.
 
@@ -59,7 +59,7 @@ def generate_chat_reply(message: str, system_prompt: str | None = None) -> dict:
 
     template = cmd_def.template
     
-    parts = [f"[System Context]\n{DEFAULT_SYSTEM_PROMPT.strip()}"]
+    parts = [f"[System Context]\n{DEFAULT_SYSTEM_PROMPT.strip().format(thinking_tag=config.thinking_tag)}"]
     if system_prompt:
         parts.append(f"[Additional Instructions]\n{system_prompt.strip()}")
     parts.append(f"[User Message]\n{message}")

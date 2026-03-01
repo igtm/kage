@@ -57,6 +57,7 @@ class GlobalConfig(BaseModel):
     env_path: Optional[str] = None  # cron実行時に復元するPATH環境変数
     system_prompt: str = ""  # デフォルトのシステムプロンプト
     memory_max_entries: int = 5  # プロンプトに注入する直近メモリの最大件数
+    thinking_tag: str = "think"  # AIに使わせるthinkingタグ名 (e.g. think, thinking, thought)
     commands: dict[str, CommandDef] = {}
     providers: dict[str, ProviderConfig] = {}
     connectors: dict[str, dict] = {}

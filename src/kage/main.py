@@ -794,6 +794,8 @@ def doctor():
             "providers",
             "system_prompt",
             "connectors",
+            "memory_max_entries",
+            "thinking_tag",
         }
         for k in data.keys():
             if k not in allowed_top:
@@ -808,6 +810,8 @@ def doctor():
             "timezone": (str,),
             "env_path": (str,),
             "system_prompt": (str,),
+            "memory_max_entries": (int,),
+            "thinking_tag": (str,),
         }
         for key, expected in typed_keys.items():
             if (

@@ -270,7 +270,8 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 )
 
             # プロンプトの構築: System Prompt + Task Plan + Memory + Task Instructions
-            full_prompt = f"{system_prompt}{task_plan_context}{memory_section}\n\n## Task Instructions\n{task.prompt}"
+            formatted_system_prompt = system_prompt.replace("{thinking_tag}", global_config.thinking_tag)
+            full_prompt = f"{formatted_system_prompt}{task_plan_context}{memory_section}\n\n## Task Instructions\n{task.prompt}"
 
             # プロバイダーの解決
             engine_name = task.provider or global_config.default_ai_engine
