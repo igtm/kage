@@ -12,7 +12,7 @@ from typing import Optional
 from .config import KAGE_GLOBAL_DIR, get_global_config
 from .db import log_execution
 from .parser import TaskDef
-from .ai.chat import clean_ai_reply
+from .ai.chat import clean_ai_reply, get_thinking_tag
 
 
 def _normalize_headless_args(cmd: list[str]) -> list[str]:
@@ -269,10 +269,6 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                     f"`.kage/memory/{re.sub(r'[^a-zA-Z0-9_-]', '_', task.name)}/YYYY-MM-DD.json`."
                 )
 
-            # プロンプトの構築: System Prompt + Task Plan + Memory + Task Instructions
-            formatted_system_prompt = system_prompt.replace("{thinking_tag}", global_config.thinking_tag)
-            full_prompt = f"{formatted_system_prompt}{task_plan_context}{memory_section}\n\n## Task Instructions\n{task.prompt}"
-
             # プロバイダーの解決
             engine_name = task.provider or global_config.default_ai_engine
             if not engine_name:
@@ -280,6 +276,11 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 print(f"[kage] ERROR: {msg}")
                 log_execution(str(project_dir), task.name, "FAILED", "", msg)
                 return
+
+            # プロンプトの構築: System Prompt + Task Plan + Memory + Task Instructions
+            thinking_tag = get_thinking_tag(engine_name)
+            formatted_system_prompt = system_prompt.replace("{thinking_tag}", thinking_tag)
+            full_prompt = f"{formatted_system_prompt}{task_plan_context}{memory_section}\n\n## Task Instructions\n{task.prompt}"
 
             provider = global_config.providers.get(engine_name)
             extra_args = task.ai.args if task.ai and task.ai.args else []

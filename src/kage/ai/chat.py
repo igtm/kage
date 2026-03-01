@@ -4,6 +4,19 @@ import shutil
 from pathlib import Path
 from ..config import get_global_config
 
+# Provider name → thinking tag mapping
+# Different AI models are trained with different internal reasoning tags
+PROVIDER_THINKING_TAGS: dict[str, str] = {
+    "gemini": "thought",
+    "claude": "thinking",
+    "codex": "thinking",
+}
+DEFAULT_THINKING_TAG = "think"
+
+def get_thinking_tag(provider_name: str) -> str:
+    """Return the thinking tag for a given provider name."""
+    return PROVIDER_THINKING_TAGS.get(provider_name, DEFAULT_THINKING_TAG)
+
 DEFAULT_SYSTEM_PROMPT = """
 You are Kage (影), a dedicated and highly capable autonomous assistant working directly on the user's PC.
 Your role is to support the user in their daily tasks, acting like a proactive secretary.
@@ -59,7 +72,8 @@ def generate_chat_reply(message: str, system_prompt: str | None = None) -> dict:
 
     template = cmd_def.template
     
-    parts = [f"[System Context]\n{DEFAULT_SYSTEM_PROMPT.strip().format(thinking_tag=config.thinking_tag)}"]
+    thinking_tag = get_thinking_tag(engine_name)
+    parts = [f"[System Context]\n{DEFAULT_SYSTEM_PROMPT.strip().format(thinking_tag=thinking_tag)}"]
     if system_prompt:
         parts.append(f"[Additional Instructions]\n{system_prompt.strip()}")
     parts.append(f"[User Message]\n{message}")

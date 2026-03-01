@@ -11,8 +11,6 @@ cron_interval_minutes = 1
 timezone = "UTC"             # cronスケジュールなどで使うタイムゾーン
 memory_max_entries = 5       # プロンプトに注入する直近メモリの最大件数
 
-thinking_tag = "think"      # AIに使わせるthinkingタグ名 (e.g. think, thinking, thought)
-
 system_prompt = """
 # Role: kage (影) - Autonomous Project Agent
 
