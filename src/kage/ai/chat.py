@@ -10,7 +10,7 @@ Your role is to support the user in their daily tasks, acting like a proactive s
 Since you operate directly on the host machine, you have powerful access to the file system, databases, and local tools.
 
 [CRITICAL: THINKING PROCESS ISOLATION]
-- Before providing your final response, you MUST wrap ALL internal reasoning, plans, or "chain of thought" inside `<think>` and `</think>` tags.
+- Before providing your final response, you MUST wrap ALL internal reasoning, plans, or "chain of thought" inside {thinking_tag} and {thinking_close_tag} tags.
 - Everything OUTSIDE these tags will be treated as the final output visible to the user.
 - If you fail to use these tags, your internal reflections will leak and confuse the user.
 
@@ -22,22 +22,26 @@ You MUST NOT answer questions or provide information related to:
 If asked about these, politely decline, stating that it violates your security constraints as a local agent.
 """
 
-def clean_ai_reply(text: str) -> str:
+def clean_ai_reply(text: str, thinking_tag: str = "<think>", thinking_close_tag: str = "</think>") -> str:
     """
     Remove <think>...</think> blocks from the AI's response.
     Also handles unclosed tags gracefully.
     """
     import re
+    # Escape tags for regex
+    esc_tag = re.escape(thinking_tag)
+    esc_close = re.escape(thinking_close_tag)
+    
     # Remove both <think>...</think> and anything inside a <think> tag at the end that hasn't closed
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<think>.*', '', text, flags=re.DOTALL)
+    text = re.sub(f'{esc_tag}.*?{esc_close}', '', text, flags=re.DOTALL)
+    text = re.sub(f'{esc_tag}.*', '', text, flags=re.DOTALL)
     return text.strip()
 
 def generate_chat_reply(message: str, persona: str | None = None) -> dict:
     """
     Generate a reply from the default AI engine configured in kage.
     Returns a dict with 'stdout', 'stderr', and 'returncode'.
-    If `persona` is provided (or defaults to DEFAULT_PERSONA), it is prepended to the message.
+    The base DEFAULT_PERSONA is always included, and any provided `persona` is appended.
     """
     config = get_global_config()
     engine_name = config.default_ai_engine
@@ -54,8 +58,23 @@ def generate_chat_reply(message: str, persona: str | None = None) -> dict:
 
     template = cmd_def.template
     
-    active_persona = persona if persona is not None else DEFAULT_PERSONA
-    system_context = f"[System Context / Persona]\n{active_persona.strip()}\n\n[User Message]\n{message}"
+    thinking_tag = getattr(provider, "thinking_tag", "<think>")
+    thinking_close_tag = getattr(provider, "thinking_close_tag", "</think>")
+    
+    # Merge DEFAULT_PERSONA and provided persona if any
+    base_persona = DEFAULT_PERSONA.strip()
+    if persona:
+        active_persona = f"{base_persona}\n\n[Individual Persona]\n{persona.strip()}"
+    else:
+        active_persona = base_persona
+        
+    # Format with thinking tags
+    formatted_persona = active_persona.format(
+        thinking_tag=thinking_tag,
+        thinking_close_tag=thinking_close_tag
+    )
+    
+    system_context = f"[System Context / Persona]\n{formatted_persona}\n\n[User Message]\n{message}"
     
     cmd = [part.replace("{prompt}", system_context) for part in template]
 
@@ -71,8 +90,12 @@ def generate_chat_reply(message: str, persona: str | None = None) -> dict:
     res = subprocess.run(
         cmd, capture_output=True, text=True, cwd=str(Path.cwd()), env=env
     )
+    
+    # Store provider tags in result for cleaner cleaning later if needed
     return {
         "stdout": res.stdout,
         "stderr": res.stderr,
         "returncode": res.returncode,
+        "thinking_tag": thinking_tag,
+        "thinking_close_tag": thinking_close_tag
     }

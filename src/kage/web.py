@@ -1811,7 +1811,11 @@ def handle_chat(req: ChatRequest):
     try:
         reply_data = generate_chat_reply(req.message)
         # Clean thinking tags for the UI too
-        reply_data["stdout"] = clean_ai_reply(reply_data.get("stdout", ""))
+        reply_data["stdout"] = clean_ai_reply(
+            reply_data.get("stdout", ""),
+            reply_data.get("thinking_tag", "<think>"),
+            reply_data.get("thinking_close_tag", "</think>")
+        )
         return reply_data
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": str(e)})

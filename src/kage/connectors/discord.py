@@ -147,11 +147,15 @@ class DiscordConnector(BaseConnector):
                 
                 reply_data = generate_chat_reply(prompt_with_history, persona=self.config.persona)
                 reply_text = reply_data.get("stdout", "")
+                thinking_tag = reply_data.get("thinking_tag", "<think>")
+                thinking_close_tag = reply_data.get("thinking_close_tag", "</think>")
             except Exception as e:
                 reply_text = f"Error generating reply: {e}"
+                thinking_tag = "<think>"
+                thinking_close_tag = "</think>"
 
             # Clean thinking tags before posting
-            final_reply_text = clean_ai_reply(reply_text)
+            final_reply_text = clean_ai_reply(reply_text, thinking_tag, thinking_close_tag)
             self._post_reply(final_reply_text)
             newest_id = msg_id
 
@@ -162,6 +166,8 @@ class DiscordConnector(BaseConnector):
     def send_message(self, text: str):
         if not self.config.active or not self.config.bot_token or not self.config.channel_id:
             return
+        # Note: when called directly (not from poll_and_reply), we don't have the tags.
+        # It will use default <think> tags which is usually fine for notifications.
         self._post_reply(clean_ai_reply(text))
 
     def _post_reply(self, text):
@@ -172,19 +178,37 @@ class DiscordConnector(BaseConnector):
         
         url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages"
         
-        if len(text) > 1950:
-            text = text[:1950] + "\n...(truncated)"
-            
-        payload = {"content": text}
+        # Discord limit is 2000 chars. Split if longer.
+        # We use a slightly smaller limit to be safe.
+        limit = 1900
+        parts = []
+        if len(text) <= limit:
+            parts.append(text)
+        else:
+            # Simple split by length for now, ideally we split by newline
+            while len(text) > 0:
+                if len(text) <= limit:
+                    parts.append(text)
+                    break
+                
+                # Try to find a newline to split at
+                split_idx = text.rfind('\n', 0, limit)
+                if split_idx == -1:
+                    split_idx = limit
+                
+                parts.append(text[:split_idx])
+                text = text[split_idx:].lstrip()
 
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=data, headers={
-            "Authorization": f"Bot {self.config.bot_token}",
-            "Content-Type": "application/json",
-            "User-Agent": "kage-connector"
-        }, method="POST")
+        for part in parts:
+            payload = {"content": part}
+            data = json.dumps(payload).encode()
+            req = urllib.request.Request(url, data=data, headers={
+                "Authorization": f"Bot {self.config.bot_token}",
+                "Content-Type": "application/json",
+                "User-Agent": "kage-connector"
+            }, method="POST")
 
-        try:
-            urllib.request.urlopen(req)
-        except Exception:
-            pass
+            try:
+                urllib.request.urlopen(req)
+            except Exception:
+                pass

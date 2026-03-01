@@ -20,14 +20,17 @@ def test_generate_chat_reply(mock_run, mock_get_config):
     mock_res.returncode = 0
     mock_run.return_value = mock_res
 
-    res = generate_chat_reply("hi")
+    res = generate_chat_reply("hi", persona="be helpful")
 
     assert res["stdout"] == "hello world"
     assert res["returncode"] == 0
+    assert res["thinking_tag"] == "<think>"
+    assert res["thinking_close_tag"] == "</think>"
     mock_run.assert_called_once()
     assert any("echo" in arg for arg in mock_run.call_args[0][0])
     assert any("hi" in arg for arg in mock_run.call_args[0][0])
     assert any("You are Kage" in arg for arg in mock_run.call_args[0][0])
+    assert any("be helpful" in arg for arg in mock_run.call_args[0][0])
 
 @patch("kage.ai.chat.get_global_config")
 def test_generate_chat_reply_no_engine(mock_get_config):

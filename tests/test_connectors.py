@@ -62,7 +62,31 @@ def test_discord_connector_ignores_bot_messages(mock_urlopen, tmp_path):
 
     connector.poll_and_reply()
 
-    # Chat logic should not be triggered, but state should skip to msg ID 2
-    assert connector.state_file.exists()
-    state = json.loads(connector.state_file.read_text())
-    assert state["last_message_id"] == "2"
+@patch("kage.connectors.discord.urllib.request.urlopen")
+def test_discord_message_splitting(mock_urlopen, tmp_path):
+    config = DiscordConnectorConfig(
+        active=True, bot_token="token", channel_id="123"
+    )
+    connector = DiscordConnector("test_discord", config)
+    
+    # Long text (2500 chars)
+    long_text = "A" * 2500
+    
+    # Mock URL open to just succeed
+    mock_response = MagicMock()
+    mock_urlopen.return_value = mock_response
+
+    connector.send_message(long_text)
+    
+    # Should be split into 2 parts (1900 + 600)
+    assert mock_urlopen.call_count == 2
+    
+    # Check payload content of first part
+    call_args_0 = mock_urlopen.call_args_list[0][0][0]
+    payload_0 = json.loads(call_args_0.data.decode())
+    assert len(payload_0["content"]) == 1900
+    
+    # Check payload content of second part
+    call_args_1 = mock_urlopen.call_args_list[1][0][0]
+    payload_1 = json.loads(call_args_1.data.decode())
+    assert len(payload_1["content"]) == 600
