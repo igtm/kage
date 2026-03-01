@@ -147,11 +147,13 @@ class DiscordConnector(BaseConnector):
                 
                 reply_data = generate_chat_reply(prompt_with_history, persona=self.config.persona)
                 reply_text = reply_data.get("stdout", "")
+                reasoning_tag = reply_data.get("reasoning_tag", "think")
             except Exception as e:
                 reply_text = f"Error generating reply: {e}"
+                reasoning_tag = "think"
 
             # Clean thinking tags before posting
-            final_reply_text = clean_ai_reply(reply_text)
+            final_reply_text = clean_ai_reply(reply_text, reasoning_tag=reasoning_tag)
             self._post_reply(final_reply_text)
             newest_id = msg_id
 
@@ -162,7 +164,18 @@ class DiscordConnector(BaseConnector):
     def send_message(self, text: str):
         if not self.config.active or not self.config.bot_token or not self.config.channel_id:
             return
-        self._post_reply(clean_ai_reply(text))
+        
+        # We don't have reasoning_tag here easily without re-fetching config, 
+        # but most models use 'think'. For system notifications, it's usually fine.
+        from ..config import get_global_config
+        config = get_global_config()
+        reasoning_tag = "think"
+        if config.default_ai_engine:
+            provider = config.providers.get(config.default_ai_engine)
+            if provider:
+                reasoning_tag = provider.reasoning_tag or "think"
+
+        self._post_reply(clean_ai_reply(text, reasoning_tag=reasoning_tag))
 
     def _post_reply(self, text):
         if not text:
@@ -172,19 +185,40 @@ class DiscordConnector(BaseConnector):
         
         url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages"
         
-        if len(text) > 1950:
-            text = text[:1950] + "\n...(truncated)"
+        # Split text into chunks of 1900 characters to stay within Discord's 2000 char limit
+        # 1900 leaves some room for markers or headers if needed later.
+        chunks = []
+        while len(text) > 1900:
+            # Try to split at a newline or space
+            split_idx = text.rfind("\n", 0, 1900)
+            if split_idx == -1:
+                split_idx = text.rfind(" ", 0, 1900)
+            if split_idx == -1:
+                split_idx = 1900
             
-        payload = {"content": text}
+            chunks.append(text[:split_idx].strip())
+            text = text[split_idx:].strip()
+        if text:
+            chunks.append(text)
 
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=data, headers={
-            "Authorization": f"Bot {self.config.bot_token}",
-            "Content-Type": "application/json",
-            "User-Agent": "kage-connector"
-        }, method="POST")
+        for i, chunk in enumerate(chunks):
+            if not chunk:
+                continue
+            
+            # If multiple chunks, add a pagination indicator
+            payload_text = chunk
+            if len(chunks) > 1:
+                payload_text = f"({i+1}/{len(chunks)})\n" + chunk
 
-        try:
-            urllib.request.urlopen(req)
-        except Exception:
-            pass
+            payload = {"content": payload_text}
+            data = json.dumps(payload).encode()
+            req = urllib.request.Request(url, data=data, headers={
+                "Authorization": f"Bot {self.config.bot_token}",
+                "Content-Type": "application/json",
+                "User-Agent": "kage-connector"
+            }, method="POST")
+
+            try:
+                urllib.request.urlopen(req)
+            except Exception:
+                pass

@@ -22,6 +22,7 @@ class ProviderConfig(BaseModel):
     command: str
     parser: str = "raw"
     parser_args: str = ""
+    reasoning_tag: str = "think"
 
 
 class DiscordConnectorConfig(BaseModel):

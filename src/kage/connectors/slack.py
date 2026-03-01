@@ -149,19 +149,22 @@ class SlackConnector(BaseConnector):
             try:
                 # Prepend the history and identity to the final prompt
                 prompt_with_history = f"{identity_context}[Recent Chat History]\n{history_context}\n\n[Current Instruction]\n{content}"
-                
+
                 # Log the user's message
                 self._log_history("User", content)
-                
+
                 reply_data = generate_chat_reply(prompt_with_history, persona=self.config.persona)
                 reply_text = reply_data.get("stdout", "")
+                reasoning_tag = reply_data.get("reasoning_tag", "think")
             except Exception as e:
                 reply_text = f"Error generating reply: {e}"
+                reasoning_tag = "think"
 
             # Clean thinking tags before posting
-            final_reply_text = clean_ai_reply(reply_text)
+            final_reply_text = clean_ai_reply(reply_text, reasoning_tag=reasoning_tag)
             self._post_reply(final_reply_text)
-            newest_ts = msg_ts
+            newest_id = msg_id
+
 
         if newest_ts != last_ts:
             state["last_ts"] = newest_ts
@@ -170,8 +173,17 @@ class SlackConnector(BaseConnector):
     def send_message(self, text: str):
         if not self.config.active or not self.config.bot_token or not self.config.channel_id:
             return
+            
+        from ..config import get_global_config
+        config = get_global_config()
+        reasoning_tag = "think"
+        if config.default_ai_engine:
+            provider = config.providers.get(config.default_ai_engine)
+            if provider:
+                reasoning_tag = provider.reasoning_tag or "think"
+
         # Even for automated notifications, we clean if someone accidentally used tags
-        self._post_reply(clean_ai_reply(text))
+        self._post_reply(clean_ai_reply(text, reasoning_tag=reasoning_tag))
 
     def _post_reply(self, text):
         if not text:

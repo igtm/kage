@@ -230,6 +230,25 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
         cmd = []
 
         if task.prompt:
+            # プロバイダーの解決
+            engine_name = task.provider or global_config.default_ai_engine
+            if not engine_name:
+                msg = "AIエンジンが未指定です。"
+                print(f"[kage] ERROR: {msg}")
+                log_execution(str(project_dir), task.name, "FAILED", "", msg)
+                return
+
+            provider = global_config.providers.get(engine_name)
+            reasoning_tag = "think"
+            if provider:
+                reasoning_tag = provider.reasoning_tag or "think"
+
+            # システムプロンプト内のタグプレースホルダを置換
+            system_prompt = system_prompt.replace("{reasoning_tag}", reasoning_tag)
+            # 互換性のために <think> も置換する
+            if "{reasoning_tag}" not in system_prompt and "<think>" in system_prompt:
+                system_prompt = system_prompt.replace("<think>", f"<{reasoning_tag}>").replace("</think>", f"</{reasoning_tag}>")
+
             # タスク管理 (task.json) の読み込みと prompt_hash チェック
             task_plan = _load_task_json(memory_dir)
             current_hash = _compute_prompt_hash(task.prompt)
@@ -380,7 +399,10 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             status = "SUCCESS" if result.returncode == 0 else "FAILED"
             # Clean thinking tags from AI output before storing and notifying
             if task.prompt:
-                result.stdout = clean_ai_reply(result.stdout)
+                reasoning_tag = "think"
+                if provider:
+                    reasoning_tag = provider.reasoning_tag or "think"
+                result.stdout = clean_ai_reply(result.stdout, reasoning_tag=reasoning_tag)
             update_execution(exec_id, status, result.stdout, result.stderr)
             _notify_connectors(task, status, result.stdout, result.stderr)
         except subprocess.TimeoutExpired:
