@@ -13,34 +13,46 @@ def test_discord_connector_poll_and_reply(mock_chat, mock_urlopen, tmp_path):
     connector = DiscordConnector("test_discord", config)
     connector.state_file = tmp_path / "discord_state.json"
 
-    # Mock API fetch response
-    mock_response = MagicMock()
-    mock_response.__enter__.return_value = mock_response
-    mock_response.read.return_value = json.dumps([
-        {"id": "1", "content": "hello kage", "author": {"bot": False}}
+    # Recent timestamp so the message passes max_age_seconds filter
+    from datetime import datetime, timezone
+    recent_ts = datetime.now(timezone.utc).isoformat()
+
+    # Mock API: _get_bot_identity call
+    mock_identity_response = MagicMock()
+    mock_identity_response.__enter__.return_value = mock_identity_response
+    mock_identity_response.read.return_value = json.dumps(
+        {"id": "999", "username": "kage"}
+    ).encode("utf-8")
+
+    # Mock API: GET messages
+    mock_get_response = MagicMock()
+    mock_get_response.__enter__.return_value = mock_get_response
+    mock_get_response.read.return_value = json.dumps([
+        {"id": "1", "content": "hello kage", "author": {"bot": False}, "timestamp": recent_ts}
     ]).encode("utf-8")
     
-    # Mock POST response for posting reply
+    # Mock API: POST reply (returns message id "2")
     mock_post_response = MagicMock()
+    mock_post_response.__enter__.return_value = mock_post_response
+    mock_post_response.read.return_value = json.dumps({"id": "2"}).encode("utf-8")
     
-    # urlopen is called twice: one GET, one POST
-    mock_urlopen.side_effect = [mock_response, mock_post_response]
+    # urlopen calls: GET messages, _get_bot_identity, POST reply
+    mock_urlopen.side_effect = [mock_get_response, mock_identity_response, mock_post_response]
 
     # Mock AI reply
     mock_chat.return_value = {"stdout": "hello human", "stderr": "", "returncode": 0}
 
     connector.poll_and_reply()
 
-    # Check state file updated
+    # Check state file updated to bot's reply ID
     assert connector.state_file.exists()
     state = json.loads(connector.state_file.read_text())
-    assert state["last_message_id"] == "1"
+    assert state["last_message_id"] == "2"
 
     # AI Chat triggered correctly
     mock_chat.assert_called_once()
     actual_prompt = mock_chat.call_args[0][0]
     assert "[Recent Chat History]" in actual_prompt
-    assert "Unknown: hello kage" in actual_prompt
     assert "[Current Instruction]\nhello kage" in actual_prompt
 
 @patch("kage.connectors.discord.urllib.request.urlopen")

@@ -113,60 +113,66 @@ class SlackConnector(BaseConnector):
                 history_lines.append(f"{role}: {content_text}")
         history_context = "\n".join(history_lines)
 
+        # Find the single newest user message to respond to.
+        target_msg = None
         newest_ts = last_ts
+
         for msg in messages:
             msg_ts = msg["ts"]
-            
+
             # Skip messages from bots (including self)
             if "bot_id" in msg or msg.get("subtype") == "bot_message":
                 newest_ts = msg_ts
                 continue
 
+            # Always advance the watermark
+            newest_ts = msg_ts
+
             # Filtering by user_id
             if self.config.user_id:
                 author_id = msg.get("user")
                 if author_id != str(self.config.user_id):
-                    newest_ts = msg_ts
                     continue
 
             content = msg.get("text", "").strip()
             if not content:
-                newest_ts = msg_ts
                 continue
 
             # Filtering by message age
             try:
-                # Slack ts is "1234567890.123456"
                 msg_time_unix = float(msg_ts)
                 now_unix = datetime.now(timezone.utc).timestamp()
                 age = now_unix - msg_time_unix
                 if age > self.config.max_age_seconds:
-                    newest_ts = msg_ts
                     continue
             except Exception:
-                pass
+                continue
 
+            # This is a valid candidate — keep the NEWEST one
+            target_msg = msg
+
+        # Always advance watermark to newest seen message, even if we don't reply
+        if newest_ts != last_ts:
+            state["last_ts"] = newest_ts
+            self._save_state(state)
+
+        # Process the single target message (if any)
+        if target_msg:
+            content = target_msg.get("text", "").strip()
             try:
-                # Prepend the history and identity to the final prompt
                 prompt_with_history = f"{identity_context}[Recent Chat History]\n{history_context}\n\n[Current Instruction]\n{content}"
-                
-                # Log the user's message
                 self._log_history("User", content)
-                
                 reply_data = generate_chat_reply(prompt_with_history, system_prompt=self.config.system_prompt)
                 reply_text = reply_data.get("stdout", "")
             except Exception as e:
                 reply_text = f"Error generating reply: {e}"
 
-            # Clean thinking tags before posting
             final_reply_text = clean_ai_reply(reply_text)
             last_reply_ts = self._post_reply(final_reply_text)
-            # Advance past bot's own reply to prevent self-reply on next poll
-            newest_ts = last_reply_ts if last_reply_ts else msg_ts
 
-        if newest_ts != last_ts:
-            state["last_ts"] = newest_ts
-            self._save_state(state)
+            if last_reply_ts:
+                state["last_ts"] = last_reply_ts
+                self._save_state(state)
 
     def send_message(self, text: str):
         if not self.config.active or not self.config.bot_token or not self.config.channel_id:

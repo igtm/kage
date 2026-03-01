@@ -104,28 +104,33 @@ class DiscordConnector(BaseConnector):
                 history_lines.append(f"{role}: {content_text}")
         history_context = "\n".join(history_lines)
 
+        # Find the single newest user message to respond to.
+        # We only respond to ONE message per poll to avoid long processing
+        # during which another cron cycle could start and cause duplicates.
+        target_msg = None
         newest_id = last_message_id
+
         for msg in messages:
             msg_id = msg["id"]
-            
+
             # Skip messages we've already processed
             if last_message_id and int(msg_id) <= int(last_message_id):
                 continue
-                
+
+            # Always advance the watermark so we don't re-scan these
+            newest_id = msg_id
+
             if msg.get("author", {}).get("bot"):
-                newest_id = msg_id
                 continue
 
             # Filtering by user_id
             if self.config.user_id:
                 author_id = msg.get("author", {}).get("id")
                 if author_id != str(self.config.user_id):
-                    newest_id = msg_id
                     continue
 
             content = msg.get("content", "").strip()
             if not content:
-                newest_id = msg_id
                 continue
 
             # Filtering by message age
@@ -133,32 +138,36 @@ class DiscordConnector(BaseConnector):
                 msg_time = datetime.fromisoformat(msg["timestamp"])
                 age = (datetime.now(timezone.utc) - msg_time).total_seconds()
                 if age > self.config.max_age_seconds:
-                    newest_id = msg_id
                     continue
             except Exception:
-                pass
+                continue  # If timestamp can't be parsed, skip (don't process stale msgs)
 
+            # This is a valid candidate — keep the NEWEST one
+            target_msg = msg
+
+        # Always advance watermark to newest seen message, even if we don't reply
+        if newest_id and newest_id != last_message_id:
+            state["last_message_id"] = newest_id
+            self._save_state(state)
+
+        # Process the single target message (if any)
+        if target_msg:
+            content = target_msg.get("content", "").strip()
             try:
-                # Prepend the history and identity to the final prompt
                 prompt_with_history = f"{identity_context}[Recent Chat History]\n{history_context}\n\n[Current Instruction]\n{content}"
-                
-                # Log the user's message
                 self._log_history("User", content)
-                
                 reply_data = generate_chat_reply(prompt_with_history, system_prompt=self.config.system_prompt)
                 reply_text = reply_data.get("stdout", "")
             except Exception as e:
                 reply_text = f"Error generating reply: {e}"
 
-            # Clean thinking tags before posting
             final_reply_text = clean_ai_reply(reply_text)
             last_reply_id = self._post_reply(final_reply_text)
-            # Advance past bot's own reply to prevent self-reply on next poll
-            newest_id = last_reply_id if last_reply_id else msg_id
 
-        if newest_id and newest_id != last_message_id:
-            state["last_message_id"] = newest_id
-            self._save_state(state)
+            # Advance past bot's own reply to prevent self-reply on next poll
+            if last_reply_id:
+                state["last_message_id"] = last_reply_id
+                self._save_state(state)
 
     def send_message(self, text: str):
         if not self.config.active or not self.config.bot_token or not self.config.channel_id:
