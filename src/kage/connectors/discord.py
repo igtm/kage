@@ -152,8 +152,9 @@ class DiscordConnector(BaseConnector):
 
             # Clean thinking tags before posting
             final_reply_text = clean_ai_reply(reply_text)
-            self._post_reply(final_reply_text)
-            newest_id = msg_id
+            last_reply_id = self._post_reply(final_reply_text)
+            # Advance past bot's own reply to prevent self-reply on next poll
+            newest_id = last_reply_id if last_reply_id else msg_id
 
         if newest_id and newest_id != last_message_id:
             state["last_message_id"] = newest_id
@@ -164,16 +165,21 @@ class DiscordConnector(BaseConnector):
             return
         self._post_reply(clean_ai_reply(text))
 
-    def _post_reply(self, text):
+    def _post_reply(self, text) -> str | None:
+        """Post a reply, splitting if needed. Returns the last posted message ID."""
         if not text:
-            return
+            return None
             
         self._log_history("Assistant", text)
         
         # Split into chunks respecting Discord's 2000 char limit
         chunks = self._split_message(text, max_len=1950)
+        last_id = None
         for chunk in chunks:
-            self._send_chunk(chunk)
+            msg_id = self._send_chunk(chunk)
+            if msg_id:
+                last_id = msg_id
+        return last_id
 
     @staticmethod
     def _split_message(text: str, max_len: int = 1950) -> list[str]:
@@ -200,8 +206,8 @@ class DiscordConnector(BaseConnector):
         
         return chunks
 
-    def _send_chunk(self, text: str):
-        """Send a single message chunk to Discord."""
+    def _send_chunk(self, text: str) -> str | None:
+        """Send a single message chunk to Discord. Returns the posted message ID."""
         url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages"
         payload = {"content": text}
 
@@ -213,7 +219,9 @@ class DiscordConnector(BaseConnector):
         }, method="POST")
 
         try:
-            urllib.request.urlopen(req)
+            with urllib.request.urlopen(req) as response:
+                res_data = json.loads(response.read().decode())
+                return res_data.get("id")
         except Exception:
-            pass
+            return None
 
