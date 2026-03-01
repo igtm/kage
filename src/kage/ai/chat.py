@@ -8,7 +8,7 @@ from ..config import get_global_config
 # Different AI models are trained with different internal reasoning tags
 PROVIDER_THINKING_TAGS: dict[str, str] = {
     "gemini": "thought",
-    "claude": "thinking",
+    "claude": "antml:thinking",
     "codex": "thinking",
 }
 DEFAULT_THINKING_TAG = "think"
@@ -38,12 +38,12 @@ If asked about these, politely decline, stating that it violates your security c
 def clean_ai_reply(text: str) -> str:
     """
     Remove internal reasoning tags from the AI's response.
-    Handles: <think>, <thinking>, <thought>, <antthinking>, <final>
+    Handles: <think>, <thinking>, <thought>, <antthinking>, <antml:thinking>, <final>
     Also handles unclosed tags gracefully.
     """
     import re
     # Tags that various AI models may use for internal reasoning
-    tags = r'(?:think|thinking|thought|antthinking|final)'
+    tags = r'(?:think|thinking|thought|antthinking|antml:thinking|final)'
     # Remove closed tag pairs
     text = re.sub(rf'<{tags}>.*?</{tags}>', '', text, flags=re.DOTALL)
     # Remove unclosed tags at the end

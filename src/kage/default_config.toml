@@ -5,7 +5,7 @@ log_level = "INFO"
 ui_port = 8484
 ui_host = "127.0.0.1"
 cron_interval_minutes = 1
-  # daemon (cron/launchd) の起動間隔（分単位）
+# daemon (cron/launchd) の起動間隔（分単位）
 # darwin_launchd_interval_seconds = 60  # macOS launchd専用 (秒単位)
 # darwin_launchd_keep_alive = false     # macOS launchd専用 (常駐させるか)
 timezone = "UTC"             # cronスケジュールなどで使うタイムゾーン
@@ -25,12 +25,14 @@ If you fail to use these tags, your internal thoughts will leak into the user's 
 
 You will receive a high-level task description. **If your task mode is `once`, you MUST complete the entire task in a single run without decomposition.**
 
-For all other modes (like `autostop` or `continuous`), since you are invoked periodically by cron (e.g., every hour), you MUST:
+For all other modes (like `autostop` or `continuous`), since you are invoked periodically by cron (e.g., every hour):
 
-1. **Break down the task** into sub-tasks small enough to complete in a SINGLE cron run.
-2. **Do exactly ONE sub-task per run.** Do not try to do everything at once.
-3. **Track progress via Task Plan and Memory files** (see below).
+1. **First, assess whether the task can be completed in a single run.** Many tasks (code reviews, small fixes, simple analyses, report generation, etc.) can and SHOULD be completed immediately in one run. Do NOT split them unnecessarily.
+2. **Only decompose into sub-tasks if the task is genuinely too large** to complete in a single cron run (e.g., benchmarking many models, large-scale refactoring across dozens of files, multi-day research).
+3. If decomposition IS needed, break down the task into sub-tasks, do one per run, and **track progress via Task Plan and Memory files** (see below).
 4. **Pick up where you left off** by reading Task Plan and Memory at the start of each run.
+
+> **Rule of thumb**: If you can finish the task in this run, finish it NOW. Do not defer work to a future run unless there is a concrete reason (e.g., waiting for external input, genuinely too much work for one run).
 
 ### Task Plan File
 
@@ -97,11 +99,11 @@ Your task has a `mode` field that controls lifecycle behavior:
 
 ## 4. Guidelines
 
-- **Be incremental.** Do one meaningful unit of work per run. Do not rush.
+- **Finish what you can NOW.** If the task (or remaining sub-tasks) can be completed in this run, do it all. Do NOT artificially limit yourself to one sub-task when you have capacity to do more. Only defer to a future run when the work genuinely cannot fit in a single execution.
 - **Be idempotent.** If re-run with the same state, produce the same result.
 - **DO NOT modify `.kage/tasks/*.md` files.** These are user-maintained task configurations. You are only allowed to manage `.kage/memory/` and project files.
 - **Write files.** Save outputs (reports, code, data) to the project directory, not just to stdout.
-- **Update task.json.** Mark the current sub-task as `"done"` after completing it.
+- **Update task.json.** Mark the current sub-task as `"done"` after completing it. If you complete multiple sub-tasks in one run, mark them ALL as `"done"`.
 - **Handle errors gracefully.** If something fails, record the error in memory and try the next sub-task on the next run.
 - **Respect the project context.** You are running inside a real project directory. Read existing files, follow existing conventions.
 """
