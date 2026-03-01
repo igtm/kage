@@ -33,7 +33,7 @@
     - **多重起動制御**: `allow`, `forbid` (重複スキップ), `replace` (古い方を終了)。
     - **時間枠制限**: `allowed_hours: "9-17"`, `denied_hours: "12"` のように実行時間を制限。
 - **Markdown 本位**: YAML front matter を持つシンプルな Markdown ファイルでタスクを定義。
-- **コネクター**: Discord や Slack との双方向連携。実行結果の通知やチャットの自動応答。
+- **コネクター**: Discord/Slack との連携。タスク通知は常に有効。双方向チャットは `poll = true` で有効化（⚠️ チャンネルの参加者にPC上のAIへのアクセスを許可します）。
 - **思考プロセスの隔離**: AIエージェントの推論過程を `<think>` タグで隔離し、通知やログから自動的に除外してクリーンな結果のみを表示します。
 - **多層的な設定**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > デフォルト。
 - **Webダッシュボード**: 実行履歴、タスク管理、AIチャットを一箇所で提供。
@@ -195,7 +195,7 @@ macOS では `cron` の代わりに `launchd` が使用されます。`config.to
 | `kage task show <name>` | 詳細設定を表示 |
 | `kage connector list` | 設定済みのコネクター一覧を表示 |
 | `kage connector setup <type>` | コネクター（discord, slack）のセットアップガイドを表示 |
-| `kage connector poll` | 全アクティブコネクターを即座に同期・応答 |
+| `kage connector poll` | `poll = true` のコネクターを即座にポーリング |
 | `kage doctor` | 設定と環境の診断 |
 | `kage skill` | エージェントの指針を表示 |
 | `kage ui` | Webダッシュボードを開く |

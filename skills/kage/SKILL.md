@@ -15,7 +15,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - **Concurrency Control**: `allow`, `forbid` (skip if running), `replace` (kill old and restart).
 - **Time Windows**: `allowed_hours: "9-17"` or `denied_hours: "12"`.
 - **State Persistence**: `.kage/memory/{task}/{date}.json`.
-- **Connectors**: Sync AI chat with external services like Discord/Slack for project-specific automation.
+- **Connectors**: Integrate with Discord/Slack for task notifications (always on) and optional bi-directional chat (`poll = true`).
 - **Layered Config**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > defaults.
 
 ## CLI
@@ -63,6 +63,20 @@ command: "<shell command>"
 shell: bash
 ---
 ```
+
+## Connectors
+
+Connectors integrate with external chat services. Sending (task notifications via `notify_connectors`) is **always enabled** as long as credentials are configured. Polling (bi-directional chat) is controlled by the `poll` flag.
+
+```toml
+[connectors.my_discord]
+type = "discord"
+poll = false          # Set to true to enable bi-directional chat
+bot_token = "..."
+channel_id = "..."
+```
+
+> **⚠️ Security Warning**: Setting `poll = true` allows anyone in the channel to interact with the AI, which has **full access to your PC's file system and tools**. Only enable polling in private/trusted channels.
 
 ## Configuration Hierarchy
 

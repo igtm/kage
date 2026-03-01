@@ -34,7 +34,7 @@ English | [日本語](./README_JA.md)
     - **Time Windows**: Restrict execution using `allowed_hours: "9-17"` or `denied_hours: "12"`.
 - **Markdown-First**: Define tasks using simple Markdown files with YAML front matter.
 - **Layered Configuration**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > defaults.
-- **Connectors**: Bi-directional integration with external services like Discord and Slack.
+- **Connectors**: Integrate with Discord/Slack. Task notifications are always enabled; bi-directional chat requires `poll = true` (⚠️ grants channel members AI access to your PC).
 - **Thinking Process Isolation**: AI workers automatically wrap reasoning in `<think>` tags, which are hidden from notifications and logs for a cleaner experience.
 - **Web Dashboard**: Execution history, task management, and AI chat — all in one place.
 
@@ -196,7 +196,7 @@ On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its
 | `kage task show <name>` | Show detailed task configuration |
 | `kage connector list` | List all configured connectors |
 | `kage connector setup <type>` | Show setup guide for a connector (discord, slack) |
-| `kage connector poll` | Manually poll all active connectors |
+| `kage connector poll` | Manually poll connectors with `poll = true` |
 | `kage doctor` | Diagnose configuration health |
 | `kage skill` | Display agent skill guidelines |
 | `kage ui` | Open the web dashboard |

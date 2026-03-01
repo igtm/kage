@@ -146,7 +146,7 @@ command = "aider"
 
 [connectors.my_discord_bot]
 type = "discord"
-active = false
+poll = false
 bot_token = ""
 channel_id = ""
 user_id = "" # Optional: Only respond to this specific user ID

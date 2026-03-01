@@ -26,7 +26,7 @@ class ProviderConfig(BaseModel):
 
 class DiscordConnectorConfig(BaseModel):
     type: str = "discord"
-    active: bool = False
+    poll: bool = False
     bot_token: str = ""
     channel_id: str = ""
     user_id: Optional[str] = None
@@ -36,7 +36,7 @@ class DiscordConnectorConfig(BaseModel):
 
 class SlackConnectorConfig(BaseModel):
     type: str = "slack"
-    active: bool = False
+    poll: bool = False
     bot_token: str = ""
     channel_id: str = ""
     user_id: Optional[str] = None

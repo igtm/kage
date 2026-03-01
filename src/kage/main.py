@@ -1224,11 +1224,13 @@ def connector_setup(
 ```toml
 [connectors.my_discord]
 type = "discord"
-active = true
+poll = true   # ⚠️ Only enable in private/trusted channels (grants AI access to your PC)
 bot_token = "YOUR_BOT_TOKEN"
 channel_id = "YOUR_CHANNEL_ID"
 system_prompt = "Optional additional instructions for this connector"
 ```
+
+> **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
 """
         console.print(Panel(Markdown(text), title="Discord Setup", border_style="magenta"))
     elif ctype == "slack":
@@ -1254,11 +1256,13 @@ system_prompt = "Optional additional instructions for this connector"
 ```toml
 [connectors.my_slack]
 type = "slack"
-active = true
+poll = true   # ⚠️ Only enable in private/trusted channels (grants AI access to your PC)
 bot_token = "xoxb-YOUR_TOKEN"
 channel_id = "YOUR_CHANNEL_ID"
 system_prompt = "Optional additional instructions for this connector"
 ```
+
+> **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
 """
         console.print(Panel(Markdown(text), title="Slack Setup", border_style="blue"))
     else:
@@ -1291,11 +1295,11 @@ def connector_list():
     for name, c_dict in config.connectors.items():
         c_type = c_dict.get("type", "unknown")
         # Handle tomlkit boolean types or standard ones
-        is_active = c_dict.get("active", True)
-        if hasattr(is_active, "unwrap"):
-            is_active = is_active.unwrap()
+        is_polling = c_dict.get("poll", False)
+        if hasattr(is_polling, "unwrap"):
+            is_polling = is_polling.unwrap()
             
-        status = "[green]Enabled[/green]" if is_active else "[dim]Disabled[/dim]"
+        status = "[green]Poll ON[/green]" if is_polling else "[dim]Poll OFF[/dim]"
         
         details = []
         if c_type == "discord":
@@ -1310,7 +1314,7 @@ def connector_list():
 
 @connector_app.command("poll")
 def connector_poll():
-    """Poll and reply messages for all active connectors immediately."""
+    """Poll and reply messages for connectors with poll=true."""
     from .connectors.runner import run_connectors
     from rich.console import Console
     

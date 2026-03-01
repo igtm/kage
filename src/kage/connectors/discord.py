@@ -49,7 +49,7 @@ class DiscordConnector(BaseConnector):
         return None, None
 
     def poll_and_reply(self):
-        if not self.config.active or not self.config.bot_token or not self.config.channel_id:
+        if not self.config.bot_token or not self.config.channel_id:
             return
 
         state = self._load_state()
@@ -170,7 +170,7 @@ class DiscordConnector(BaseConnector):
                 self._save_state(state)
 
     def send_message(self, text: str):
-        if not self.config.active or not self.config.bot_token or not self.config.channel_id:
+        if not self.config.bot_token or not self.config.channel_id:
             return
         self._post_reply(clean_ai_reply(text))
 

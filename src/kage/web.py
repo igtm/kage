@@ -1495,9 +1495,12 @@ INDEX_HTML = """
 \`\`\`toml
 [connectors.my_discord]
 type = "discord"
+poll = true  # ⚠️ Only in private/trusted channels
 bot_token = "..."
 channel_id = "..."
 \`\`\`
+
+⚠️ **Security**: \`poll = true\` grants channel members AI access to your PC. Task notifications work even with \`poll = false\`.
 `,
             slack: `
 # Slack Setup Guide
@@ -1510,9 +1513,12 @@ channel_id = "..."
 \`\`\`toml
 [connectors.my_slack]
 type = "slack"
+poll = true  # ⚠️ Only in private/trusted channels
 bot_token = "xoxb-..."
 channel_id = "..."
 \`\`\`
+
+⚠️ **Security**: \`poll = true\` grants channel members AI access to your PC. Task notifications work even with \`poll = false\`.
 `
         };
 
