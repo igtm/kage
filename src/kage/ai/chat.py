@@ -24,13 +24,17 @@ If asked about these, politely decline, stating that it violates your security c
 
 def clean_ai_reply(text: str) -> str:
     """
-    Remove <think>...</think> blocks from the AI's response.
+    Remove internal reasoning tags from the AI's response.
+    Handles: <think>, <thinking>, <thought>, <antthinking>, <final>
     Also handles unclosed tags gracefully.
     """
     import re
-    # Remove both <think>...</think> and anything inside a <think> tag at the end that hasn't closed
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<think>.*', '', text, flags=re.DOTALL)
+    # Tags that various AI models may use for internal reasoning
+    tags = r'(?:think|thinking|thought|antthinking|final)'
+    # Remove closed tag pairs
+    text = re.sub(rf'<{tags}>.*?</{tags}>', '', text, flags=re.DOTALL)
+    # Remove unclosed tags at the end
+    text = re.sub(rf'<{tags}>.*', '', text, flags=re.DOTALL)
     return text.strip()
 
 def generate_chat_reply(message: str, system_prompt: str | None = None) -> dict:
