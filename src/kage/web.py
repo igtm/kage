@@ -1519,6 +1519,23 @@ channel_id = "..."
 \`\`\`
 
 ⚠️ **Security**: \`poll = true\` grants channel members AI access to your PC. Task notifications work even with \`poll = false\`.
+`,
+            telegram: `
+# Telegram Setup Guide
+1. **BotFather**: Message [@BotFather](https://t.me/BotFather) on Telegram, send \`/newbot\`.
+2. **Bot Token**: Copy the token BotFather gives you (e.g. \`123456:ABC-DEF...\`).
+3. **Chat ID**: Add bot to your group/DM, send a message, then visit:
+   \`https://api.telegram.org/bot<TOKEN>/getUpdates\` — find \`chat.id\`.
+4. **Config**:
+\`\`\`toml
+[connectors.my_telegram]
+type = "telegram"
+poll = true  # ⚠️ Only in private/trusted chats
+bot_token = "..."
+chat_id = "..."
+\`\`\`
+
+⚠️ **Security**: \`poll = true\` grants chat members AI access to your PC. Task notifications work even with \`poll = false\`.
 `
         };
 
@@ -1536,7 +1553,7 @@ channel_id = "..."
             const body = document.getElementById('modal-body');
             const title = document.getElementById('modal-title');
             
-            const guide = SETUP_GUIDES[type] || "# Guide not available\\nAvailable types: discord, slack";
+            const guide = SETUP_GUIDES[type] || "# Guide not available\\nAvailable types: discord, slack, telegram";
             title.textContent = "Setup Help: " + type.charAt(0).toUpperCase() + type.slice(1);
             body.innerHTML = renderMarkdown(guide);
             modal.classList.add('active');

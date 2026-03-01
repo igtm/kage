@@ -15,7 +15,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - **Concurrency Control**: `allow`, `forbid` (skip if running), `replace` (kill old and restart).
 - **Time Windows**: `allowed_hours: "9-17"` or `denied_hours: "12"`.
 - **State Persistence**: `.kage/memory/{task}/{date}.json`.
-- **Connectors**: Integrate with Discord/Slack for task notifications (always on) and optional bi-directional chat (`poll = true`).
+- **Connectors**: Integrate with Discord/Slack/Telegram for task notifications (always on) and optional bi-directional chat (`poll = true`).
 - **Layered Config**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > defaults.
 
 ## CLI
@@ -26,7 +26,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage task list` — List tasks with status and schedule.
 - `kage task show <name>` — Detailed task configuration.
 - `kage connector list` — List all configured connectors.
-- `kage connector setup <type>` — Show setup guide for a connector (discord, slack).
+- `kage connector setup <type>` — Show setup guide for a connector (discord, slack, telegram).
 - `kage connector poll` — Manually trigger polling for all connectors.
 - `kage doctor` — Diagnose config and environment.
 - `kage ui` — Open web dashboard.

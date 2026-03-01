@@ -17,7 +17,7 @@ app.add_typer(task_app, name="task")
 project_app = typer.Typer(help="Manage registered projects")
 app.add_typer(project_app, name="project")
 
-connector_app = typer.Typer(help="Manage chat connectors (Discord, etc.)")
+connector_app = typer.Typer(help="Manage chat connectors (Discord, Slack, Telegram, etc.)")
 app.add_typer(connector_app, name="connector")
 
 
@@ -1185,7 +1185,7 @@ def skill():
 
 @connector_app.command("setup")
 def connector_setup(
-    ctype: Optional[str] = typer.Argument(None, help="Connector type (discord, slack)")
+    ctype: Optional[str] = typer.Argument(None, help="Connector type (discord, slack, telegram)")
 ):
     """Show setup instructions for a connector type."""
     from rich.console import Console
@@ -1198,6 +1198,7 @@ def connector_setup(
         console.print("[bold]Available Connector Types:[/bold]")
         console.print("- [bold magenta]discord[/bold magenta]")
         console.print("- [bold blue]slack[/bold blue]")
+        console.print("- [bold cyan]telegram[/bold cyan]")
         console.print("\nRun [bold]kage connector setup discord[/bold] for instructions.")
         return
 
@@ -1265,9 +1266,34 @@ system_prompt = "Optional additional instructions for this connector"
 > **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
 """
         console.print(Panel(Markdown(text), title="Slack Setup", border_style="blue"))
+    elif ctype == "telegram":
+        text = """
+# Telegram Connector Setup Guide
+
+1. **Create Bot**: Open Telegram and message [@BotFather](https://t.me/BotFather). Send `/newbot` and follow the prompts to create your bot.
+2. **Get Bot Token**: BotFather will give you a **Bot Token** (e.g., `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`).
+3. **Get Chat ID**:
+   - Add the bot to your group or start a DM with the bot.
+   - Send a message to the bot/group.
+   - Open `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` in your browser.
+   - Find `"chat":{"id":...}` — this is your **Chat ID** (may be negative for groups).
+4. **Config**: Add the following to your `.kage/config.toml`:
+
+```toml
+[connectors.my_telegram]
+type = "telegram"
+poll = true   # ⚠️ Only enable in private/trusted chats (grants AI access to your PC)
+bot_token = "YOUR_BOT_TOKEN"
+chat_id = "YOUR_CHAT_ID"
+system_prompt = "Optional additional instructions for this connector"
+```
+
+> **⚠️ Security**: `poll = true` allows anyone in the chat to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
+"""
+        console.print(Panel(Markdown(text), title="Telegram Setup", border_style="cyan"))
     else:
         console.print(f"[red]Unknown connector type: {ctype}[/red]")
-        console.print("Available types: discord, slack")
+        console.print("Available types: discord, slack, telegram")
 
 if __name__ == "__main__":
     app()
@@ -1304,6 +1330,14 @@ def connector_list():
         details = []
         if c_type == "discord":
             details.append(f"Channel: {c_dict.get('channel_id', 'N/A')}")
+            if c_dict.get("user_id"):
+                details.append(f"User Filter: {str(c_dict.get('user_id'))}")
+        elif c_type == "slack":
+            details.append(f"Channel: {c_dict.get('channel_id', 'N/A')}")
+            if c_dict.get("user_id"):
+                details.append(f"User Filter: {str(c_dict.get('user_id'))}")
+        elif c_type == "telegram":
+            details.append(f"Chat: {c_dict.get('chat_id', 'N/A')}")
             if c_dict.get("user_id"):
                 details.append(f"User Filter: {str(c_dict.get('user_id'))}")
         

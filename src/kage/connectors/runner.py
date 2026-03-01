@@ -3,7 +3,8 @@ from ..config import get_global_config
 from .base import BaseConnector
 from .discord import DiscordConnector
 from .slack import SlackConnector
-from ..config import DiscordConnectorConfig, SlackConnectorConfig
+from .telegram import TelegramConnector
+from ..config import DiscordConnectorConfig, SlackConnectorConfig, TelegramConnectorConfig
 
 def _build_connector(name: str, c_dict: dict) -> BaseConnector | None:
     """
@@ -18,6 +19,11 @@ def _build_connector(name: str, c_dict: dict) -> BaseConnector | None:
     elif c_type == "slack":
         try:
             return SlackConnector(name, SlackConnectorConfig(**c_dict))
+        except Exception as e:
+            print(f"[kage] Error parsing connector '{name}': {e}")
+    elif c_type == "telegram":
+        try:
+            return TelegramConnector(name, TelegramConnectorConfig(**c_dict))
         except Exception as e:
             print(f"[kage] Error parsing connector '{name}': {e}")
     return None

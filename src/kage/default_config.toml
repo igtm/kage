@@ -136,19 +136,3 @@ command = "gemini"
 
 [providers.aider]
 command = "aider"
-
-# ==============================================================================
-# Chat Connectors
-# Enable external chat apps to poll and interact with kage.
-# Since kage run is triggered every minute, polling happens per-minute (stateless),
-# requiring no complex webhooks or WebSocket daemons.
-# ==============================================================================
-
-[connectors.my_discord_bot]
-type = "discord"
-poll = false
-bot_token = ""
-channel_id = ""
-user_id = "" # Optional: Only respond to this specific user ID
-history_limit = 10 # Optional: Number of previous messages to include as context
-system_prompt = "" # Optional: Additional system prompt for this connector (appended to default)

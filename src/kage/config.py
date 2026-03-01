@@ -44,6 +44,16 @@ class SlackConnectorConfig(BaseModel):
     max_age_seconds: int = 600
     system_prompt: Optional[str] = None
 
+class TelegramConnectorConfig(BaseModel):
+    type: str = "telegram"
+    poll: bool = False
+    bot_token: str = ""
+    chat_id: str = ""
+    user_id: Optional[str] = None
+    history_limit: int = 10
+    max_age_seconds: int = 600
+    system_prompt: Optional[str] = None
+
 class GlobalConfig(BaseModel):
     model_config = {"extra": "ignore"}
     default_ai_engine: Optional[str] = None
