@@ -56,6 +56,8 @@ class GlobalConfig(BaseModel):
     timezone: str = "UTC"  # cron式のタイムゾーン評価基準
     env_path: Optional[str] = None  # cron実行時に復元するPATH環境変数
     system_prompt: str = ""  # デフォルトのシステムプロンプト
+    think_tag_open: str = "<think>"  # 思考プロセスの開始タグ
+    think_tag_close: str = "</think>"  # 思考プロセスの終了タグ
     memory_max_entries: int = 5  # プロンプトに注入する直近メモリの最大件数
     commands: dict[str, CommandDef] = {}
     providers: dict[str, ProviderConfig] = {}

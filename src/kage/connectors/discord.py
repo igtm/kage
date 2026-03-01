@@ -164,7 +164,7 @@ class DiscordConnector(BaseConnector):
             return
         self._post_reply(clean_ai_reply(text))
 
-    def _post_reply(self, text):
+    def _post_reply(self, text: str):
         if not text:
             return
             
@@ -172,19 +172,32 @@ class DiscordConnector(BaseConnector):
         
         url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages"
         
-        if len(text) > 1950:
-            text = text[:1950] + "\n...(truncated)"
-            
-        payload = {"content": text}
+        # Split text into chunks of 1900 characters to be safe (limit is 2000)
+        chunks = []
+        while len(text) > 1900:
+            # Try to split at the last newline before 1900
+            split_idx = text.rfind("\n", 0, 1900)
+            if split_idx == -1:
+                split_idx = 1900
+            chunk = text[:split_idx].strip()
+            if chunk:
+                chunks.append(chunk)
+            text = text[split_idx:].strip()
+        if text:
+            chunks.append(text)
 
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=data, headers={
-            "Authorization": f"Bot {self.config.bot_token}",
-            "Content-Type": "application/json",
-            "User-Agent": "kage-connector"
-        }, method="POST")
+        for chunk in chunks:
+            payload = {"content": chunk}
 
-        try:
-            urllib.request.urlopen(req)
-        except Exception:
-            pass
+            data = json.dumps(payload).encode()
+            req = urllib.request.Request(url, data=data, headers={
+                "Authorization": f"Bot {self.config.bot_token}",
+                "Content-Type": "application/json",
+                "User-Agent": "kage-connector"
+            }, method="POST")
+
+            try:
+                with urllib.request.urlopen(req) as response:
+                    pass
+            except Exception:
+                pass
