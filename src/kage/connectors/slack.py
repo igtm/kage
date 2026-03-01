@@ -160,8 +160,9 @@ class SlackConnector(BaseConnector):
 
             # Clean thinking tags before posting
             final_reply_text = clean_ai_reply(reply_text)
-            self._post_reply(final_reply_text)
-            newest_ts = msg_ts
+            last_reply_ts = self._post_reply(final_reply_text)
+            # Advance past bot's own reply to prevent self-reply on next poll
+            newest_ts = last_reply_ts if last_reply_ts else msg_ts
 
         if newest_ts != last_ts:
             state["last_ts"] = newest_ts
@@ -173,17 +174,47 @@ class SlackConnector(BaseConnector):
         # Even for automated notifications, we clean if someone accidentally used tags
         self._post_reply(clean_ai_reply(text))
 
-    def _post_reply(self, text):
+    def _post_reply(self, text) -> str | None:
+        """Post a reply, splitting if needed. Returns the last posted message ts."""
         if not text:
-            return
+            return None
             
         self._log_history("Assistant", text)
         
-        url = "https://slack.com/api/chat.postMessage"
+        # Split into chunks respecting Slack's limit
+        chunks = self._split_message(text, max_len=3000)
+        last_ts = None
+        for chunk in chunks:
+            ts = self._send_chunk(chunk)
+            if ts:
+                last_ts = ts
+        return last_ts
+
+    @staticmethod
+    def _split_message(text: str, max_len: int = 3000) -> list[str]:
+        """Split a message into chunks that fit within Slack's character limit."""
+        if len(text) <= max_len:
+            return [text]
         
-        if len(text) > 3000: # Slack limit is high, but let's keep it reasonable
-            text = text[:3000] + "\n...(truncated)"
+        chunks = []
+        remaining = text
+        while remaining:
+            if len(remaining) <= max_len:
+                chunks.append(remaining)
+                break
             
+            split_at = remaining.rfind("\n", 0, max_len)
+            if split_at <= 0:
+                split_at = max_len
+            
+            chunks.append(remaining[:split_at])
+            remaining = remaining[split_at:].lstrip("\n")
+        
+        return chunks
+
+    def _send_chunk(self, text: str) -> str | None:
+        """Send a single message chunk to Slack. Returns the posted message ts."""
+        url = "https://slack.com/api/chat.postMessage"
         payload = {
             "channel": self.config.channel_id,
             "text": text
@@ -199,7 +230,8 @@ class SlackConnector(BaseConnector):
         try:
             with urllib.request.urlopen(req) as response:
                 res_data = json.loads(response.read().decode())
-                # if not res_data.get("ok"):
-                #     print(f"[kage] Slack post error: {res_data.get('error')}")
+                if res_data.get("ok"):
+                    return res_data.get("ts")
         except Exception:
             pass
+        return None
