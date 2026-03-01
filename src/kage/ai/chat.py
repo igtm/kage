@@ -23,7 +23,7 @@ Your role is to support the user in their daily tasks, acting like a proactive s
 Since you operate directly on the host machine, you have powerful access to the file system, databases, and local tools.
 
 [CRITICAL: THINKING PROCESS ISOLATION]
-- Before providing your final response, you MUST wrap ALL internal reasoning, plans, or "chain of thought" inside `<{thinking_tag}>` and `</{thinking_tag}>` tags.
+- Before providing your final response, you MUST wrap ALL internal reasoning, plans, or "chain of thought" inside `<{thinking_tag}>` and `</{thinking_tag}>` tags (ensure you include the complete start tag, including the `>` at the end).
 - Everything OUTSIDE these tags will be treated as the final output visible to the user.
 - If you fail to use these tags, your internal reflections will leak and confuse the user.
 
@@ -44,10 +44,10 @@ def clean_ai_reply(text: str) -> str:
     import re
     # Tags that various AI models may use for internal reasoning
     tags = r'(?:think|thinking|thought|antthinking|antml:thinking|final)'
-    # Remove closed tag pairs
-    text = re.sub(rf'<{tags}>.*?</{tags}>', '', text, flags=re.DOTALL)
+    # Remove closed tag pairs (handling missing '>' in the start tag if the AI hallucinates valid XML but without the closing bracket of the start tag)
+    text = re.sub(rf'<{tags}(?:>|\b|\s).*?</{tags}>', '', text, flags=re.DOTALL)
     # Remove unclosed tags at the end
-    text = re.sub(rf'<{tags}>.*', '', text, flags=re.DOTALL)
+    text = re.sub(rf'<{tags}(?:>|\b|\s).*', '', text, flags=re.DOTALL)
     return text.strip()
 
 def generate_chat_reply(message: str, system_prompt: str | None = None, working_dir: str | None = None) -> dict:
