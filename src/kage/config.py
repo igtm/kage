@@ -33,8 +33,18 @@ class DiscordConnectorConfig(BaseModel):
     history_limit: int = 10
     max_age_seconds: int = 600
     system_prompt: Optional[str] = None
+    working_dir: Optional[str] = None
 
 class SlackConnectorConfig(BaseModel):
+    type: str = "slack"
+    poll: bool = False
+    bot_token: str = ""
+    channel_id: str = ""
+    user_id: Optional[str] = None
+    history_limit: int = 10
+    max_age_seconds: int = 600
+    system_prompt: Optional[str] = None
+    working_dir: Optional[str] = None
     type: str = "slack"
     poll: bool = False
     bot_token: str = ""
@@ -53,9 +63,11 @@ class TelegramConnectorConfig(BaseModel):
     history_limit: int = 10
     max_age_seconds: int = 600
     system_prompt: Optional[str] = None
+    working_dir: Optional[str] = None
 
 class GlobalConfig(BaseModel):
     model_config = {"extra": "ignore"}
+    working_dir: Optional[str] = None
     default_ai_engine: Optional[str] = None
     log_level: str = "INFO"
     ui_port: int = 8484

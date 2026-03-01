@@ -72,6 +72,7 @@ Connectors integrate with external chat services. Sending (task notifications vi
 [connectors.my_discord]
 type = "discord"
 poll = false          # Set to true to enable bi-directional chat
+working_dir = "~/my-project"  # Optional: execution directory for this connector
 bot_token = "..."
 channel_id = "..."
 ```

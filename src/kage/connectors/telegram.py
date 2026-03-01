@@ -171,7 +171,11 @@ class TelegramConnector(BaseConnector):
             try:
                 prompt_with_history = f"{identity_context}[Recent Chat History]\n{history_context}\n\n[Current Instruction]\n{content}"
                 self._log_history("User", content)
-                reply_data = generate_chat_reply(prompt_with_history, system_prompt=self.config.system_prompt)
+                reply_data = generate_chat_reply(
+                    prompt_with_history, 
+                    system_prompt=self.config.system_prompt,
+                    working_dir=self.config.working_dir
+                )
                 reply_text = reply_data.get("stdout", "")
             except Exception as e:
                 reply_text = f"Error generating reply: {e}"

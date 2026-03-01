@@ -792,9 +792,9 @@ def doctor():
             "env_path",
             "commands",
             "providers",
-            "system_prompt",
             "connectors",
             "memory_max_entries",
+            "working_dir",
         }
         for k in data.keys():
             if k not in allowed_top:
@@ -810,6 +810,7 @@ def doctor():
             "env_path": (str,),
             "system_prompt": (str,),
             "memory_max_entries": (int,),
+            "working_dir": (str,),
         }
         for key, expected in typed_keys.items():
             if (

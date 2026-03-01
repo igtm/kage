@@ -204,7 +204,7 @@ macOS では `cron` の代わりに `launchd` が使用されます。`config.to
 
 | ファイル | スコープ |
 |------|-------|
-| `~/.kage/config.toml` | グローバル設定 (`default_ai_engine`, `ui_port`, `ui_host` 等) |
+| `~/.kage/config.toml` | グローバル設定 (`default_ai_engine`, `working_dir`, `ui_port`, `ui_host` 等) |
 | `.kage/config.toml` | プロジェクト共有設定 |
 | `.kage/config.local.toml` | ローカル上書き設定 (git-ignored) |
 | `.kage/system_prompt.md` | プロジェクト固有の AI 指針 |

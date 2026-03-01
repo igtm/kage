@@ -8,8 +8,10 @@ cron_interval_minutes = 1
 # daemon (cron/launchd) の起動間隔（分単位）
 # darwin_launchd_interval_seconds = 60  # macOS launchd専用 (秒単位)
 # darwin_launchd_keep_alive = false     # macOS launchd専用 (常駐させるか)
-timezone = "UTC"             # cronスケジュールなどで使うタイムゾーン
-memory_max_entries = 5       # プロンプトに注入する直近メモリの最大件数
+timezone = "UTC"       # cronスケジュールなどで使うタイムゾーン
+memory_max_entries = 5 # プロンプトに注入する直近メモリの最大件数
+
+# working_dir = "~/tmp/my-project" # AI (provider) が実行されるデフォルトのディレクトリ
 
 system_prompt = """
 # Role: kage (影) - Autonomous Project Agent
@@ -112,13 +114,34 @@ Your task has a `mode` field that controls lifecycle behavior:
 # {prompt} がシステムプロンプト＋メモリ＋タスク内容に置換される
 
 [commands.codex]
-template = ["codex", "--ask-for-approval", "never", "--sandbox", "workspace-write", "exec", "{prompt}"]
+template = [
+  "codex",
+  "--ask-for-approval",
+  "never",
+  "--sandbox",
+  "workspace-write",
+  "exec",
+  "{prompt}",
+]
 
 [commands.aider]
-template = ["aider", "--message", "{prompt}", "--auto-lint", "--auto-test", "--yes-always"]
+template = [
+  "aider",
+  "--message",
+  "{prompt}",
+  "--auto-lint",
+  "--auto-test",
+  "--yes-always",
+]
 
 [commands.claude]
-template = ["claude", "-p", "--allow-dangerously-skip-permissions", "--dangerously-skip-permissions", "{prompt}"]
+template = [
+  "claude",
+  "-p",
+  "--allow-dangerously-skip-permissions",
+  "--dangerously-skip-permissions",
+  "{prompt}",
+]
 
 [commands.gemini]
 template = ["gemini", "--approval-mode", "yolo", "--prompt", "{prompt}"]

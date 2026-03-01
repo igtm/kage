@@ -50,7 +50,7 @@ def clean_ai_reply(text: str) -> str:
     text = re.sub(rf'<{tags}>.*', '', text, flags=re.DOTALL)
     return text.strip()
 
-def generate_chat_reply(message: str, system_prompt: str | None = None) -> dict:
+def generate_chat_reply(message: str, system_prompt: str | None = None, working_dir: str | None = None) -> dict:
     """
     Generate a reply from the default AI engine configured in kage.
     Returns a dict with 'stdout', 'stderr', and 'returncode'.
@@ -90,8 +90,16 @@ def generate_chat_reply(message: str, system_prompt: str | None = None) -> dict:
         if exe_path:
             cmd[0] = exe_path
 
+    # Determine execution directory
+    target_dir_str = working_dir or config.working_dir
+    if target_dir_str:
+        cwd_path = Path(target_dir_str).expanduser()
+        cwd_path.mkdir(parents=True, exist_ok=True)
+    else:
+        cwd_path = Path.cwd()
+
     res = subprocess.run(
-        cmd, capture_output=True, text=True, cwd=str(Path.cwd()), env=env
+        cmd, capture_output=True, text=True, cwd=str(cwd_path), env=env
     )
     return {
         "stdout": res.stdout,

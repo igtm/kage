@@ -205,7 +205,7 @@ On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its
 
 | File | Scope |
 |------|-------|
-| `~/.kage/config.toml` | Global settings (`default_ai_engine`, `ui_port`, `ui_host`, etc.) |
+| `~/.kage/config.toml` | Global settings (`default_ai_engine`, `working_dir`, `ui_port`, `ui_host`, etc.) |
 | `.kage/config.toml` | Project-shared settings |
 | `.kage/config.local.toml` | Local overrides (git-ignored) |
 | `.kage/system_prompt.md` | Project-specific AI instructions |
