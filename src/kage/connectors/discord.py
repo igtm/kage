@@ -170,11 +170,39 @@ class DiscordConnector(BaseConnector):
             
         self._log_history("Assistant", text)
         
-        url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages"
+        # Split into chunks respecting Discord's 2000 char limit
+        chunks = self._split_message(text, max_len=1950)
+        for chunk in chunks:
+            self._send_chunk(chunk)
+
+    @staticmethod
+    def _split_message(text: str, max_len: int = 1950) -> list[str]:
+        """Split a message into chunks that fit within Discord's character limit.
+        Tries to split at newline boundaries when possible."""
+        if len(text) <= max_len:
+            return [text]
         
-        if len(text) > 1950:
-            text = text[:1950] + "\n...(truncated)"
+        chunks = []
+        remaining = text
+        while remaining:
+            if len(remaining) <= max_len:
+                chunks.append(remaining)
+                break
             
+            # Try to find a newline to split at
+            split_at = remaining.rfind("\n", 0, max_len)
+            if split_at <= 0:
+                # No good newline found, split at max_len
+                split_at = max_len
+            
+            chunks.append(remaining[:split_at])
+            remaining = remaining[split_at:].lstrip("\n")
+        
+        return chunks
+
+    def _send_chunk(self, text: str):
+        """Send a single message chunk to Discord."""
+        url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages"
         payload = {"content": text}
 
         data = json.dumps(payload).encode()
@@ -188,3 +216,4 @@ class DiscordConnector(BaseConnector):
             urllib.request.urlopen(req)
         except Exception:
             pass
+
