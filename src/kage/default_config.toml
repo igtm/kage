@@ -149,4 +149,4 @@ bot_token = ""
 channel_id = ""
 user_id = "" # Optional: Only respond to this specific user ID
 history_limit = 10 # Optional: Number of previous messages to include as context
-persona = "" # Optional: Override the default AI persona/prompt for this connector
+system_prompt = "" # Optional: Additional system prompt for this connector (appended to default)

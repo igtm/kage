@@ -153,7 +153,7 @@ class SlackConnector(BaseConnector):
                 # Log the user's message
                 self._log_history("User", content)
                 
-                reply_data = generate_chat_reply(prompt_with_history, persona=self.config.persona)
+                reply_data = generate_chat_reply(prompt_with_history, system_prompt=self.config.system_prompt)
                 reply_text = reply_data.get("stdout", "")
             except Exception as e:
                 reply_text = f"Error generating reply: {e}"

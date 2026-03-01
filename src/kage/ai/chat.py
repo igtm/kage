@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from ..config import get_global_config
 
-DEFAULT_PERSONA = """
+DEFAULT_SYSTEM_PROMPT = """
 You are Kage (影), a dedicated and highly capable autonomous assistant working directly on the user's PC.
 Your role is to support the user in their daily tasks, acting like a proactive secretary.
 Since you operate directly on the host machine, you have powerful access to the file system, databases, and local tools.
@@ -33,11 +33,12 @@ def clean_ai_reply(text: str) -> str:
     text = re.sub(r'<think>.*', '', text, flags=re.DOTALL)
     return text.strip()
 
-def generate_chat_reply(message: str, persona: str | None = None) -> dict:
+def generate_chat_reply(message: str, system_prompt: str | None = None) -> dict:
     """
     Generate a reply from the default AI engine configured in kage.
     Returns a dict with 'stdout', 'stderr', and 'returncode'.
-    If `persona` is provided (or defaults to DEFAULT_PERSONA), it is prepended to the message.
+    DEFAULT_SYSTEM_PROMPT is always included. If `system_prompt` is provided,
+    it is appended as additional instructions.
     """
     config = get_global_config()
     engine_name = config.default_ai_engine
@@ -54,8 +55,11 @@ def generate_chat_reply(message: str, persona: str | None = None) -> dict:
 
     template = cmd_def.template
     
-    active_persona = persona if persona is not None else DEFAULT_PERSONA
-    system_context = f"[System Context / Persona]\n{active_persona.strip()}\n\n[User Message]\n{message}"
+    parts = [f"[System Context]\n{DEFAULT_SYSTEM_PROMPT.strip()}"]
+    if system_prompt:
+        parts.append(f"[Additional Instructions]\n{system_prompt.strip()}")
+    parts.append(f"[User Message]\n{message}")
+    system_context = "\n\n".join(parts)
     
     cmd = [part.replace("{prompt}", system_context) for part in template]
 

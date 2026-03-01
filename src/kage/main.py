@@ -1225,7 +1225,7 @@ type = "discord"
 active = true
 bot_token = "YOUR_BOT_TOKEN"
 channel_id = "YOUR_CHANNEL_ID"
-persona = "Optional custom bot personality"
+system_prompt = "Optional additional instructions for this connector"
 ```
 """
         console.print(Panel(Markdown(text), title="Discord Setup", border_style="magenta"))
@@ -1255,7 +1255,7 @@ type = "slack"
 active = true
 bot_token = "xoxb-YOUR_TOKEN"
 channel_id = "YOUR_CHANNEL_ID"
-persona = "Optional custom bot personality"
+system_prompt = "Optional additional instructions for this connector"
 ```
 """
         console.print(Panel(Markdown(text), title="Slack Setup", border_style="blue"))

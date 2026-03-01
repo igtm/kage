@@ -32,7 +32,7 @@ class DiscordConnectorConfig(BaseModel):
     user_id: Optional[str] = None
     history_limit: int = 10
     max_age_seconds: int = 600
-    persona: Optional[str] = None
+    system_prompt: Optional[str] = None
 
 class SlackConnectorConfig(BaseModel):
     type: str = "slack"
@@ -42,7 +42,7 @@ class SlackConnectorConfig(BaseModel):
     user_id: Optional[str] = None
     history_limit: int = 10
     max_age_seconds: int = 600
-    persona: Optional[str] = None
+    system_prompt: Optional[str] = None
 
 class GlobalConfig(BaseModel):
     model_config = {"extra": "ignore"}
