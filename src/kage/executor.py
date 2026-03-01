@@ -281,6 +281,15 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 return
 
             provider = global_config.providers.get(engine_name)
+            thinking_tag = provider.thinking_tag if provider else "think"
+            
+            # Inject thinking process isolation prompt dynamically
+            isolation_prompt = ""
+            if thinking_tag:
+                isolation_prompt = f"\n\n# IMPORTANT: THINKING PROCESS ISOLATION\nBefore executing any action or providing a final response, you MUST wrap ALL your internal reasoning, planning, and step-by-step thoughts in <{thinking_tag}> ... </{thinking_tag}> tags.\nEverything outside these tags will be treated as the final output/action to be recorded and displayed to the user.\nIf you fail to use these tags, your internal thoughts will leak into the user's notifications.\n"
+            
+            system_prompt = system_prompt + isolation_prompt
+
             extra_args = task.ai.args if task.ai and task.ai.args else []
 
             resolved_template = None
@@ -380,7 +389,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             status = "SUCCESS" if result.returncode == 0 else "FAILED"
             # Clean thinking tags from AI output before storing and notifying
             if task.prompt:
-                result.stdout = clean_ai_reply(result.stdout)
+                result.stdout = clean_ai_reply(result.stdout, tag=thinking_tag)
             update_execution(exec_id, status, result.stdout, result.stderr)
             _notify_connectors(task, status, result.stdout, result.stderr)
         except subprocess.TimeoutExpired:

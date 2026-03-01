@@ -30,6 +30,30 @@ def test_generate_chat_reply(mock_run, mock_get_config):
     assert any("You are Kage" in arg for arg in mock_run.call_args[0][0])
 
 @patch("kage.ai.chat.get_global_config")
+@patch("kage.ai.chat.subprocess.run")
+def test_generate_chat_reply_with_persona(mock_run, mock_get_config):
+    config = GlobalConfig()
+    config.default_ai_engine = "dummy"
+    config.providers["dummy"] = ProviderConfig(command="dummy_cmd")
+    config.commands["dummy_cmd"] = CommandDef(template=["echo", "{prompt}"])
+    mock_get_config.return_value = config
+
+    mock_res = MagicMock()
+    mock_res.stdout = "replied"
+    mock_res.stderr = ""
+    mock_res.returncode = 0
+    mock_run.return_value = mock_res
+
+    res = generate_chat_reply("hi", persona="Custom Persona Text")
+
+    # Check if both default and custom persona are present in the final prompt
+    prompt = mock_run.call_args[0][0][1]
+    assert "You are Kage" in prompt
+    assert "[Individual Persona]" in prompt
+    assert "Custom Persona Text" in prompt
+    assert "hi" in prompt
+
+@patch("kage.ai.chat.get_global_config")
 def test_generate_chat_reply_no_engine(mock_get_config):
     config = GlobalConfig()
     mock_get_config.return_value = config

@@ -147,11 +147,13 @@ class DiscordConnector(BaseConnector):
                 
                 reply_data = generate_chat_reply(prompt_with_history, persona=self.config.persona)
                 reply_text = reply_data.get("stdout", "")
+                thinking_tag = reply_data.get("thinking_tag", "think")
             except Exception as e:
                 reply_text = f"Error generating reply: {e}"
+                thinking_tag = "think"
 
             # Clean thinking tags before posting
-            final_reply_text = clean_ai_reply(reply_text)
+            final_reply_text = clean_ai_reply(reply_text, tag=thinking_tag)
             self._post_reply(final_reply_text)
             newest_id = msg_id
 
@@ -162,7 +164,8 @@ class DiscordConnector(BaseConnector):
     def send_message(self, text: str):
         if not self.config.active or not self.config.bot_token or not self.config.channel_id:
             return
-        self._post_reply(clean_ai_reply(text))
+        # Default to "think" for generic messages unless we know the provider
+        self._post_reply(clean_ai_reply(text, tag="think"))
 
     def _post_reply(self, text):
         if not text:
@@ -172,19 +175,21 @@ class DiscordConnector(BaseConnector):
         
         url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages"
         
-        if len(text) > 1950:
-            text = text[:1950] + "\n...(truncated)"
-            
-        payload = {"content": text}
+        # Split text into chunks of 2000 chars (Discord limit)
+        # Using 1950 to be safe
+        chunk_size = 1950
+        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+        
+        for chunk in chunks:
+            payload = {"content": chunk}
+            data = json.dumps(payload).encode()
+            req = urllib.request.Request(url, data=data, headers={
+                "Authorization": f"Bot {self.config.bot_token}",
+                "Content-Type": "application/json",
+                "User-Agent": "kage-connector"
+            }, method="POST")
 
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=data, headers={
-            "Authorization": f"Bot {self.config.bot_token}",
-            "Content-Type": "application/json",
-            "User-Agent": "kage-connector"
-        }, method="POST")
-
-        try:
-            urllib.request.urlopen(req)
-        except Exception:
-            pass
+            try:
+                urllib.request.urlopen(req)
+            except Exception:
+                pass

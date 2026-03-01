@@ -66,3 +66,27 @@ def test_discord_connector_ignores_bot_messages(mock_urlopen, tmp_path):
     assert connector.state_file.exists()
     state = json.loads(connector.state_file.read_text())
     assert state["last_message_id"] == "2"
+
+@patch("kage.connectors.discord.urllib.request.urlopen")
+def test_discord_connector_splits_long_messages(mock_urlopen, tmp_path):
+    config = DiscordConnectorConfig(
+        active=True, bot_token="token", channel_id="123"
+    )
+    connector = DiscordConnector("test_discord", config)
+    
+    # A long message (> 1950 chars)
+    long_message = "A" * 3000
+    
+    # post_reply should be called twice (3000 / 1950 = 2 chunks)
+    connector._post_reply(long_message)
+    
+    # urllib.request.urlopen should be called twice for the two chunks
+    assert mock_urlopen.call_count == 2
+    
+    # First chunk: 1950 chars
+    first_chunk_payload = json.loads(mock_urlopen.call_args_list[0][0][0].data.decode())
+    assert len(first_chunk_payload["content"]) == 1950
+    
+    # Second chunk: 1050 chars
+    second_chunk_payload = json.loads(mock_urlopen.call_args_list[1][0][0].data.decode())
+    assert len(second_chunk_payload["content"]) == 1050
