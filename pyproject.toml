@@ -1,6 +1,6 @@
 [project]
 name = "kage-ai"
-version = "0.2.6"
+version = "0.2.7"
 description = "AI-native cron task runner for per-project scheduled prompts and commands."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -27,7 +27,4 @@ packages = ["src/kage"]
 include = ["src/kage/default_config.toml"]
 
 [dependency-groups]
-dev = [
-    "pytest>=9.0.2",
-    "pytest-mock>=3.15.1",
-]
+dev = ["pytest>=9.0.2", "pytest-mock>=3.15.1"]
