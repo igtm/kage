@@ -380,7 +380,9 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             status = "SUCCESS" if result.returncode == 0 else "FAILED"
             # Clean thinking tags from AI output before storing and notifying
             if task.prompt:
-                result.stdout = clean_ai_reply(result.stdout)
+                think_open = provider.think_tag_open if provider else None
+                think_close = provider.think_tag_close if provider else None
+                result.stdout = clean_ai_reply(result.stdout, think_open=think_open, think_close=think_close)
             update_execution(exec_id, status, result.stdout, result.stderr)
             _notify_connectors(task, status, result.stdout, result.stderr)
         except subprocess.TimeoutExpired:

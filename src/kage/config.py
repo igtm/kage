@@ -22,6 +22,8 @@ class ProviderConfig(BaseModel):
     command: str
     parser: str = "raw"
     parser_args: str = ""
+    think_tag_open: Optional[str] = None
+    think_tag_close: Optional[str] = None
 
 
 class DiscordConnectorConfig(BaseModel):

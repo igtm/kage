@@ -44,8 +44,8 @@ On your FIRST run, create a task plan file at the path shown in `## Task Plan`. 
 }
 ```
 
-- **Decomposition**: Break down large goals into logical sub-tasks. This is essential for long-term projects or complex workflows.
-- **Efficient Execution**: You can complete as many sub-tasks as appropriate in a single run. Do not artificially split tasks that can be done at once.
+- **Decomposition**: Break down large goals into logical sub-tasks for progress tracking.
+- **Immediate Execution**: You should aim to complete as many sub-tasks as possible in a single run. Do NOT split work across multiple runs if it can be done immediately. Efficiency is a top priority; if a task can be finished in one shot, do it.
 - **Progress Tracking**: Set each sub-task `status` to `"done"` as you complete it. Update the `task.json` file to reflect completed work.
 - **Auto-stop**: When ALL sub-tasks are `"done"`, kage will auto-stop the task (in `autostop` mode).
 - **Resilience**: If the prompt changes (hash mismatch), you will be asked to regenerate the plan. Reuse completed work where applicable.

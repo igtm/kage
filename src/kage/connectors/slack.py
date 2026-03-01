@@ -155,11 +155,15 @@ class SlackConnector(BaseConnector):
                 
                 reply_data = generate_chat_reply(prompt_with_history, persona=self.config.persona)
                 reply_text = reply_data.get("stdout", "")
+                think_open = reply_data.get("think_tag_open")
+                think_close = reply_data.get("think_tag_close")
             except Exception as e:
                 reply_text = f"Error generating reply: {e}"
+                think_open = None
+                think_close = None
 
             # Clean thinking tags before posting
-            final_reply_text = clean_ai_reply(reply_text)
+            final_reply_text = clean_ai_reply(reply_text, think_open=think_open, think_close=think_close)
             self._post_reply(final_reply_text)
             newest_ts = msg_ts
 

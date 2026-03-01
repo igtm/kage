@@ -147,11 +147,15 @@ class DiscordConnector(BaseConnector):
                 
                 reply_data = generate_chat_reply(prompt_with_history, persona=self.config.persona)
                 reply_text = reply_data.get("stdout", "")
+                think_open = reply_data.get("think_tag_open")
+                think_close = reply_data.get("think_tag_close")
             except Exception as e:
                 reply_text = f"Error generating reply: {e}"
+                think_open = None
+                think_close = None
 
             # Clean thinking tags before posting
-            final_reply_text = clean_ai_reply(reply_text)
+            final_reply_text = clean_ai_reply(reply_text, think_open=think_open, think_close=think_close)
             self._post_reply(final_reply_text)
             newest_id = msg_id
 
@@ -173,18 +177,29 @@ class DiscordConnector(BaseConnector):
         url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages"
         
         # Split text into chunks of 1900 characters to be safe (limit is 2000)
+        limit = 1900
         chunks = []
-        while len(text) > 1900:
-            # Try to split at the last newline before 1900
-            split_idx = text.rfind("\n", 0, 1900)
+        
+        while len(text) > limit:
+            split_idx = text.rfind("\n", 0, limit)
             if split_idx == -1:
-                split_idx = 1900
-            chunk = text[:split_idx].strip()
-            if chunk:
-                chunks.append(chunk)
-            text = text[split_idx:].strip()
-        if text:
-            chunks.append(text)
+                split_idx = limit
+                
+            chunk = text[:split_idx]
+            
+            # Handle unclosed code blocks
+            if chunk.count("```") % 2 != 0:
+                # If we are in the middle of a code block, close it and reopen in next chunk
+                chunk += "\n```"
+                text = "```\n" + text[split_idx:].strip()
+            else:
+                text = text[split_idx:].strip()
+                
+            if chunk.strip():
+                chunks.append(chunk.strip())
+                
+        if text.strip():
+            chunks.append(text.strip())
 
         for chunk in chunks:
             payload = {"content": chunk}
