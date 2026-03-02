@@ -16,7 +16,8 @@ def init_db():
             run_at TEXT,
             status TEXT,
             stdout TEXT,
-            stderr TEXT
+            stderr TEXT,
+            pid INTEGER
         )
     """)
     # Migration: finished_at カラムを追加（既存DB対応）
@@ -25,11 +26,17 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # 既に存在する場合
 
+    # Migration: pid カラムを追加（既存DB対応）
+    try:
+        cursor.execute("ALTER TABLE executions ADD COLUMN pid INTEGER")
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
     conn.close()
 
 
-def start_execution(project_path: str, task_name: str) -> str:
+def start_execution(project_path: str, task_name: str, pid: int = None) -> str:
     """実行開始を記録し、実行IDを返す。"""
     conn = sqlite3.connect(KAGE_DB_PATH)
     cursor = conn.cursor()
@@ -37,14 +44,24 @@ def start_execution(project_path: str, task_name: str) -> str:
     exec_id = str(uuid.uuid4())
     cursor.execute(
         """
-        INSERT INTO executions (id, project_path, task_name, run_at, status, stdout, stderr, finished_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO executions (id, project_path, task_name, run_at, status, stdout, stderr, finished_at, pid)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
-        (exec_id, project_path, task_name, run_at, "RUNNING", "", "", None),
+        (exec_id, project_path, task_name, run_at, "RUNNING", "", "", None, pid),
     )
     conn.commit()
     conn.close()
     return exec_id
+
+
+def get_execution_pid(exec_id: str) -> int | None:
+    """実行IDからPIDを取得する。"""
+    conn = sqlite3.connect(KAGE_DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT pid FROM executions WHERE id = ?", (exec_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
 
 
 def update_execution(

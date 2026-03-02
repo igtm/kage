@@ -397,6 +397,7 @@ INDEX_HTML = """
         .status-badge.SUCCESS { background: rgba(35, 134, 54, 0.15); color: var(--success-text); }
         .status-badge.FAILED, .status-badge.ERROR { background: rgba(218, 54, 51, 0.15); color: var(--error-text); }
         .status-badge.RUNNING { background: rgba(184, 115, 51, 0.15); color: var(--warning-text); }
+        .status-badge.STOPPED { background: rgba(110, 118, 129, 0.15); color: var(--text-dim); }
         .status-badge.TIMEOUT { background: rgba(218, 54, 51, 0.1); color: var(--text-dim); }
 
         .log-meta {
@@ -494,6 +495,20 @@ INDEX_HTML = """
 
         .btn:hover { opacity: 0.9; }
         .btn:disabled { background-color: var(--border-base); cursor: not-allowed; }
+        .btn-stop {
+            background: none;
+            border: 1px solid var(--error);
+            color: var(--error-text);
+            padding: 2px 8px;
+            font-size: 0.7rem;
+            border-radius: 4px;
+            margin-left: 8px;
+            transition: all 0.2s;
+        }
+        .btn-stop:hover {
+            background: var(--error);
+            color: white;
+        }
 
         /* Animation */
         @keyframes fadeIn {
@@ -1089,6 +1104,7 @@ INDEX_HTML = """
                             <span class="status-badge ${log.status}">${log.status}</span>
                             <span class="log-name">${escapeHtml(log.task_name)}</span>
                             <span class="log-meta">${start.toLocaleTimeString()} · ${escapeHtml(getProjectShortName(log.project_path))}</span>
+                            ${log.status === 'RUNNING' ? `<button class="btn-stop" onclick="event.stopPropagation(); stopTask('${log.id}')">Stop</button>` : ''}
                         </div>
                         <div class="log-meta">
                             <span class="duration-value">${formatDuration(duration)}</span>
@@ -1314,15 +1330,23 @@ INDEX_HTML = """
             });
         }
 
-        async function runTaskNow(path, name, file) {
-            await fetch('/api/tasks/run', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ project_path: path, task_name: name, file: file })
             });
             // Switch to logs and fetch
             document.getElementById('nav-logs').click();
             setTimeout(fetchLogs, 500);
+        }
+
+        async function stopTask(execId) {
+            if (!confirm('Are you sure you want to stop this task?')) return;
+            try {
+                const response = await fetch(`/api/executions/${execId}/stop`, {
+                    method: 'POST'
+                });
+                if (!response.ok) throw new Error('Failed to stop task');
+                fetchLogs();
+            } catch (error) {
+                alert(error.message);
+            }
         }
 
         // Initialize Chat Script (adapted from original)
@@ -1754,37 +1778,15 @@ def get_config_api():
     }
 
 
-@app.post("/api/tasks/run")
-def run_task_now(req: RunTaskRequest):
-    from .parser import load_project_tasks
-    from .executor import execute_task
-
-    proj_dir = Path(req.project_path).expanduser()
-    if not proj_dir.exists():
-        return JSONResponse(
-            status_code=404, content={"error": "Project path does not exist."}
-        )
-
-    matched_task = None
-    for toml_path, local_task in load_project_tasks(proj_dir):
-        if local_task.task.name != req.task_name:
-            continue
-        if req.file and str(toml_path) != req.file:
-            continue
-        matched_task = local_task.task
-        break
-
-    if matched_task is None:
-        return JSONResponse(
-            status_code=404,
-            content={"error": "Task not found in the specified project."},
-        )
-
-    threading.Thread(
-        target=execute_task, args=(proj_dir, matched_task), daemon=True
-    ).start()
-
     return {"message": f"Task '{req.task_name}' started."}
+
+
+@app.post("/api/executions/{exec_id}/stop")
+def stop_execution_api(exec_id: str):
+    from .executor import stop_execution
+
+    stop_execution(exec_id)
+    return {"message": "Stop signal sent."}
 
 
 @app.post("/api/tasks/toggle")

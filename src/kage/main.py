@@ -587,6 +587,18 @@ def logs(limit: int = 10):
 
 
 @app.command()
+def stop(exec_id: str = typer.Argument(..., help="Execution ID to stop")):
+    """Stop a running execution."""
+    from .executor import stop_execution
+    from rich.console import Console
+
+    console = Console()
+    console.print(f"[yellow]Stopping execution {exec_id}...[/yellow]")
+    stop_execution(exec_id)
+    console.print("[green]Stop signal sent.[/green]")
+
+
+@app.command()
 def ui(
     host: Optional[str] = typer.Option(None, "--host", "-h", help="Bind host (e.g., '0.0.0.0' for external access)"),
     port: Optional[int] = typer.Option(None, "--port", "-p", help="Bind port"),

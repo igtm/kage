@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import KAGE_GLOBAL_DIR, get_global_config
-from .db import log_execution
+from .db import log_execution, start_execution, update_execution, get_execution_pid
 from .parser import TaskDef
 from .ai.chat import clean_ai_reply, get_thinking_tag
 
@@ -184,6 +184,25 @@ def _notify_connectors(task: TaskDef, status: str, stdout: str, stderr: str):
             connector.send_message(msg)
 
 
+def stop_execution(exec_id: str):
+    """実行中のタスクを停止する。"""
+    pid = get_execution_pid(exec_id)
+    if not pid:
+        print(f"No PID found for execution {exec_id}")
+        return
+
+    try:
+        # プロセスグループ全体にSIGTERMを送信
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        update_execution(exec_id, "STOPPED", "", "Terminated by user")
+        print(f"Stopped execution {exec_id} (PID: {pid})")
+    except ProcessLookupError:
+        # 既に終了している場合
+        update_execution(exec_id, "STOPPED", "", "Terminated by user (already dead)")
+    except Exception as e:
+        print(f"Failed to stop execution {exec_id}: {e}")
+
+
 def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = None):
     if not task.active:
         print(f"Skipping inactive task '{task.name}' in {project_dir}")
@@ -318,8 +337,9 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             return
 
         try:
-            from .db import init_db, start_execution, update_execution
+            from .db import init_db
             init_db()  # Migration ensure
+            # まだPIDがわからないのでNoneで開始
             exec_id = start_execution(str(project_dir), task.name)
 
             print(f"Executing task '{task.name}' in {project_dir}")
@@ -336,14 +356,35 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             # タイムアウト設定 (デフォルトなし)
             timeout = task.timeout_minutes * 60 if task.timeout_minutes else None
 
-            result = subprocess.run(
+            # プロセス開始
+            proc = subprocess.Popen(
                 cmd,
                 cwd=project_dir,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 env=env,
-                timeout=timeout,
+                start_new_session=True,  # 新しいセッション（プロセスグループ）を作成
             )
+
+            # PID を更新
+            conn = sqlite3.connect(KAGE_DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE executions SET pid = ? WHERE id = ?", (proc.pid, exec_id))
+            conn.commit()
+            conn.close()
+
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+                returncode = proc.returncode
+            except subprocess.TimeoutExpired:
+                # タイムアウト時はプロセスグループごと終了させる
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                stdout, stderr = proc.communicate()
+                returncode = -1
+                raise  # re-raise to be caught by outer try
+
+            result = subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
 
             # autostop チェック: task.json の sub_tasks が全て done の場合
             if task.prompt and task.mode == ExecutionMode.AUTOSTOP and task_file:
@@ -400,3 +441,13 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
     finally:
         if lock_path.exists():
             lock_path.unlink()
+        
+        # 最終的に PID を NULL にしておく (終了済みを明示)
+        try:
+            conn = sqlite3.connect(KAGE_DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE executions SET pid = NULL WHERE id = ?", (exec_id,))
+            conn.commit()
+            conn.close()
+        except:
+            pass
