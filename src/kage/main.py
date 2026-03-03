@@ -2,10 +2,12 @@ import typer
 from . import config as config_mod, daemon, db
 from typing import Optional
 from importlib import metadata
+from pathlib import Path
+from typer import completion as typer_completion
 
 app = typer.Typer(
     help="kage - AI Native Cron Task Runner",
-    add_completion=False,
+    add_completion=True,
 )
 
 cron_app = typer.Typer(help="OS-level scheduler (cron/launchd) management")
@@ -19,6 +21,70 @@ app.add_typer(project_app, name="project")
 
 connector_app = typer.Typer(help="Manage chat connectors (Discord, Slack, Telegram, etc.)")
 app.add_typer(connector_app, name="connector")
+
+completion_app = typer.Typer(help="Shell completion helpers")
+app.add_typer(completion_app, name="completion")
+
+
+def _completion_script(shell: str) -> str:
+    target_shell = shell.lower().strip()
+    if target_shell not in ("bash", "zsh"):
+        raise typer.BadParameter("shell must be one of: bash, zsh")
+    return typer_completion.get_completion_script(
+        prog_name="kage",
+        complete_var="_KAGE_COMPLETE",
+        shell=target_shell,
+    )
+
+
+def _append_source_line_if_missing(rc_file: Path, source_line: str) -> bool:
+    rc_file.parent.mkdir(parents=True, exist_ok=True)
+    if not rc_file.exists():
+        rc_file.write_text("", encoding="utf-8")
+    content = rc_file.read_text(encoding="utf-8")
+    if source_line in content:
+        return False
+    with rc_file.open("a", encoding="utf-8") as f:
+        if content and not content.endswith("\n"):
+            f.write("\n")
+        f.write(source_line + "\n")
+    return True
+
+
+@completion_app.command("show")
+def completion_show(
+    shell: str = typer.Argument(..., help="Target shell: bash or zsh"),
+):
+    """Print completion script for bash/zsh."""
+    typer.echo(_completion_script(shell))
+
+
+@completion_app.command("install")
+def completion_install(
+    shell: str = typer.Argument(..., help="Target shell: bash or zsh"),
+):
+    """Install completion script and update shell rc file."""
+    target_shell = shell.lower().strip()
+    script = _completion_script(target_shell)
+
+    comp_dir = Path.home() / ".kage" / "completions"
+    comp_dir.mkdir(parents=True, exist_ok=True)
+    script_path = comp_dir / f"kage.{target_shell}"
+    script_path.write_text(script, encoding="utf-8")
+
+    if target_shell == "bash":
+        rc_file = Path.home() / ".bashrc"
+    else:
+        rc_file = Path.home() / ".zshrc"
+    source_line = f'source "{script_path}"'
+    appended = _append_source_line_if_missing(rc_file, source_line)
+
+    typer.echo(f"Installed completion script: {script_path}")
+    if appended:
+        typer.echo(f"Updated shell config: {rc_file}")
+    else:
+        typer.echo(f"Shell config already contains source line: {rc_file}")
+    typer.echo("Reload your shell: exec $SHELL -l")
 
 
 def _resolve_version() -> str:

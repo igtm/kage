@@ -838,7 +838,7 @@ INDEX_HTML = """
             </div>
         </nav>
         <div class="sidebar-footer">
-            v0.3.4 - Autonomous Exec layer
+            v0.3.5 - Autonomous Exec layer
         </div>
     </aside>
 

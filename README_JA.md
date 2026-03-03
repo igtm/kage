@@ -55,6 +55,36 @@ kage init         # 現在のディレクトリに kage を初期化
 kage ui           # Webダッシュボードを開く
 ```
 
+## シェル補完 (Completion)
+
+`kage` は Typer 標準の補完機能に対応しています。
+
+```bash
+# 推奨: シェルを明示してインストール
+kage completion install bash
+kage completion install zsh
+```
+
+スクリプトを確認・手動適用する場合:
+
+```bash
+# bash
+kage completion show bash > ~/.kage-complete.bash
+echo 'source ~/.kage-complete.bash' >> ~/.bashrc
+
+# zsh
+kage completion show zsh > ~/.kage-complete.zsh
+echo 'source ~/.kage-complete.zsh' >> ~/.zshrc
+```
+
+現在のシェル自動判定で入れる場合は以下も使えます。
+
+```bash
+kage --install-completion
+```
+
+設定後はシェルを再読み込みしてください（`exec $SHELL -l`）。
+
 ## ユースケース
 
 ### 🌙 夜間技術選定（OCR モデルベンチマーク）

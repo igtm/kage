@@ -55,6 +55,36 @@ kage init         # Initialize kage in the current directory
 kage ui           # Open the web dashboard
 ```
 
+## Shell Completion
+
+Typer-based completion is enabled for `kage`.
+
+```bash
+# Recommended: explicit shell install
+kage completion install bash
+kage completion install zsh
+```
+
+Preview or generate the script manually:
+
+```bash
+# bash
+kage completion show bash > ~/.kage-complete.bash
+echo 'source ~/.kage-complete.bash' >> ~/.bashrc
+
+# zsh
+kage completion show zsh > ~/.kage-complete.zsh
+echo 'source ~/.kage-complete.zsh' >> ~/.zshrc
+```
+
+You can also use Typer's built-in option for current shell detection:
+
+```bash
+kage --install-completion
+```
+
+Reload your shell after installation (`exec $SHELL -l`).
+
 ## Use Cases
 
 ### 🌙 Overnight Tech Evaluation (OCR Model Benchmark)
