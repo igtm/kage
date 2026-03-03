@@ -3,13 +3,14 @@ import os
 import re
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from .config import KAGE_GLOBAL_DIR, get_global_config
+from .config import KAGE_DB_PATH, KAGE_GLOBAL_DIR, get_global_config
 from .db import log_execution, start_execution, update_execution, get_execution_pid
 from .parser import TaskDef
 from .ai.chat import clean_ai_reply, get_thinking_tag
