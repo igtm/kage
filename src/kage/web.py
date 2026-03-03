@@ -838,7 +838,7 @@ INDEX_HTML = """
             </div>
         </nav>
         <div class="sidebar-footer">
-            v0.3.3 - Autonomous Exec layer
+            v0.3.4 - Autonomous Exec layer
         </div>
     </aside>
 
@@ -1330,10 +1330,27 @@ INDEX_HTML = """
             });
         }
 
-            });
-            // Switch to logs and fetch
-            document.getElementById('nav-logs').click();
-            setTimeout(fetchLogs, 500);
+        async function runTaskNow(projectPath, taskName, file) {
+            try {
+                const response = await fetch('/api/tasks/run-now', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        project_path: projectPath,
+                        task_name: taskName,
+                        file: file || null
+                    })
+                });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Failed to start task');
+                }
+                // Switch to logs and fetch
+                document.getElementById('nav-logs').click();
+                setTimeout(fetchLogs, 500);
+            } catch (error) {
+                alert(error.message);
+            }
         }
 
         async function stopTask(execId) {
@@ -1778,7 +1795,43 @@ def get_config_api():
     }
 
 
-    return {"message": f"Task '{req.task_name}' started."}
+@app.post("/api/tasks/run-now")
+def run_task_now(req: RunTaskRequest):
+    from pathlib import Path
+    from fastapi.responses import JSONResponse
+    from .parser import load_project_tasks
+    from .executor import execute_task
+
+    proj_dir = Path(req.project_path).expanduser().resolve()
+    if not proj_dir.exists():
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Project path not found: {proj_dir}"},
+        )
+
+    try:
+        tasks = load_project_tasks(proj_dir)
+        matched = None
+        req_file = str(Path(req.file).expanduser().resolve()) if req.file else None
+        for task_file, task_def in tasks:
+            if task_def.task.name != req.task_name:
+                continue
+            if req_file and str(task_file.resolve()) != req_file:
+                continue
+            matched = (task_file, task_def.task)
+            break
+
+        if matched is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Task '{req.task_name}' not found."},
+            )
+
+        task_file, task = matched
+        execute_task(proj_dir, task, task_file=task_file)
+        return {"message": f"Task '{req.task_name}' started."}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.post("/api/executions/{exec_id}/stop")
