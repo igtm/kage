@@ -38,6 +38,8 @@ English | [日本語](./README_JA.md)
 - **Thinking Process Isolation**: AI workers automatically wrap reasoning in `<think>` tags, which are hidden from notifications and logs for a cleaner experience.
 - **Web Dashboard**: Execution history, task management, and AI chat — all in one place.
 
+Default built-in AI providers: `codex`, `claude`, `gemini`, `opencode`, `aider`.
+
 Check out the [Technical Architecture](ARCHITECTURE.md) for more details.
 
 ## Installation

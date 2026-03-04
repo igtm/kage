@@ -801,9 +801,9 @@ def doctor():
         "default_ai_engine が未設定" if is_ja else "default_ai_engine not set"
     )
     t_ai_hint = (
-        "AIタスクを使う場合: kage config default_ai_engine codex --global"
+        "AIタスクを使う場合: kage config default_ai_engine opencode --global"
         if is_ja
-        else "If using AI tasks: run 'kage config default_ai_engine codex --global'"
+        else "If using AI tasks: run 'kage config default_ai_engine opencode --global'"
     )
     t_prov_undef = "が未定義" if is_ja else "is undefined"
     t_prov_cmd_hint = (
