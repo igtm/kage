@@ -146,6 +146,9 @@ template = [
 [commands.gemini]
 template = ["gemini", "--approval-mode", "yolo", "--prompt", "{prompt}"]
 
+[commands.opencode]
+template = ["opencode", "run", "{prompt}"]
+
 # --- プロバイダー定義 ---
 
 [providers.codex]
@@ -156,6 +159,9 @@ command = "claude"
 
 [providers.gemini]
 command = "gemini"
+
+[providers.opencode]
+command = "opencode"
 
 [providers.aider]
 command = "aider"

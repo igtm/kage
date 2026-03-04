@@ -211,6 +211,8 @@ def test_config_default_loaded():
     config = get_global_config(workspace_dir=Path("/nonexistent"))
     assert "codex" in config.providers
     assert "codex" in config.commands
+    assert "opencode" in config.providers
+    assert "opencode" in config.commands
     assert config.ui_port == 8484
 
 
