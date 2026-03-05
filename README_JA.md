@@ -48,6 +48,11 @@
 curl -sSL https://raw.githubusercontent.com/igtm/kage/main/install.sh | bash
 ```
 
+このリポジトリの skill は次のコマンドでも追加できます：
+```bash
+npx skills add https://github.com/igtm/kage
+```
+
 ## クイックスタート
 
 ```bash

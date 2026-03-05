@@ -48,6 +48,11 @@ Check out the [Technical Architecture](ARCHITECTURE.md) for more details.
 curl -sSL https://raw.githubusercontent.com/igtm/kage/main/install.sh | bash
 ```
 
+You can also add this repository's skills with:
+```bash
+npx skills add https://github.com/igtm/kage
+```
+
 ## Quick Start
 
 ```bash
