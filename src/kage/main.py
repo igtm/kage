@@ -682,7 +682,7 @@ def ui(
 
 @app.command()
 def config(
-    key: str = typer.Argument(..., help="Setting key (e.g., 'default_ai_engine')"),
+    key: str = typer.Argument(..., help="Setting key (e.g., 'default_ai_engine' or 'providers.codex.model')"),
     value: str = typer.Argument(..., help="New value"),
     is_global: bool = typer.Option(
         False,
@@ -690,11 +690,21 @@ def config(
         "-g",
         help="Update global config (~/.kage/config.toml) instead of workspace config",
     ),
+    is_local: bool = typer.Option(
+        False,
+        "--local",
+        "-l",
+        help="Update local config (.kage/config.local.toml) instead of workspace config",
+    ),
 ):
     """Update configuration via CLI."""
     from .config import set_config_value
 
-    set_config_value(key, value, is_global=is_global)
+    if is_global and is_local:
+        raise typer.BadParameter("--global and --local cannot be used together")
+
+    scope = "global" if is_global else "local" if is_local else "project"
+    set_config_value(key, value, is_global=is_global, scope=scope)
 
 
 @app.command("config-show")
@@ -711,6 +721,7 @@ def config_show(
 
     ws_dir = Path(workspace).resolve() if workspace else Path.cwd()
     ws_cfg_path = ws_dir / ".kage" / "config.toml"
+    ws_local_cfg_path = ws_dir / ".kage" / "config.local.toml"
     cfg = get_global_config(workspace_dir=ws_dir)
 
     console = Console()
@@ -728,6 +739,10 @@ def config_show(
         "Workspace Config",
         f"{ws_cfg_path} ({'found' if ws_cfg_path.exists() else 'missing'})",
     )
+    summary.add_row(
+        "Local Config",
+        f"{ws_local_cfg_path} ({'found' if ws_local_cfg_path.exists() else 'missing'})",
+    )
     summary.add_row("default_ai_engine", str(cfg.default_ai_engine or "None"))
     summary.add_row("ui_port", str(cfg.ui_port))
     summary.add_row("ui_host", str(cfg.ui_host))
@@ -740,11 +755,20 @@ def config_show(
     provider_table = Table(title="Providers", show_header=True, header_style="bold")
     provider_table.add_column("name", style="bold")
     provider_table.add_column("command")
+    provider_table.add_column("model")
+    provider_table.add_column("model_flag")
     provider_table.add_column("parser")
     provider_table.add_column("parser_args")
     for name in sorted(cfg.providers.keys()):
         p = cfg.providers[name]
-        provider_table.add_row(name, p.command, p.parser, p.parser_args or "")
+        provider_table.add_row(
+            name,
+            p.command,
+            p.model or "",
+            p.model_flag or "",
+            p.parser,
+            p.parser_args or "",
+        )
     if cfg.providers:
         console.print(provider_table)
     else:
@@ -926,7 +950,7 @@ def doctor():
                         fail(scope, f"providers.{name} must be a table")
                         continue
                     for k in prov.keys():
-                        if k not in {"command", "parser", "parser_args"}:
+                        if k not in {"command", "parser", "parser_args", "model", "model_flag"}:
                             warn(scope, f"providers.{name}: unknown key {k}")
                     if "command" in prov and not isinstance(prov["command"], str):
                         fail(scope, f"providers.{name}.command must be string")
@@ -936,6 +960,14 @@ def doctor():
                         prov["parser_args"], str
                     ):
                         fail(scope, f"providers.{name}.parser_args must be string")
+                    if "model" in prov and prov["model"] is not None and not isinstance(
+                        prov["model"], str
+                    ):
+                        fail(scope, f"providers.{name}.model must be string")
+                    if "model_flag" in prov and prov["model_flag"] is not None and not isinstance(
+                        prov["model_flag"], str
+                    ):
+                        fail(scope, f"providers.{name}.model_flag must be string")
                     if isinstance(commands, dict):
                         command_name = prov.get("command")
                         if (

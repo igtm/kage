@@ -2,7 +2,7 @@ from pathlib import Path
 from importlib import resources
 import tomlkit
 from pydantic import BaseModel
-from typing import Optional
+from typing import Literal, Optional
 
 KAGE_GLOBAL_DIR = Path.home() / ".kage"
 KAGE_CONFIG_PATH = KAGE_GLOBAL_DIR / "config.toml"
@@ -22,6 +22,8 @@ class ProviderConfig(BaseModel):
     command: str
     parser: str = "raw"
     parser_args: str = ""
+    model: Optional[str] = None
+    model_flag: Optional[str] = "--model"
 
 
 class DiscordConnectorConfig(BaseModel):
@@ -82,6 +84,11 @@ class GlobalConfig(BaseModel):
     commands: dict[str, CommandDef] = {}
     providers: dict[str, ProviderConfig] = {}
     connectors: dict[str, dict] = {}
+
+
+PROMPT_PLACEHOLDER = "{prompt}"
+MODEL_PLACEHOLDER = "{model}"
+MODEL_ARGS_PLACEHOLDER = "{model_args}"
 
 
 def _load_toml_file(path: Path) -> dict:
@@ -184,21 +191,145 @@ def get_user_overrides(workspace_dir: Optional[Path] = None) -> dict:
     ws_dir = workspace_dir or Path.cwd()
     ws_config_path = ws_dir / ".kage" / "config.toml"
     ws_config = _load_toml_file(ws_config_path)
+    ws_local_config_path = ws_dir / ".kage" / "config.local.toml"
+    ws_local_config = _load_toml_file(ws_local_config_path)
 
-    return _deep_merge(user_config, ws_config)
+    merged = _deep_merge(user_config, ws_config)
+    return _deep_merge(merged, ws_local_config)
+
+
+def build_model_args(provider: Optional[ProviderConfig]) -> list[str]:
+    """Provider設定から model 用 CLI 引数列を組み立てる。"""
+    if not provider or not provider.model:
+        return []
+    if provider.model_flag:
+        return [provider.model_flag, provider.model]
+    return [provider.model]
+
+
+def render_command_template(
+    template: list[str],
+    prompt: str,
+    provider: Optional[ProviderConfig] = None,
+    extra_args: Optional[list[str]] = None,
+    auto_inject_model: bool = True,
+) -> list[str]:
+    """テンプレート内の {prompt}/{model}/{model_args} を展開する。"""
+    model = provider.model if provider and provider.model else None
+    model_args = build_model_args(provider)
+    rendered: list[str] = []
+    model_consumed = False
+    has_explicit_model_placeholder = any(
+        raw_part == MODEL_ARGS_PLACEHOLDER or MODEL_PLACEHOLDER in raw_part
+        for raw_part in template
+    )
+
+    for raw_part in template:
+        if raw_part == MODEL_ARGS_PLACEHOLDER:
+            rendered.extend(model_args)
+            model_consumed = True
+            continue
+
+        if MODEL_PLACEHOLDER in raw_part:
+            if model is None:
+                if (
+                    raw_part == MODEL_PLACEHOLDER
+                    and provider
+                    and provider.model_flag
+                    and rendered
+                    and rendered[-1] == provider.model_flag
+                ):
+                    rendered.pop()
+                model_consumed = True
+                continue
+            else:
+                rendered.append(raw_part.replace(MODEL_PLACEHOLDER, model))
+            model_consumed = True
+            continue
+
+        if PROMPT_PLACEHOLDER in raw_part:
+            if (
+                auto_inject_model
+                and model_args
+                and not model_consumed
+                and not has_explicit_model_placeholder
+            ):
+                rendered.extend(model_args)
+                model_consumed = True
+            rendered.append(raw_part.replace(PROMPT_PLACEHOLDER, prompt))
+            continue
+
+        rendered.append(raw_part)
+
+    if (
+        auto_inject_model
+        and model_args
+        and not model_consumed
+        and not has_explicit_model_placeholder
+    ):
+        rendered.extend(model_args)
+
+    if extra_args:
+        rendered.extend(extra_args)
+
+    return rendered
+
+
+def _infer_toml_value(value: str):
+    """CLI入力文字列を TOML に保存する値へ軽く型推論する。"""
+    if value.lower() == "true":
+        return True
+    if value.lower() == "false":
+        return False
+    if value.isdigit():
+        return int(value)
+    return value
+
+
+def _set_nested_toml_value(doc, dotted_key: str, value):
+    """dot notation のキーで TOML ドキュメントへ値を設定する。"""
+    parts = [part for part in dotted_key.split(".") if part]
+    if not parts:
+        raise ValueError("key must not be empty")
+
+    current = doc
+    for part in parts[:-1]:
+        existing = current.get(part)
+        if existing is None:
+            current[part] = tomlkit.table()
+            existing = current[part]
+        elif not hasattr(existing, "get"):
+            raise ValueError(f"Cannot set nested key under non-table value: {part}")
+        current = existing
+
+    current[parts[-1]] = value
+
+
+def _get_config_path(
+    scope: Literal["global", "project", "local"],
+    workspace_dir: Optional[Path] = None,
+) -> Path:
+    if scope == "global":
+        return KAGE_CONFIG_PATH
+
+    ws_dir = workspace_dir or Path.cwd()
+    if scope == "local":
+        return ws_dir / ".kage" / "config.local.toml"
+    return ws_dir / ".kage" / "config.toml"
 
 
 def set_config_value(
-    key: str, value: str, is_global: bool = True, workspace_dir: Optional[Path] = None
+    key: str,
+    value: str,
+    is_global: bool = True,
+    workspace_dir: Optional[Path] = None,
+    scope: Optional[Literal["global", "project", "local"]] = None,
 ):
     """
     設定値を TOML ファイルに保存する。階層化されたキー (e.g. 'ui_port') に対応。
     """
-    if is_global:
-        path = KAGE_CONFIG_PATH
-    else:
-        ws_dir = workspace_dir or Path.cwd()
-        path = ws_dir / ".kage" / "config.toml"
+    resolved_scope = scope or ("global" if is_global else "project")
+    path = _get_config_path(resolved_scope, workspace_dir=workspace_dir)
 
     # 既存のファイルを読み込む（コメント等を保持するため tomlkit をそのまま使う）
     if path.exists():
@@ -209,17 +340,8 @@ def set_config_value(
         if not path.parent.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 型推論: 数字やブール値への変換
-    if value.lower() == "true":
-        v = True
-    elif value.lower() == "false":
-        v = False
-    elif value.isdigit():
-        v = int(value)
-    else:
-        v = value
-
-    doc[key] = v
+    v = _infer_toml_value(value)
+    _set_nested_toml_value(doc, key, v)
 
     with open(path, "w", encoding="utf-8") as f:
         tomlkit.dump(doc, f)

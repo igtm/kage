@@ -37,7 +37,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 ---
 name: <Task Name>
 cron: "<cron expression>"
-provider: <provider name>           # e.g. codex, claude, gemini, opencode, aider
+provider: <provider name>           # e.g. codex, claude, gemini, opencode, copilot, aider
 mode: continuous                    # continuous | once | autostop
 concurrency_policy: allow           # allow | forbid | replace
 timeout_minutes: 60                 # minutes (optional)

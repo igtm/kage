@@ -38,7 +38,7 @@ English | [日本語](./README_JA.md)
 - **Thinking Process Isolation**: AI workers automatically wrap reasoning in `<think>` tags, which are hidden from notifications and logs for a cleaner experience.
 - **Web Dashboard**: Execution history, task management, and AI chat — all in one place.
 
-Default built-in AI providers: `codex`, `claude`, `gemini`, `opencode`, `aider`.
+Default built-in AI providers: `codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`.
 
 Check out the [Technical Architecture](ARCHITECTURE.md) for more details.
 
@@ -246,6 +246,26 @@ On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its
 | `.kage/config.toml` | Project-shared settings |
 | `.kage/config.local.toml` | Local overrides (git-ignored) |
 | `.kage/system_prompt.md` | Project-specific AI instructions |
+
+Provider-specific model selection can be layered in the same files:
+
+```toml
+[providers.codex]
+model = "gpt-5-codex"
+
+[providers.claude]
+model = "claude-sonnet-4-5"
+
+[providers.opencode]
+model = "openai/gpt-5-codex"
+```
+
+Built-in providers use `--model` by default. You can also set nested keys via CLI:
+
+```bash
+kage config providers.codex.model gpt-5-codex --global
+kage config providers.codex.model gpt-5-mini --local
+```
 
 ## License
 

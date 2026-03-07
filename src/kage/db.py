@@ -64,6 +64,16 @@ def get_execution_pid(exec_id: str) -> int | None:
     return row[0] if row else None
 
 
+def get_execution_status(exec_id: str) -> str | None:
+    """実行IDから現在のステータスを取得する。"""
+    conn = sqlite3.connect(KAGE_DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT status FROM executions WHERE id = ?", (exec_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
 def update_execution(
     exec_id: str, status: str, stdout: str, stderr: str, finished_at: str = None
 ):
@@ -73,14 +83,25 @@ def update_execution(
     if finished_at is None:
         finished_at = datetime.now().isoformat()
 
-    cursor.execute(
-        """
-        UPDATE executions 
-        SET status = ?, stdout = ?, stderr = ?, finished_at = ?
-        WHERE id = ?
-    """,
-        (status, stdout, stderr, finished_at, exec_id),
-    )
+    if status == "STOPPED":
+        cursor.execute(
+            """
+            UPDATE executions
+            SET status = ?, stdout = ?, stderr = ?, finished_at = ?
+            WHERE id = ?
+        """,
+            (status, stdout, stderr, finished_at, exec_id),
+        )
+    else:
+        cursor.execute(
+            """
+            UPDATE executions
+            SET status = ?, stdout = ?, stderr = ?, finished_at = ?
+            WHERE id = ? AND status != 'STOPPED'
+        """,
+            (status, stdout, stderr, finished_at, exec_id),
+        )
+    updated = cursor.rowcount > 0
 
     # ログを最大100件に制限
     cursor.execute("""
@@ -92,6 +113,16 @@ def update_execution(
         )
     """)
 
+    conn.commit()
+    conn.close()
+    return updated
+
+
+def set_execution_pid(exec_id: str, pid: int | None):
+    """実行中レコードの PID を更新する。"""
+    conn = sqlite3.connect(KAGE_DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE executions SET pid = ? WHERE id = ?", (pid, exec_id))
     conn.commit()
     conn.close()
 

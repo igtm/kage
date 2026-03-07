@@ -2,7 +2,7 @@ import subprocess
 import os
 import shutil
 from pathlib import Path
-from ..config import get_global_config
+from ..config import get_global_config, render_command_template
 
 # Provider name → thinking tag mapping
 # Different AI models are trained with different internal reasoning tags
@@ -79,7 +79,7 @@ def generate_chat_reply(message: str, system_prompt: str | None = None, working_
     parts.append(f"[User Message]\n{message}")
     system_context = "\n\n".join(parts)
     
-    cmd = [part.replace("{prompt}", system_context) for part in template]
+    cmd = render_command_template(template, system_context, provider=provider)
 
     env = os.environ.copy()
     if config.env_path:

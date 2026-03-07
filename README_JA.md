@@ -38,7 +38,7 @@
 - **多層的な設定**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > デフォルト。
 - **Webダッシュボード**: 実行履歴、タスク管理、AIチャットを一箇所で提供。
 
-デフォルト同梱の AI provider は `codex`, `claude`, `gemini`, `opencode`, `aider` です。
+デフォルト同梱の AI provider は `codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider` です。
 
 詳細な技術解説は [技術構成ドキュメント](ARCHITECTURE_JA.md) を参照してください。
 
@@ -245,6 +245,26 @@ macOS では `cron` の代わりに `launchd` が使用されます。`config.to
 | `.kage/config.toml` | プロジェクト共有設定 |
 | `.kage/config.local.toml` | ローカル上書き設定 (git-ignored) |
 | `.kage/system_prompt.md` | プロジェクト固有の AI 指針 |
+
+provider ごとの model も同じ階層で上書きできます。
+
+```toml
+[providers.codex]
+model = "gpt-5-codex"
+
+[providers.claude]
+model = "claude-sonnet-4-5"
+
+[providers.opencode]
+model = "openai/gpt-5-codex"
+```
+
+built-in provider は既定で `--model` を使います。CLI から nested key を保存することもできます。
+
+```bash
+kage config providers.codex.model gpt-5-codex --global
+kage config providers.codex.model gpt-5-mini --local
+```
 
 ## ライセンス
 

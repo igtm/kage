@@ -121,12 +121,14 @@ template = [
   "--sandbox",
   "workspace-write",
   "exec",
+  "{model_args}",
   "{prompt}",
 ]
 
 [commands.aider]
 template = [
   "aider",
+  "{model_args}",
   "--message",
   "{prompt}",
   "--auto-lint",
@@ -140,28 +142,41 @@ template = [
   "-p",
   "--allow-dangerously-skip-permissions",
   "--dangerously-skip-permissions",
+  "{model_args}",
   "{prompt}",
 ]
 
 [commands.gemini]
-template = ["gemini", "--approval-mode", "yolo", "--prompt", "{prompt}"]
+template = ["gemini", "--approval-mode", "yolo", "{model_args}", "--prompt", "{prompt}"]
 
 [commands.opencode]
-template = ["opencode", "run", "{prompt}"]
+template = ["opencode", "run", "{model_args}", "{prompt}"]
+
+[commands.copilot]
+template = ["copilot", "--yolo", "{model_args}", "-p", "{prompt}"]
 
 # --- プロバイダー定義 ---
 
 [providers.codex]
 command = "codex"
+model_flag = "--model"
 
 [providers.claude]
 command = "claude"
+model_flag = "--model"
 
 [providers.gemini]
 command = "gemini"
+model_flag = "--model"
 
 [providers.opencode]
 command = "opencode"
+model_flag = "--model"
 
 [providers.aider]
 command = "aider"
+model_flag = "--model"
+
+[providers.copilot]
+command = "copilot"
+model_flag = "--model"

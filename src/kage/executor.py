@@ -3,15 +3,26 @@ import os
 import re
 import shutil
 import signal
-import sqlite3
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from .config import KAGE_DB_PATH, KAGE_GLOBAL_DIR, get_global_config
-from .db import log_execution, start_execution, update_execution, get_execution_pid
+from .config import (
+    KAGE_GLOBAL_DIR,
+    build_model_args,
+    get_global_config,
+    render_command_template,
+)
+from .db import (
+    get_execution_status,
+    get_execution_pid,
+    log_execution,
+    set_execution_pid,
+    start_execution,
+    update_execution,
+)
 from .parser import TaskDef
 from .ai.chat import clean_ai_reply, get_thinking_tag
 
@@ -317,12 +328,15 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             p_args = task.parser_args or (provider.parser_args if provider else "")
 
             if resolved_template:
-                cmd = [
-                    part.replace("{prompt}", full_prompt) for part in resolved_template
-                ]
-                cmd.extend(extra_args)
+                cmd = render_command_template(
+                    resolved_template,
+                    full_prompt,
+                    provider=provider,
+                    extra_args=extra_args,
+                    auto_inject_model=not bool(task.command_template),
+                )
             else:
-                cmd = [engine_name, full_prompt] + extra_args
+                cmd = [engine_name, *build_model_args(provider), full_prompt, *extra_args]
 
         elif task.command:
             shell_cmd = task.shell or "sh"
@@ -369,11 +383,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             )
 
             # PID を更新
-            conn = sqlite3.connect(KAGE_DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("UPDATE executions SET pid = ? WHERE id = ?", (proc.pid, exec_id))
-            conn.commit()
-            conn.close()
+            set_execution_pid(exec_id, proc.pid)
 
             try:
                 stdout, stderr = proc.communicate(timeout=timeout)
@@ -386,6 +396,9 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 raise  # re-raise to be caught by outer try
 
             result = subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
+            if get_execution_status(exec_id) == "STOPPED":
+                return
 
             # autostop チェック: task.json の sub_tasks が全て done の場合
             if task.prompt and task.mode == ExecutionMode.AUTOSTOP and task_file:
@@ -425,30 +438,29 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             # Clean thinking tags from AI output before storing and notifying
             if task.prompt:
                 result.stdout = clean_ai_reply(result.stdout)
-            update_execution(exec_id, status, result.stdout, result.stderr)
-            _notify_connectors(task, status, result.stdout, result.stderr)
+            updated = update_execution(exec_id, status, result.stdout, result.stderr)
+            if updated:
+                _notify_connectors(task, status, result.stdout, result.stderr)
         except subprocess.TimeoutExpired:
             stderr = f"Task timed out after {task.timeout_minutes} minutes"
-            update_execution(
+            updated = update_execution(
                 exec_id,
                 "TIMEOUT",
                 "",
                 stderr,
             )
-            _notify_connectors(task, "TIMEOUT", "", stderr)
+            if updated:
+                _notify_connectors(task, "TIMEOUT", "", stderr)
         except Exception as e:
-            update_execution(exec_id, "ERROR", "", str(e))
-            _notify_connectors(task, "ERROR", "", str(e))
+            updated = update_execution(exec_id, "ERROR", "", str(e))
+            if updated:
+                _notify_connectors(task, "ERROR", "", str(e))
     finally:
         if lock_path.exists():
             lock_path.unlink()
         
         # 最終的に PID を NULL にしておく (終了済みを明示)
         try:
-            conn = sqlite3.connect(KAGE_DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("UPDATE executions SET pid = NULL WHERE id = ?", (exec_id,))
-            conn.commit()
-            conn.close()
+            set_execution_pid(exec_id, None)
         except:
             pass

@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from kage.executor import execute_task, stop_execution
 from kage.parser import TaskDef
-from kage.db import init_db, KAGE_DB_PATH
+from kage.db import init_db, KAGE_DB_PATH, start_execution, update_execution
 import sqlite3
 
 @pytest.fixture
@@ -60,5 +60,21 @@ def test_stop_execution_flow(tmp_path: Path, clean_db):
     row = cursor.fetchone()
     conn.close()
     
+    assert row[0] == "STOPPED"
+    assert "Terminated by user" in row[1]
+
+
+def test_update_execution_does_not_overwrite_stopped_status(clean_db):
+    exec_id = start_execution("/tmp/project", "stop-race")
+    update_execution(exec_id, "STOPPED", "", "Terminated by user")
+    updated = update_execution(exec_id, "SUCCESS", "ok", "")
+
+    conn = sqlite3.connect(clean_db)
+    cursor = conn.cursor()
+    cursor.execute("SELECT status, stderr FROM executions WHERE id = ?", (exec_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    assert updated is False
     assert row[0] == "STOPPED"
     assert "Terminated by user" in row[1]
