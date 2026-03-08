@@ -79,6 +79,84 @@ working_dir: ../../workspace
     assert task.working_dir == "../../workspace"
 
 
+def test_parse_markdown_notify_connectors_json_array_string(tmp_path: Path):
+    task_file = tmp_path / "notify.md"
+    task_file.write_text(
+        """---
+name: Notify Task
+cron: "0 10 * * *"
+notify_connectors: ["discord_igtm", "telegram_igtm"]
+---
+
+Send a digest.
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_task_file(task_file)
+    assert len(parsed) == 1
+    _, task = parsed[0]
+    assert task.notify_connectors == ["discord_igtm", "telegram_igtm"]
+
+
+def test_parse_markdown_notify_connectors_csv_string(tmp_path: Path):
+    task_file = tmp_path / "notify-csv.md"
+    task_file.write_text(
+        """---
+name: Notify Csv Task
+cron: "0 10 * * *"
+connectors: discord_igtm, telegram_igtm
+---
+
+Send a digest.
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_task_file(task_file)
+    assert len(parsed) == 1
+    _, task = parsed[0]
+    assert task.notify_connectors == ["discord_igtm", "telegram_igtm"]
+
+
+def test_parse_markdown_notify_connectors_single_quoted_array_string(tmp_path: Path):
+    task_file = tmp_path / "notify-single-quoted.md"
+    task_file.write_text(
+        """---
+name: Notify Single Quoted Task
+cron: "0 10 * * *"
+notify_connectors: ['discord_igtm', 'telegram_igtm']
+---
+
+Send a digest.
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_task_file(task_file)
+    assert len(parsed) == 1
+    _, task = parsed[0]
+    assert task.notify_connectors == ["discord_igtm", "telegram_igtm"]
+
+
+def test_parse_markdown_rejects_non_string_notify_connectors_array(tmp_path: Path):
+    task_file = tmp_path / "notify-invalid.md"
+    task_file.write_text(
+        """---
+name: Notify Invalid Task
+cron: "0 10 * * *"
+notify_connectors: [1, 2]
+---
+
+Send a digest.
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_task_file(task_file)
+    assert parsed == []
+
+
 def test_parse_markdown_rejects_command_task_with_body(tmp_path: Path):
     task_file = tmp_path / "bad-shell.md"
     task_file.write_text(
