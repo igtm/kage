@@ -108,6 +108,20 @@ def _get_memory_dir(project_dir: Path, task_name: str) -> Path:
     return memory_dir
 
 
+def _resolve_task_working_dir(
+    project_dir: Path, task: TaskDef, task_file: Optional[Path] = None
+) -> Path:
+    if not task.working_dir:
+        return project_dir
+
+    working_dir = Path(task.working_dir).expanduser()
+    if working_dir.is_absolute():
+        return working_dir
+
+    base_dir = task_file.parent if task_file else project_dir
+    return (base_dir.resolve() / working_dir).resolve()
+
+
 def _load_recent_memories(memory_dir: Path, max_entries: int = 5) -> str:
     """直近N日分のメモリファイルを読み込み、結合した文字列として返す。"""
     date_files = sorted(memory_dir.glob("*.json"), reverse=True)
@@ -244,6 +258,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
 
     global_config = get_global_config(workspace_dir=project_dir)
     system_prompt = get_system_prompt(workspace_dir=project_dir)
+    execution_dir = _resolve_task_working_dir(project_dir, task, task_file)
 
     # ロックファイル作成
     try:
@@ -251,6 +266,8 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
 
         # メモリの読み込み（直近N件）
         memory_dir = _get_memory_dir(project_dir, task.name)
+        task_plan_file = (memory_dir / "task.json").resolve()
+        memory_dir_hint = memory_dir.resolve()
         memory_context_str = _load_recent_memories(
             memory_dir, max_entries=global_config.memory_max_entries
         )
@@ -271,12 +288,12 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 plan_json = json.dumps(task_plan, indent=2, ensure_ascii=False)
                 if stored_hash == current_hash:
                     task_plan_context = (
-                        f"\n\n## Task Plan (.kage/memory/{re.sub(r'[^a-zA-Z0-9_-]', '_', task.name)}/task.json)\n"
+                        f"\n\n## Task Plan ({task_plan_file})\n"
                         f"{plan_json}"
                     )
                 else:
                     task_plan_context = (
-                        f"\n\n## Task Plan (.kage/memory/{re.sub(r'[^a-zA-Z0-9_-]', '_', task.name)}/task.json)\n"
+                        f"\n\n## Task Plan ({task_plan_file})\n"
                         f"\u26a0 **The task prompt has been updated** (hash mismatch). "
                         f"Review the previous task plan below and regenerate it based on the new instructions. "
                         f"Reuse completed work where applicable. Update `prompt_hash` to `{current_hash}`.\n\n"
@@ -285,8 +302,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             else:
                 task_plan_context = (
                     f"\n\n## Task Plan\n"
-                    f"No task plan found. Create one by writing to "
-                    f"`.kage/memory/{re.sub(r'[^a-zA-Z0-9_-]', '_', task.name)}/task.json`.\n"
+                    f"No task plan found. Create one by writing to `{task_plan_file}`.\n"
                     f"Use `prompt_hash`: `{current_hash}`"
                 )
 
@@ -297,7 +313,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 memory_section = (
                     f"\n\n## Recent Memory\n"
                     f"No previous memory found. You can write memory files to "
-                    f"`.kage/memory/{re.sub(r'[^a-zA-Z0-9_-]', '_', task.name)}/YYYY-MM-DD.json`."
+                    f"`{memory_dir_hint / 'YYYY-MM-DD.json'}`."
                 )
 
             # プロバイダーの解決
@@ -357,7 +373,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             # まだPIDがわからないのでNoneで開始
             exec_id = start_execution(str(project_dir), task.name)
 
-            print(f"Executing task '{task.name}' in {project_dir}")
+            print(f"Executing task '{task.name}' in {execution_dir}")
             env = os.environ.copy()
             if global_config.env_path:
                 env["PATH"] = global_config.env_path
@@ -374,7 +390,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             # プロセス開始
             proc = subprocess.Popen(
                 cmd,
-                cwd=project_dir,
+                cwd=execution_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

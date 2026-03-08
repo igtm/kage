@@ -37,6 +37,7 @@ def test_parse_markdown_front_matter_prompt_task(tmp_path: Path):
 name: Nightly Research
 cron: "0 2 * * *"
 provider: codex
+working_dir: ../../workspace
 ---
 
 Compare candidate libraries and summarize pros/cons in markdown.
@@ -53,10 +54,33 @@ Include benchmark table and recommendations.
     assert "Compare candidate libraries" in (task.prompt or "")
     assert "benchmark table" in (task.prompt or "")
     assert task.provider == "codex"
+    assert task.working_dir == "../../workspace"
 
 
-def test_parse_markdown_rejects_command_task(tmp_path: Path):
-    task_file = tmp_path / "bad.md"
+def test_parse_markdown_command_task(tmp_path: Path):
+    task_file = tmp_path / "shell.md"
+    task_file.write_text(
+        """---
+name: Shell Task
+cron: "* * * * *"
+command: "echo hello"
+shell: bash
+working_dir: ../../workspace
+---
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_task_file(task_file)
+    assert len(parsed) == 1
+    _, task = parsed[0]
+    assert task.command == "echo hello"
+    assert task.shell == "bash"
+    assert task.working_dir == "../../workspace"
+
+
+def test_parse_markdown_rejects_command_task_with_body(tmp_path: Path):
+    task_file = tmp_path / "bad-shell.md"
     task_file.write_text(
         """---
 name: Bad Shell Task
@@ -65,6 +89,22 @@ command: "echo hello"
 ---
 
 this body should not be accepted because command exists in front matter
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_task_file(task_file)
+    assert parsed == []
+
+
+def test_parse_markdown_rejects_empty_command(tmp_path: Path):
+    task_file = tmp_path / "empty-command.md"
+    task_file.write_text(
+        """---
+name: Empty Command
+cron: "* * * * *"
+command: "   "
+---
 """,
         encoding="utf-8",
     )

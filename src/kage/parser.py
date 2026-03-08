@@ -42,6 +42,7 @@ class TaskDef(BaseModel):
         default=None, description="AIではなく通常のシェルコマンドを実行する場合"
     )
     shell: Optional[str] = None
+    working_dir: Optional[str] = None
     prompt: Optional[str] = None
     provider: Optional[str] = None
     command_template: Optional[List[str]] = None
@@ -144,11 +145,11 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
     対応フォーマット:
       1. TOML: 単一タスク [task]
       2. TOML: 複数タスク [task_xxx] 群
-      3. Markdown: front matter 1ファイル1タスク（promptタスクのみ）
+      3. Markdown: front matter 1ファイル1タスク
     """
     suffix = filepath.suffix.lower()
 
-    # Markdown front matter (1 task / file, prompt-only)
+    # Markdown front matter (1 task / file)
     if suffix == ".md":
         try:
             text = filepath.read_text(encoding="utf-8")
@@ -161,18 +162,22 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
             print(f"No valid front matter found in {filepath}")
             return []
 
-        # md は prompt タスクのみ許可
-        if "command" in fm:
-            print(f"Markdown task must be prompt-only (command is not allowed): {filepath}")
-            return []
-
         required = ["name", "cron"]
         if not all(k in fm and str(fm[k]).strip() for k in required):
             print(f"Markdown task requires front matter keys: {required} in {filepath}")
             return []
 
-        if not body_prompt or not body_prompt.strip():
-            print(f"Markdown task requires a body prompt string: {filepath}")
+        command = fm.get("command")
+        if isinstance(command, str):
+            command = command.strip() or None
+
+        prompt = body_prompt.strip() if body_prompt else None
+        if prompt and command:
+            print(f"Markdown task cannot define both body prompt and command: {filepath}")
+            return []
+
+        if not prompt and not command:
+            print(f"Markdown task requires either a body prompt or command: {filepath}")
             return []
 
         task_data = {
@@ -185,7 +190,10 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
             "timeout_minutes": int(fm.get("timeout_minutes")) if fm.get("timeout_minutes") else None,
             "allowed_hours": fm.get("allowed_hours"),
             "denied_hours": fm.get("denied_hours"),
-            "prompt": body_prompt.strip(),
+            "command": command,
+            "shell": fm.get("shell"),
+            "working_dir": fm.get("working_dir"),
+            "prompt": prompt,
             "provider": fm.get("provider"),
             "parser": fm.get("parser"),
             "parser_args": fm.get("parser_args"),

@@ -108,6 +108,7 @@ cron: "0 * * * *"
 provider: claude
 mode: autostop
 denied_hours: "9-23"
+working_dir: ../../benchmark
 ---
 
 # タスク: PDF OCR 技術評価
@@ -133,6 +134,8 @@ denied_hours: "9-23"
 7. `benchmark/RANKING.md` に全テスト済みモデルの比較表を更新する。
 8. 全モデルのテストが完了したら、メモリにステータス "Completed" を設定する。
 ```
+
+`working_dir` は任意です。絶対パスはそのまま使われ、相対パスは task file が置かれているディレクトリ（`.kage/tasks/`）基準で解決されます。
 
 朝起きた時:
 ```

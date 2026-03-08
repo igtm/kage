@@ -108,6 +108,7 @@ cron: "0 * * * *"
 provider: claude
 mode: autostop
 denied_hours: "9-23"
+working_dir: ../../benchmark
 ---
 
 # Task: PDF OCR Technology Evaluation
@@ -133,6 +134,8 @@ You are conducting a systematic evaluation of free/open-source OCR solutions for
 7. Update `benchmark/RANKING.md` with a comparison table of all tested models so far.
 8. When all models are tested, set status to "Completed" in memory.
 ```
+
+`working_dir` is optional. Absolute paths are used as-is; relative paths are resolved from the task file directory (`.kage/tasks/`).
 
 When you wake up:
 ```

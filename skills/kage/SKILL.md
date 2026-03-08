@@ -41,6 +41,7 @@ provider: <provider name>           # e.g. codex, claude, gemini, opencode, copi
 mode: continuous                    # continuous | once | autostop
 concurrency_policy: allow           # allow | forbid | replace
 timeout_minutes: 60                 # minutes (optional)
+working_dir: ../../workspace        # optional; relative to this task file, or absolute path
 timezone: "Asia/Tokyo"              # e.g. "UTC", "Asia/Tokyo" (optional)
 allowed_hours: "9-17"               # e.g. "9-17,21" (optional)
 denied_hours: "0-5"                 # e.g. "0-5,12" (optional)
@@ -61,6 +62,7 @@ name: <Task Name>
 cron: "<cron expression>"
 command: "<shell command>"
 shell: bash
+working_dir: ../../workspace
 ---
 ```
 

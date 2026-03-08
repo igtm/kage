@@ -1019,6 +1019,7 @@ def doctor():
             "denied_hours",
             "command",
             "shell",
+            "working_dir",
             "prompt",
             "provider",
             "command_template",
@@ -1046,14 +1047,19 @@ def doctor():
             task_data.get("prompt"), str
         ):
             fail(label, "prompt must be string")
-        if task_data.get("command") is not None and not isinstance(
-            task_data.get("command"), str
-        ):
-            fail(label, "command must be string")
+        if task_data.get("command") is not None:
+            if not isinstance(task_data.get("command"), str):
+                fail(label, "command must be string")
+            elif not task_data.get("command", "").strip():
+                fail(label, "command must be non-empty string")
         if task_data.get("shell") is not None and not isinstance(
             task_data.get("shell"), str
         ):
             fail(label, "shell must be string")
+        if task_data.get("working_dir") is not None and not isinstance(
+            task_data.get("working_dir"), str
+        ):
+            fail(label, "working_dir must be string")
 
         command_template = task_data.get("command_template")
         if command_template is not None and (
@@ -1131,6 +1137,7 @@ def doctor():
             "provider",
             "command",
             "shell",
+            "working_dir",
             "parser",
             "parser_args",
             "connector",
@@ -1150,14 +1157,17 @@ def doctor():
                 label,
                 "markdown task requires either body prompt or 'command' in front matter",
             )
+        if body.strip() and isinstance(fm.get("command"), str) and fm.get("command", "").strip():
+            fail(label, "markdown task cannot define both body prompt and command")
 
         task_data = {
             "name": fm.get("name"),
             "cron": fm.get("cron"),
             "active": fm.get("active", "true"),
             "prompt": body if body.strip() else None,
-            "command": fm.get("command"),
+            "command": fm.get("command", "").strip() if isinstance(fm.get("command"), str) else fm.get("command"),
             "shell": fm.get("shell"),
+            "working_dir": fm.get("working_dir"),
             "provider": fm.get("provider"),
             "parser": fm.get("parser"),
             "parser_args": fm.get("parser_args"),
