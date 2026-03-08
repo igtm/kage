@@ -1,0 +1,126 @@
+name: Prepare Release
+
+on:
+  pull_request_target:
+    types:
+      - closed
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: prepare-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check release token
+        env:
+          RELEASE_GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+        run: |
+          if [ -z "${RELEASE_GITHUB_TOKEN}" ]; then
+            echo "::error::Missing RELEASE_GITHUB_TOKEN secret."
+            exit 1
+          fi
+
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fetch tags
+        run: git fetch origin main --tags
+
+      - name: Determine pending release label
+        id: labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last_tag="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+          if [ -n "$last_tag" ]; then
+            since="$(git log -1 --format=%cI "$last_tag")"
+          else
+            since="1970-01-01T00:00:00+00:00"
+          fi
+
+          release_label="$(
+            gh pr list \
+              --repo "$GITHUB_REPOSITORY" \
+              --state merged \
+              --base main \
+              --limit 200 \
+              --json mergedAt,labels \
+            | python scripts/release.py --select-pending-label --since "$since"
+          )"
+          echo "release_label=$release_label" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when no merged PR needs a release
+        if: steps.labels.outputs.release_label == ''
+        run: echo "Skipping release because no merged PRs since the last tag have a release label."
+
+      - name: Set up Python
+        if: steps.labels.outputs.release_label != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Set up uv
+        if: steps.labels.outputs.release_label != ''
+        uses: astral-sh/setup-uv@v6
+
+      - name: Plan release
+        if: steps.labels.outputs.release_label != ''
+        id: plan
+        run: |
+          python scripts/release.py \
+            --labels "${{ steps.labels.outputs.release_label }}" \
+            --pr-number "${{ github.event.pull_request.number }}" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Configure git identity
+        if: steps.labels.outputs.release_label != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Ensure release tag does not already exist
+        if: steps.labels.outputs.release_label != ''
+        env:
+          RELEASE_TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $RELEASE_TAG already exists."
+            exit 1
+          fi
+
+      - name: Commit release version
+        if: steps.labels.outputs.release_label != ''
+        env:
+          RELEASE_COMMIT_MESSAGE: ${{ steps.plan.outputs.commit_message }}
+        run: |
+          git add pyproject.toml
+          git commit -m "$RELEASE_COMMIT_MESSAGE"
+
+      - name: Create release tag
+        if: steps.labels.outputs.release_label != ''
+        env:
+          RELEASE_TAG: ${{ steps.plan.outputs.tag }}
+        run: git tag -a "$RELEASE_TAG" -m "$RELEASE_TAG"
+
+      - name: Configure origin for PAT push
+        if: steps.labels.outputs.release_label != ''
+        run: |
+          git remote set-url origin \
+            "https://x-access-token:${{ secrets.RELEASE_GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+
+      - name: Push release commit and tag atomically
+        if: steps.labels.outputs.release_label != ''
+        env:
+          RELEASE_TAG: ${{ steps.plan.outputs.tag }}
+        run: git push --atomic origin HEAD:main "$RELEASE_TAG"
