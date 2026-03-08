@@ -17,6 +17,9 @@ jobs:
   prepare:
     if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
+    outputs:
+      release_requested: ${{ steps.release_requested.outputs.value }}
+      release_tag: ${{ steps.plan.outputs.tag }}
 
     steps:
       - name: Check release token
@@ -63,6 +66,11 @@ jobs:
       - name: Skip when no merged PR needs a release
         if: steps.labels.outputs.release_label == ''
         run: echo "Skipping release because no merged PRs since the last tag have a release label."
+
+      - name: Mark release requested
+        if: steps.labels.outputs.release_label != ''
+        id: release_requested
+        run: echo "value=true" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         if: steps.labels.outputs.release_label != ''
@@ -124,3 +132,11 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.plan.outputs.tag }}
         run: git push --atomic origin HEAD:main "$RELEASE_TAG"
+
+  publish:
+    needs: prepare
+    if: needs.prepare.outputs.release_requested == 'true'
+    uses: ./.github/workflows/publish-release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.release_tag }}
+    secrets: inherit
