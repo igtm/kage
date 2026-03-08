@@ -1,4 +1,5 @@
 from enum import Enum
+import json
 from pathlib import Path
 from typing import List, Optional
 
@@ -55,6 +56,34 @@ class LocalTask(BaseModel):
     task: TaskDef
 
 
+def _normalize_notify_connectors(value) -> Optional[list[str]]:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        if not all(isinstance(v, str) for v in value):
+            return value
+        return [v.strip() for v in value if v.strip()]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if stripped.startswith("[") and stripped.endswith("]"):
+            inner = stripped[1:-1].strip()
+            if not inner:
+                return []
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return [v.strip().strip("\"'") for v in inner.split(",") if v.strip().strip("\"'")]
+            else:
+                if isinstance(parsed, list):
+                    if not all(isinstance(v, str) for v in parsed):
+                        return parsed
+                    return [v.strip() for v in parsed if v.strip()]
+        return [v.strip() for v in stripped.split(",") if v.strip()]
+    return None
+
+
 def _parse_task_dict(data: dict) -> Optional[TaskDef]:
     """dict から TaskDef を生成する。ai フィールドは入れ子 dict を許容。"""
     try:
@@ -76,20 +105,17 @@ def _parse_task_dict(data: dict) -> Optional[TaskDef]:
             data["mode"] = data["mode"].lower()
 
         # 'connector' / 'connectors' alias mapping
-        if "connector" in data:
+        if data.get("connector") is not None:
             val = data["connector"]
             del data["connector"]
-            if isinstance(val, str):
-                data["notify_connectors"] = [v.strip() for v in val.split(",") if v.strip()]
-            elif isinstance(val, list):
-                data["notify_connectors"] = list(val)
-        elif "connectors" in data:
+            data["notify_connectors"] = _normalize_notify_connectors(val)
+        elif data.get("connectors") is not None:
             val = data["connectors"]
             del data["connectors"]
-            if isinstance(val, str):
-                data["notify_connectors"] = [v.strip() for v in val.split(",") if v.strip()]
-            elif isinstance(val, list):
-                data["notify_connectors"] = list(val)
+            data["notify_connectors"] = _normalize_notify_connectors(val)
+
+        if "notify_connectors" in data:
+            data["notify_connectors"] = _normalize_notify_connectors(data["notify_connectors"])
 
         return TaskDef(**data)
     except Exception as e:
