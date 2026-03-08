@@ -1,5 +1,7 @@
 name: Publish Release
 
+# Automatic release publishes are invoked from Prepare Release after it pushes the tag.
+# workflow_dispatch exists as a recovery path for already-created release tags.
 on:
   workflow_call:
     inputs:
