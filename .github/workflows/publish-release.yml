@@ -1,9 +1,17 @@
 name: Publish Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,11 +21,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          release_tag="${{ inputs.tag }}"
+          if [ -z "$release_tag" ]; then
+            release_tag="${{ github.event.inputs.tag }}"
+          fi
+          if [ -z "$release_tag" ]; then
+            echo "::error::Missing release tag input."
+            exit 1
+          fi
+          echo "value=$release_tag" >> "$GITHUB_OUTPUT"
+
       - name: Check out tag
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.ref_name }}
+          ref: ${{ steps.release_tag.outputs.value }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -50,7 +71,7 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ steps.release_tag.outputs.value }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/* --clobber
