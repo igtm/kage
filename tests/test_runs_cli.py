@@ -137,15 +137,24 @@ def test_cron_run_executes_scheduler(mocker):
 
 
 def test_task_list_shows_compiled_statuses(mocker, tmp_path: Path):
-    project_dir = tmp_path / "proj"
+    project_dir = tmp_path / "workspace" / "proj"
     task_file = project_dir / ".kage" / "tasks" / "nightly.md"
     shell_file = project_dir / ".kage" / "tasks" / "shell.md"
     task_file.parent.mkdir(parents=True)
 
     prompt_task = TaskDef(name="Nightly", cron="* * * * *", prompt="hello")
     shell_task = TaskDef(name="Shell", cron="* * * * *", command="echo hi")
+    cfg = GlobalConfig(
+        default_ai_engine="gemini",
+        commands={"gemini": CommandDef(template=["gemini", "--prompt", "{prompt}"])},
+        providers={"gemini": ProviderConfig(command="gemini")},
+    )
 
     mocker.patch("kage.scheduler.get_projects", return_value=[project_dir])
+    mocker.patch(
+        "kage.config.get_global_config",
+        side_effect=lambda workspace_dir=None: cfg,
+    )
     mocker.patch(
         "kage.parser.load_project_tasks",
         return_value=[
@@ -161,12 +170,15 @@ def test_task_list_shows_compiled_statuses(mocker, tmp_path: Path):
         ],
     )
 
-    result = runner.invoke(app, ["task", "list"])
+    result = runner.invoke(app, ["task", "list"], env={"COLUMNS": "160"})
 
     assert result.exit_code == 0
-    assert "STALE" in result.stdout
     assert "Nightly" in result.stdout
     assert "Shell" in result.stdout
+    assert "Prompt (Compiled)" in result.stdout
+    assert "gemini (Inherited)" in result.stdout
+    assert "proj" in result.stdout
+    assert str(project_dir) not in result.stdout
 
 
 def test_doctor_reports_stale_compiled_locks(mocker, tmp_path: Path):

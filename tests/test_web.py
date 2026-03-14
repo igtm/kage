@@ -16,9 +16,12 @@ def test_get_config_api_includes_compiled_state(mocker, tmp_path: Path):
         commands={"codex": CommandDef(template=["codex", "exec", "{prompt}"])},
         providers={"codex": ProviderConfig(command="codex")},
     )
-    task = TaskDef(name="Nightly", cron="* * * * *", prompt="hello", provider="codex")
+    task = TaskDef(name="Nightly", cron="* * * * *", prompt="hello")
 
-    mocker.patch("kage.web.get_global_config", return_value=cfg)
+    mocker.patch(
+        "kage.web.get_global_config",
+        side_effect=lambda workspace_dir=None: cfg,
+    )
     mocker.patch("kage.scheduler.get_projects", return_value=[project_dir])
     mocker.patch(
         "kage.parser.load_project_tasks",
@@ -41,3 +44,6 @@ def test_get_config_api_includes_compiled_state(mocker, tmp_path: Path):
     assert payload["tasks"][0]["compiled_state"] == "stale"
     assert payload["tasks"][0]["compiled_path"].endswith(".lock.sh")
     assert payload["tasks"][0]["compiled_needs_compile"] is True
+    assert payload["tasks"][0]["provider_display"] == "codex (Inherited)"
+    assert payload["tasks"][0]["type_display"] == "Prompt (Compiled)"
+    assert payload["tasks"][0]["project_name"] == "proj"

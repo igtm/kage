@@ -239,7 +239,7 @@ shell: "bash"
 | `kage cron run` | scheduler ループを 1 回実行（cron / launchd 用） |
 | `kage cron install` | システムスケジューラーに登録 |
 | `kage cron status` | バックグラウンド実行状態の確認 |
-| `kage task list` | タスク一覧を表示 |
+| `kage task list` | 状態、実効 Type、Provider/Command 付きでタスク一覧を表示 |
 | `kage task show <name>` | 詳細設定を表示 |
 | `kage connector list` | 設定済みのコネクター一覧を表示 |
 | `kage connector setup <type>` | コネクター（discord, slack, telegram）のセットアップガイドを表示 |
@@ -257,6 +257,8 @@ macOS では `cron` の代わりに `launchd` が使用されます。`config.to
 `kage runs` は実行履歴ビュー、`kage logs` は run ごとの raw output viewer です。生ログ本体は `stdout.log`, `stderr.log`, `events.jsonl` として保持されます。
 
 prompt task と同名の compiled lock 例えば `.kage/tasks/nightly.lock.sh` が存在する場合、kage はその lock に保持された source hash が `.md` と一致している間だけ Markdown 本文の代わりにそれを実行します。prompt 本文や front matter を更新したら lock は stale 扱いになるので、`kage compile <task>` を再実行してください。`kage doctor`、`kage task list`、UI の task card でも fresh / stale / missing を確認できます。
+
+`kage task list` では project 列は末尾ディレクトリ名だけを表示し、prompt task は `Prompt` または `Prompt (Compiled)` として見えます。provider 未指定でも `gemini (Inherited)` のように実際に使われる provider を表示します。built-in の `codex` 実行テンプレートは既定で `codex exec --yolo ...` を使います。
 
 connector の `poll` 返信も同じ run 履歴に保存されます。`kage runs --source connector_poll` で絞り込み、`kage logs --run <exec_id>` で AI CLI の raw output を確認できます。
 

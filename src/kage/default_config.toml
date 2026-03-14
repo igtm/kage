@@ -117,11 +117,8 @@ Your task has a `mode` field that controls lifecycle behavior:
 [commands.codex]
 template = [
   "codex",
-  "--ask-for-approval",
-  "never",
-  "--sandbox",
-  "workspace-write",
   "exec",
+  "--yolo",
   "{model_args}",
   "{prompt}",
 ]

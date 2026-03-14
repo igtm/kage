@@ -73,12 +73,31 @@ def _normalize_headless_args(cmd: list[str]) -> list[str]:
                 i += 1
             return out
 
-        # Ensure global non-interactive policy before subcommand.
+        if (
+            "--yolo" in head
+            or "--yolo" in tail
+            or "--dangerously-bypass-approvals-and-sandbox" in head
+            or "--dangerously-bypass-approvals-and-sandbox" in tail
+        ):
+            return head + ["exec"] + tail
+
+        # Ensure a non-interactive policy for codex exec on non-TTY runs.
         head = _drop_flag_with_value(head, "--ask-for-approval")
         head = _drop_flag_with_value(head, "--sandbox")
-        head = head + ["--ask-for-approval", "never", "--sandbox", "workspace-write"]
+        tail = _drop_flag_with_value(tail, "--ask-for-approval")
+        tail = _drop_flag_with_value(tail, "--sandbox")
 
-        return head + ["exec"] + tail
+        return (
+            head
+            + [
+                "exec",
+                "--ask-for-approval",
+                "never",
+                "--sandbox",
+                "workspace-write",
+            ]
+            + tail
+        )
 
     if exe == "claude":
         # Ensure --dangerously-skip-permissions is present for claude

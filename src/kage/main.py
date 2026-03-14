@@ -122,6 +122,20 @@ def _project_short_name(project_path: str) -> str:
     return Path(project_path).name or project_path
 
 
+def _effective_task_provider(task, merged_cfg) -> tuple[str | None, bool]:
+    explicit_provider = task.provider or (task.ai.engine if task.ai else None)
+    effective_provider = explicit_provider or merged_cfg.default_ai_engine
+    return effective_provider, bool(effective_provider and not explicit_provider)
+
+
+def _task_type_label(task, compiled_state: str | None = None) -> str:
+    if task.prompt and not task.command:
+        if compiled_state in {"fresh", "stale"}:
+            return "Prompt (Compiled)"
+        return "Prompt"
+    return "Shell"
+
+
 def _task_completion_items(incomplete: str) -> list[CompletionItem]:
     from .parser import load_project_tasks
     from .scheduler import get_projects
@@ -474,8 +488,9 @@ def task_list(
         None, "--project", "-p", help="Filter by project path"
     ),
 ):
-    """List all registered tasks and their status (ON/OFF)."""
+    """List registered tasks with effective type and provider/command details."""
     from .compiler import compiled_task_indicator
+    from .config import get_global_config
     from .scheduler import get_projects
     from .parser import load_project_tasks
     from rich.console import Console
@@ -496,39 +511,39 @@ def task_list(
     table.add_column("Active")
     table.add_column("Schedule")
     table.add_column("Type")
-    table.add_column("Compiled")
     table.add_column("Provider/Command")
 
     found = False
     for proj_dir in projects:
         if project and project not in str(proj_dir):
             continue
+        merged_cfg = get_global_config(workspace_dir=proj_dir)
         tasks = load_project_tasks(proj_dir)
         for toml_file, local_task in tasks:
             t = local_task.task
-            task_type = "AI Prompt" if t.prompt else "Shell"
             compiled = compiled_task_indicator(t, toml_file)
-            if compiled["state"] == "fresh":
-                compiled_display = "[green]FRESH[/green]"
-            elif compiled["state"] == "stale":
-                compiled_display = "[yellow]STALE[/yellow]"
-            elif compiled["state"] == "none":
-                compiled_display = "[dim]none[/dim]"
+            if t.prompt:
+                task_type = _task_type_label(t, compiled["state"])
+                if compiled["state"] == "fresh":
+                    task_type = "Prompt ([green]Compiled[/green])"
+                elif compiled["state"] == "stale":
+                    task_type = "Prompt ([red]Compiled[/red])"
+                effective_provider, inherited = _effective_task_provider(t, merged_cfg)
+                provider_info = (
+                    f"{effective_provider} (Inherited)"
+                    if effective_provider and inherited
+                    else effective_provider
+                )
             else:
-                compiled_display = "[dim]-[/dim]"
-            provider_info = (
-                t.provider or (t.ai.engine if t.ai and t.ai.engine else "")
-                if t.prompt
-                else (t.command or "")[:40]
-            )
+                task_type = _task_type_label(t)
+                provider_info = (t.command or "")[:40]
             status = "[green]ON[/green]" if t.active else "[red]OFF[/red]"
             table.add_row(
-                str(proj_dir),
+                _project_short_name(str(proj_dir)),
                 t.name,
                 status,
                 t.cron,
                 task_type,
-                compiled_display,
                 provider_info or "-",
             )
             found = True
@@ -710,8 +725,9 @@ def task_show(
         None, "--project", "-p", help="Project path substring for task lookup"
     ),
 ):
-    """Show details of a specific task."""
+    """Show detailed task configuration, including compiled lock freshness."""
     from .compiler import compiled_task_status
+    from .config import get_global_config
     from rich.console import Console
     from rich.panel import Panel
 
@@ -730,11 +746,25 @@ def task_show(
     ]
     compiled = compiled_task_status(task, task_file)
     if task.prompt:
-        details.append("[bold]Type:[/bold]           AI Prompt")
-        details.append(f"[bold]Prompt:[/bold]         {task.prompt[:100]}...")
-        details.append(
-            f"[bold]Provider:[/bold]       {task.provider or 'global default'}"
+        merged_cfg = get_global_config(workspace_dir=proj_dir)
+        compiled_state = (
+            "fresh"
+            if compiled and compiled["exists"] and compiled["is_fresh"]
+            else "stale"
+            if compiled and compiled["exists"]
+            else "none"
         )
+        effective_provider, inherited = _effective_task_provider(task, merged_cfg)
+        provider_label = (
+            f"{effective_provider} (Inherited)"
+            if effective_provider and inherited
+            else effective_provider or "unresolved"
+        )
+        details.append(
+            f"[bold]Type:[/bold]           {_task_type_label(task, compiled_state)}"
+        )
+        details.append(f"[bold]Prompt:[/bold]         {task.prompt[:100]}...")
+        details.append(f"[bold]Provider:[/bold]       {provider_label}")
         if compiled:
             if compiled["exists"]:
                 freshness = (
@@ -746,7 +776,7 @@ def task_show(
             else:
                 details.append("[bold]Compiled:[/bold]       none")
     elif task.command:
-        details.append("[bold]Type:[/bold]           Shell Command")
+        details.append(f"[bold]Type:[/bold]           {_task_type_label(task)}")
         details.append(f"[bold]Command:[/bold]        {task.command}")
     console.print(
         Panel("\n".join(details), title=f"[cyan]{task.name}[/cyan]", expand=False)

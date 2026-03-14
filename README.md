@@ -239,7 +239,7 @@ Cleanup old logs every midnight.
 | `kage cron run` | Run the scheduler loop once (used by cron / launchd) |
 | `kage cron install` | Register to system scheduler |
 | `kage cron status` | Check background status |
-| `kage task list` | List all tasks with status and schedule |
+| `kage task list` | List tasks with status, effective type, and provider/command |
 | `kage task show <name>` | Show detailed task configuration |
 | `kage connector list` | List all configured connectors |
 | `kage connector setup <type>` | Show setup guide for a connector (discord, slack, telegram) |
@@ -258,6 +258,8 @@ On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its
 `kage runs` is the run-history view. `kage logs` is the raw-output viewer backed by per-run log files (`stdout.log`, `stderr.log`, `events.jsonl`).
 
 If a prompt task has a sibling compiled lock such as `.kage/tasks/nightly.lock.sh`, kage executes that lock instead of the prompt body only while its stored source hashes still match the `.md` task file. When the source prompt or front matter changes, the lock becomes stale and you need to run `kage compile <task>` again. `kage doctor`, `kage task list`, and the UI task cards all show whether a lock is fresh, stale, or missing.
+
+`kage task list` shortens the project column to the leaf directory name, shows prompt tasks as `Prompt` or `Prompt (Compiled)`, and resolves inherited providers as values like `gemini (Inherited)` so you can see what will actually run. Built-in `codex` runs now use `codex exec --yolo ...` in the default command template.
 
 Connector polling replies are recorded in the same run history. Use `kage runs --source connector_poll` to isolate them, then inspect the raw AI CLI output with `kage logs --run <exec_id>`.
 
