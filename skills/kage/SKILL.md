@@ -23,13 +23,23 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage onboard` — Setup global directories and `kage cron`.
 - `kage init` — Initialize in current directory.
 - `kage run` — Execute due tasks manually.
+- `kage runs` — List execution runs in a 1-line, grep-friendly format.
+- `kage runs show <exec_id>` — Inspect run metadata and log paths.
+- `kage runs stop <exec_id>` — Stop a running execution.
+- `kage logs <task>` — Open raw logs for the latest run of a task.
+- `kage logs --run <exec_id>` — Open raw logs for a specific run.
 - `kage task list` — List tasks with status and schedule.
 - `kage task show <name>` — Detailed task configuration.
 - `kage connector list` — List all configured connectors.
 - `kage connector setup <type>` — Show setup guide for a connector (discord, slack, telegram).
 - `kage connector poll` — Manually trigger polling for all connectors.
 - `kage doctor` — Diagnose config and environment.
+- `kage migrate install` — Run pending install-time migrations manually.
 - `kage ui` — Open web dashboard.
+
+Connector poll replies are recorded as normal runs. Use `kage runs --source connector_poll` to find them and `kage logs --run <exec_id>` to inspect raw AI CLI output.
+
+Install-time migrations are discovered automatically from `src/kage/migrations/install/`. New migration modules added there are picked up by both `kage migrate install` and `install.sh`.
 
 ## Task File Template (`.kage/tasks/*.md`)
 

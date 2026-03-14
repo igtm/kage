@@ -1,14 +1,13 @@
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 import uvicorn
-import sqlite3
 import webbrowser
 import threading
 import time
 from pathlib import Path
-from .config import KAGE_DB_PATH, get_global_config
+from .config import get_global_config
 from .ai.chat import generate_chat_reply, clean_ai_reply
 
 app = FastAPI(title="kage UI")
@@ -820,9 +819,9 @@ INDEX_HTML = """
             </button>
         </div>
         <nav class="nav-list">
-            <div class="nav-item active" data-section="logs" id="nav-logs" data-label="Execution Logs">
+            <div class="nav-item active" data-section="runs" id="nav-runs" data-label="Runs">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                <span class="nav-text">Execution Logs</span>
+                <span class="nav-text">Runs</span>
             </div>
             <div class="nav-item" data-section="config" id="nav-config" data-label="Settings & Tasks">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -844,7 +843,7 @@ INDEX_HTML = """
 
     <main class="main">
         <header class="header">
-            <div class="header-title" id="page-title">Execution Logs</div>
+            <div class="header-title" id="page-title">Runs</div>
             <div class="header-actions">
                 <a class="github-link" href="https://github.com/igtm/kage" target="_blank" title="GitHub">
                     <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.63 2.29 6.71 5.47 7.8.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.5-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.16-.28-.15-.68-.54-.01-.55.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.54.28-.89.5-1.1-1.78-.21-3.64-.92-3.64-4.08 0-.9.31-1.64.82-2.22-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.85.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.07 2.2-.85 2.2-.85.44 1.12.16 1.95.08 2.16.51.58.82 1.31.82 2.22 0 3.17-1.87 3.87-3.65 4.08.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.47.55.39A8.24 8.24 0 0 0 16 8.2C16 3.67 12.42 0 8 0z"/></svg>
@@ -853,11 +852,11 @@ INDEX_HTML = """
         </header>
 
         <section class="content-area">
-            <!-- Logs Section -->
-            <div id="logs-section" class="section active">
+            <!-- Runs Section -->
+            <div id="runs-section" class="section active">
                 <div class="toolbar">
                     <div class="search-container">
-                        <input type="text" id="log-search" class="search-input" placeholder="Search logs (task name, project, output)...">
+                        <input type="text" id="log-search" class="search-input" placeholder="Search runs (task name, project, summary)...">
                     </div>
                     <select id="log-filter-project" class="filter-select">
                         <option value="ALL">All Projects</option>
@@ -871,6 +870,13 @@ INDEX_HTML = """
                         <option value="FAILED">Failed</option>
                         <option value="RUNNING">Running</option>
                         <option value="ERROR">Error</option>
+                        <option value="STOPPED">Stopped</option>
+                        <option value="TIMEOUT">Timeout</option>
+                    </select>
+                    <select id="log-filter-source" class="filter-select">
+                        <option value="ALL">All Sources</option>
+                        <option value="task">Task</option>
+                        <option value="connector_poll">Connector Poll</option>
                     </select>
                 </div>
                 <div id="logs-container">Loading...</div>
@@ -941,6 +947,7 @@ INDEX_HTML = """
         let allConfigData = null;
         let allConnectorsData = [];
         let autoScrollEnabled = true;
+        let loadedStreams = {};
 
         // Helper: Get project short name (last directory)
         function getProjectShortName(path) {
@@ -971,12 +978,12 @@ INDEX_HTML = """
                 document.getElementById('page-title').textContent = targetNav.querySelector('.nav-text') ? targetNav.querySelector('.nav-text').textContent.trim() : targetNav.textContent.trim();
                 
                 if (section === 'config') fetchConfig();
-                if (section === 'logs') fetchLogs();
+                if (section === 'runs') fetchLogs();
                 if (section === 'chat') fetchChatProviderInfo();
                 if (section === 'connectors') fetchConnectors();
                 
                 if (push) {
-                    const path = section === 'logs' ? '/' : '/' + section;
+                    const path = section === 'runs' ? '/runs' : '/' + section;
                     history.pushState({ section }, '', path);
                 }
             }
@@ -993,16 +1000,16 @@ INDEX_HTML = """
             if (event.state && event.state.section) {
                 navigateTo(event.state.section, false);
             } else {
-                // Default to logs if no state
-                navigateTo('logs', false);
+                // Default to runs if no state
+                navigateTo('runs', false);
             }
         };
 
         // Initial landing
         document.addEventListener('DOMContentLoaded', () => {
             const path = window.location.pathname.substring(1);
-            const validSections = ['logs', 'config', 'chat', 'connectors'];
-            const section = validSections.includes(path) ? path : 'logs';
+            const validSections = ['runs', 'logs', 'config', 'chat', 'connectors'];
+            const section = validSections.includes(path) ? (path === 'logs' ? 'runs' : path) : 'runs';
             
             // Sidebar state
             const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
@@ -1044,12 +1051,12 @@ INDEX_HTML = """
 
         async function fetchLogs() {
             try {
-                const response = await fetch('/api/logs');
+                const response = await fetch('/api/runs');
                 allLogsData = await response.json();
                 updateTaskFilterOptions();
                 renderLogs();
             } catch (error) {
-                document.getElementById('logs-container').innerHTML = '<p style="color:red">Failed to load logs.</p>';
+                document.getElementById('logs-container').innerHTML = '<p style="color:red">Failed to load runs.</p>';
             }
         }
 
@@ -1058,31 +1065,33 @@ INDEX_HTML = """
             const statusFilter = document.getElementById('log-filter-status').value;
             const taskFilter = document.getElementById('log-filter-task').value;
             const projectFilter = document.getElementById('log-filter-project').value;
+            const sourceFilter = document.getElementById('log-filter-source').value;
             const container = document.getElementById('logs-container');
             
             const filtered = allLogsData.filter(log => {
                 const matchesSearch = !searchTerm || 
                     log.task_name.toLowerCase().includes(searchTerm) ||
                     log.project_path.toLowerCase().includes(searchTerm) ||
-                    (log.stdout && log.stdout.toLowerCase().includes(searchTerm)) ||
-                    (log.stderr && log.stderr.toLowerCase().includes(searchTerm));
+                    (log.output_summary && log.output_summary.toLowerCase().includes(searchTerm));
                 
                 const matchesStatus = statusFilter === 'ALL' || log.status === statusFilter;
                 const matchesTask = taskFilter === 'ALL' || log.task_name === taskFilter;
                 const matchesProject = projectFilter === 'ALL' || log.project_path === projectFilter;
+                const matchesSource = sourceFilter === 'ALL' || log.source === sourceFilter;
                 
-                return matchesSearch && matchesStatus && matchesTask && matchesProject;
+                return matchesSearch && matchesStatus && matchesTask && matchesProject && matchesSource;
             });
 
-            const signature = JSON.stringify(filtered);
+            const signature = JSON.stringify(filtered.map(log => [log.id, log.status, log.run_at, log.finished_at, log.output_summary]));
             if (signature === lastLogsSignature) return;
             lastLogsSignature = signature;
 
             if (filtered.length === 0) {
-                container.innerHTML = '<p style="padding: 20px; color: var(--text-dim);">No logs match your filter.</p>';
+                container.innerHTML = '<p style="padding: 20px; color: var(--text-dim);">No runs match your filter.</p>';
                 return;
             }
 
+            loadedStreams = {};
             container.innerHTML = '';
             filtered.forEach(log => {
                 const card = document.createElement('div');
@@ -1094,16 +1103,20 @@ INDEX_HTML = """
                 const start = new Date(log.run_at);
                 const end = log.finished_at ? new Date(log.finished_at) : null;
                 const duration = end ? (end.getTime() - start.getTime()) : (new Date().getTime() - start.getTime());
-                
-                const hasOutput = !!(log.stdout || log.stderr);
-                const lineCount = log.stdout ? log.stdout.split('\\n').length : 0;
+                const summary = log.output_summary ? `<div style="margin-top:8px; color:var(--text-secondary); font-size:0.9rem;">${escapeHtml(log.output_summary)}</div>` : '';
+                const pathHint = log.has_raw_logs ? 'Raw logs available' : 'Legacy DB-backed run';
+                const sourceBadge = log.source === 'connector_poll'
+                    ? `<span class="status-badge" style="background:rgba(10,132,255,0.12); color:#0a84ff; border-color:rgba(10,132,255,0.28);">CONNECTOR</span>`
+                    : '';
 
                 card.innerHTML = `
                     <div class="log-header" onclick="toggleLogBody('${log.id}')">
                         <div class="log-info">
                             <span class="status-badge ${log.status}">${log.status}</span>
+                            ${sourceBadge}
                             <span class="log-name">${escapeHtml(log.task_name)}</span>
                             <span class="log-meta">${start.toLocaleTimeString()} · ${escapeHtml(getProjectShortName(log.project_path))}</span>
+                            ${summary}
                             ${log.status === 'RUNNING' ? `<button class="btn-stop" onclick="event.stopPropagation(); stopTask('${log.id}')">Stop</button>` : ''}
                         </div>
                         <div class="log-meta">
@@ -1113,11 +1126,16 @@ INDEX_HTML = """
                     </div>
                     <div class="log-body" id="body-${log.id}">
                         <div class="terminal-header">
-                            <span>OUTPUT (${lineCount} lines)</span>
-                            <span>ID: ${log.id.substring(0,8)}</span>
+                            <span>RUN ${log.id.substring(0,8)}</span>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <button class="btn run-stream-btn" data-run-id="${log.id}" data-stream="merged" onclick="event.stopPropagation(); loadRunLog('${log.id}', 'merged', this)">merged</button>
+                                <button class="btn run-stream-btn" data-run-id="${log.id}" data-stream="stdout" onclick="event.stopPropagation(); loadRunLog('${log.id}', 'stdout', this)">stdout</button>
+                                <button class="btn run-stream-btn" data-run-id="${log.id}" data-stream="stderr" onclick="event.stopPropagation(); loadRunLog('${log.id}', 'stderr', this)">stderr</button>
+                            </div>
                         </div>
+                        <div style="padding: 0 12px 8px 12px; font-size: 0.8rem; color: var(--text-dim);">Path: <span id="path-${log.id}">${pathHint}</span></div>
                         <div class="terminal" id="term-${log.id}">
-                            ${hasOutput ? formatTerminalOutput(log.stdout, log.stderr) : '<p style="margin:0; color:var(--text-dim)">No output recorded.</p>'}
+                            <p style="margin:0; color:var(--text-dim)">Open a stream to load raw logs.</p>
                         </div>
                     </div>
                 `;
@@ -1125,22 +1143,52 @@ INDEX_HTML = """
             });
         }
 
-        function formatTerminalOutput(stdout, stderr) {
-            let out = "";
-            if (stdout) {
-                const lines = stdout.trim().split('\\n');
-                out += `<div class="lines">` + lines.map((l, i) => `<div><span class="line-numbers">${i+1}</span>${escapeHtml(l)}</div>`).join('') + `</div>`;
+        function formatTerminalOutput(text) {
+            if (!text) {
+                return '<p style="margin:0; color:var(--text-dim)">No output recorded.</p>';
             }
-            if (stderr) {
-                out += `<div style="color:var(--error-text); margin-top: 12px; border-top: 1px solid var(--text-dim); padding-top: 8px;">[STDERR]</div>`;
-                out += `<div style="color:var(--error-text)">${escapeHtml(stderr)}</div>`;
-            }
-            return out;
+
+            const lines = text.replace(/\\n$/, '').split('\\n');
+            return `<div class="lines">` + lines.map((l, i) => `<div><span class="line-numbers">${i+1}</span>${escapeHtml(l)}</div>`).join('') + `</div>`;
         }
 
         function toggleLogBody(id) {
             const card = document.getElementById(`log-${id}`);
             card.classList.toggle('expanded');
+            if (card.classList.contains('expanded') && !loadedStreams[id]) {
+                const defaultBtn = card.querySelector(`.run-stream-btn[data-stream="merged"]`);
+                loadRunLog(id, 'merged', defaultBtn);
+            }
+        }
+
+        async function loadRunLog(id, stream, button) {
+            const terminal = document.getElementById(`term-${id}`);
+            const pathEl = document.getElementById(`path-${id}`);
+            if (!terminal) return;
+
+            document.querySelectorAll(`.run-stream-btn[data-run-id="${id}"]`).forEach((btn) => {
+                btn.style.background = 'var(--bg-card)';
+                btn.style.border = '1px solid var(--border-base)';
+                btn.style.color = 'var(--text-secondary)';
+            });
+            if (button) {
+                button.style.background = 'var(--accent-muted)';
+                button.style.border = '1px solid var(--accent)';
+                button.style.color = 'var(--accent)';
+            }
+
+            terminal.innerHTML = '<p style="margin:0; color:var(--text-dim)">Loading raw logs...</p>';
+            try {
+                const response = await fetch(`/api/runs/${id}/logs?stream=${stream}&lines=400`);
+                const payload = await response.json();
+                loadedStreams[id] = stream;
+                if (pathEl) {
+                    pathEl.textContent = payload.path || 'No file path available';
+                }
+                terminal.innerHTML = formatTerminalOutput(payload.content);
+            } catch (error) {
+                terminal.innerHTML = '<p style="margin:0; color:var(--error-text)">Failed to load raw logs.</p>';
+            }
         }
 
         function updateTaskFilterOptions() {
@@ -1169,6 +1217,7 @@ INDEX_HTML = """
         document.getElementById('log-filter-status').addEventListener('change', renderLogs);
         document.getElementById('log-filter-task').addEventListener('change', renderLogs);
         document.getElementById('log-filter-project').addEventListener('change', renderLogs);
+        document.getElementById('log-filter-source').addEventListener('change', renderLogs);
         document.getElementById('config-filter-project').addEventListener('change', renderConfig);
 
         // Config & Chat (Simplified for current overhaul focus)
@@ -1345,8 +1394,8 @@ INDEX_HTML = """
                     const errorData = await response.json().catch(() => ({}));
                     throw new Error(errorData.error || 'Failed to start task');
                 }
-                // Switch to logs and fetch
-                document.getElementById('nav-logs').click();
+                // Switch to runs and fetch
+                document.getElementById('nav-runs').click();
                 setTimeout(fetchLogs, 500);
             } catch (error) {
                 alert(error.message);
@@ -1356,7 +1405,7 @@ INDEX_HTML = """
         async function stopTask(execId) {
             if (!confirm('Are you sure you want to stop this task?')) return;
             try {
-                const response = await fetch(`/api/executions/${execId}/stop`, {
+                const response = await fetch(`/api/runs/${execId}/stop`, {
                     method: 'POST'
                 });
                 if (!response.ok) throw new Error('Failed to stop task');
@@ -1507,7 +1556,7 @@ INDEX_HTML = """
         // Polling
         fetchLogs();
         setInterval(() => {
-            if (document.getElementById('logs-section').classList.contains('active')) {
+            if (document.getElementById('runs-section').classList.contains('active')) {
                 fetchLogs();
             }
         }, 5000);
@@ -1653,9 +1702,12 @@ chat_id = "..."
                     const date = new Date(entry.timestamp * 1000).toLocaleString();
                     const isAssistant = entry.role.toLowerCase() === 'assistant';
                     const roleClass = isAssistant ? 'assistant' : 'user';
+                    const runLink = entry.run_id
+                        ? `<button class="btn" style="margin-left:8px; font-size:0.75rem; padding:4px 8px;" onclick="openRunFromHistory('${escapeHtml(entry.run_id)}')">View run</button>`
+                        : '';
                     hHtml += `
                         <div style="margin-bottom: 4px; font-size: 0.8rem; color: var(--text-dim); text-align: ${isAssistant ? 'left' : 'right'}">
-                            ${escapeHtml(entry.role)} · ${date}
+                            ${escapeHtml(entry.role)} · ${date}${runLink}
                         </div>
                         <div class="message ${roleClass}">${renderMarkdown(entry.content)}</div>
                     `;
@@ -1666,10 +1718,23 @@ chat_id = "..."
                 historyContainer.innerHTML = '<div style="color:var(--error-text);">Failed to load history</div>';
             }
         }
+
+        async function openRunFromHistory(runId) {
+            navigateTo('runs');
+            await fetchLogs();
+            const card = document.getElementById(`log-${runId}`);
+            if (!card) return;
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            if (!card.classList.contains('expanded')) {
+                toggleLogBody(runId);
+            }
+        }
     </script>
 </body>
 </html>
 """
+
+
 class ChatRequest(BaseModel):
     message: str
 
@@ -1688,6 +1753,7 @@ class ToggleTaskRequest(BaseModel):
 
 
 @app.get("/", response_class=HTMLResponse)
+@app.get("/runs", response_class=HTMLResponse)
 @app.get("/logs", response_class=HTMLResponse)
 @app.get("/config", response_class=HTMLResponse)
 @app.get("/chat", response_class=HTMLResponse)
@@ -1695,30 +1761,62 @@ def root():
     return INDEX_HTML
 
 
+@app.get("/api/runs")
+def get_runs(limit: int = 50, source: str | None = None):
+    from .runs import list_runs
+
+    return [run.to_dict() for run in list_runs(limit=limit, source=source)]
+
+
 @app.get("/api/logs")
-def get_logs():
-    if not KAGE_DB_PATH.exists():
-        return []
-    conn = sqlite3.connect(KAGE_DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, project_path, task_name, run_at, status, stdout, stderr, finished_at FROM executions ORDER BY run_at DESC LIMIT 50"
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return [
-        {
-            "id": r[0],
-            "project_path": r[1],
-            "task_name": r[2],
-            "run_at": r[3],
-            "status": r[4],
-            "stdout": r[5],
-            "stderr": r[6],
-            "finished_at": r[7],
-        }
-        for r in rows
-    ]
+def get_logs(limit: int = 50, source: str | None = None):
+    return get_runs(limit=limit, source=source)
+
+
+@app.get("/api/runs/{exec_id}")
+def get_run_api(exec_id: str):
+    from .runs import get_run, load_run_metadata
+
+    run = get_run(exec_id)
+    if not run:
+        return JSONResponse(status_code=404, content={"error": "Run not found."})
+    payload = run.to_dict()
+    payload["metadata"] = load_run_metadata(run)
+    return payload
+
+
+@app.get("/api/runs/{exec_id}/logs")
+def get_run_logs(
+    exec_id: str,
+    stream: str = "merged",
+    lines: int | None = None,
+    since: str | None = None,
+    format: str = "json",
+):
+    from .runs import get_run, load_log_text, log_path_for_stream
+
+    if stream not in {"merged", "stdout", "stderr"}:
+        return JSONResponse(status_code=400, content={"error": "Invalid stream."})
+
+    run = get_run(exec_id)
+    if not run:
+        return JSONResponse(status_code=404, content={"error": "Run not found."})
+
+    try:
+        content = load_log_text(run, stream=stream, lines=lines, since=since)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    path = log_path_for_stream(run, stream)
+
+    payload = {
+        "run": run.to_dict(),
+        "stream": stream,
+        "path": str(path) if path else None,
+        "content": content,
+    }
+    if format == "text":
+        return PlainTextResponse(content)
+    return payload
 
 
 @app.get("/api/config")
@@ -1738,8 +1836,6 @@ def get_config_api():
         tz = zoneinfo.ZoneInfo(tz_name)
     except Exception:
         tz = dt_timezone.utc
-    now = datetime.now(tz)
-
     all_tasks = []
     for proj_dir in projects:
         tasks = load_project_tasks(proj_dir)
@@ -1753,7 +1849,7 @@ def get_config_api():
                     task_tz = zoneinfo.ZoneInfo(t.timezone)
                 except Exception:
                     pass
-            
+
             task_now = datetime.now(task_tz)
             next_run_str = ""
             try:
@@ -1834,12 +1930,17 @@ def run_task_now(req: RunTaskRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/executions/{exec_id}/stop")
-def stop_execution_api(exec_id: str):
+@app.post("/api/runs/{exec_id}/stop")
+def stop_run_api(exec_id: str):
     from .executor import stop_execution
 
     stop_execution(exec_id)
     return {"message": "Stop signal sent."}
+
+
+@app.post("/api/executions/{exec_id}/stop")
+def stop_execution_api(exec_id: str):
+    return stop_run_api(exec_id)
 
 
 @app.post("/api/tasks/toggle")
@@ -1883,9 +1984,8 @@ def toggle_task(req: ToggleTaskRequest):
 
 @app.post("/api/chat")
 def handle_chat(req: ChatRequest):
-    from .ai.chat import generate_chat_reply, clean_ai_reply
     from fastapi.responses import JSONResponse
-    
+
     try:
         reply_data = generate_chat_reply(req.message)
         # Clean thinking tags for the UI too
@@ -1907,6 +2007,7 @@ def start_ui(host: str = "127.0.0.1", port: int = 8080):
     threading.Thread(target=open_browser, args=(url,), daemon=True).start()
     uvicorn.run(app, host=host, port=port)
 
+
 @app.get("/api/connectors")
 def get_connectors():
     config = get_global_config()
@@ -1918,13 +2019,15 @@ def get_connectors():
         res.append({"name": name, "config": masked_c})
     return res
 
+
 @app.get("/api/connectors/{name}/history")
 def get_connector_history(name: str):
     import json
+
     history_file = Path.home() / ".kage" / "connectors" / f"{name}_history.jsonl"
     if not history_file.exists():
         return []
-    
+
     entries = []
     try:
         with history_file.open("r", encoding="utf-8") as f:

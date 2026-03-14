@@ -1,3 +1,4 @@
+import io
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,9 @@ def mock_executor_env(tmp_path: Path, mocker):
         },
     )
     mocker.patch("kage.executor.get_global_config", return_value=config)
-    mocker.patch("kage.config.get_system_prompt", return_value="System prompt {thinking_tag}")
+    mocker.patch(
+        "kage.config.get_system_prompt", return_value="System prompt {thinking_tag}"
+    )
     mocker.patch("kage.executor.sys.stdin.isatty", return_value=False)
     mocker.patch("kage.db.init_db")
     mocker.patch("kage.executor.start_execution", return_value="exec-1")
@@ -46,13 +49,16 @@ def mock_executor_env(tmp_path: Path, mocker):
     mocker.patch("kage.executor.shutil.which", side_effect=lambda cmd, path=None: cmd)
     mocker.patch("kage.executor.set_execution_pid")
     mocker.patch("kage.executor.KAGE_GLOBAL_DIR", tmp_path / ".global")
+    mocker.patch("kage.runs.KAGE_LOGS_DIR", tmp_path / ".logs")
 
 
 def test_execute_task_uses_relative_working_dir_from_task_file(
     tmp_path: Path, mock_executor_env, mocker
 ):
     popen = mocker.patch("kage.executor.subprocess.Popen")
-    popen.return_value.communicate.return_value = ("ok", "")
+    popen.return_value.stdout = io.StringIO("ok")
+    popen.return_value.stderr = io.StringIO("")
+    popen.return_value.wait.return_value = 0
     popen.return_value.returncode = 0
     popen.return_value.pid = 4242
 
@@ -75,16 +81,23 @@ def test_execute_task_uses_relative_working_dir_from_task_file(
 
     cmd = popen.call_args.args[0]
     assert Path(popen.call_args.kwargs["cwd"]) == (project_dir / "workspace").resolve()
-    assert str(
-        (project_dir / ".kage" / "memory" / "Nightly_Research" / "task.json").resolve()
-    ) in cmd[-1]
+    assert (
+        str(
+            (
+                project_dir / ".kage" / "memory" / "Nightly_Research" / "task.json"
+            ).resolve()
+        )
+        in cmd[-1]
+    )
 
 
 def test_execute_task_uses_absolute_working_dir_as_is(
     tmp_path: Path, mock_executor_env, mocker
 ):
     popen = mocker.patch("kage.executor.subprocess.Popen")
-    popen.return_value.communicate.return_value = ("ok", "")
+    popen.return_value.stdout = io.StringIO("ok")
+    popen.return_value.stderr = io.StringIO("")
+    popen.return_value.wait.return_value = 0
     popen.return_value.returncode = 0
     popen.return_value.pid = 4242
 

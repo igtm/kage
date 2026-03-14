@@ -1,45 +1,26 @@
 import json
 import urllib.request
 import urllib.error
-from pathlib import Path
 from datetime import datetime, timezone
-from ..ai.chat import generate_chat_reply, clean_ai_reply
+from ..ai.chat import clean_ai_reply, generate_logged_chat_reply
+from ..runs import write_run_metadata
 from .base import BaseConnector
+
 
 class DiscordConnector(BaseConnector):
     def __init__(self, name: str, config):
         super().__init__(name, config)
-        self.state_file = Path.home() / ".kage" / "connectors" / f"{self.name}_state.json"
-        self.history_file = Path.home() / ".kage" / "connectors" / f"{self.name}_history.jsonl"
-        
-    def _load_state(self):
-        if self.state_file.exists():
-            try:
-                return json.loads(self.state_file.read_text())
-            except Exception:
-                return {}
-        return {}
-
-    def _save_state(self, state):
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        self.state_file.write_text(json.dumps(state, ensure_ascii=False))
-
-    def _log_history(self, role: str, content: str):
-        if not content:
-            return
-        self.history_file.parent.mkdir(parents=True, exist_ok=True)
-        import time
-        entry = {"timestamp": int(time.time()), "role": role, "content": content}
-        with self.history_file.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def _get_bot_identity(self):
         """Fetch bot's own user id and username using /users/@me."""
         url = "https://discord.com/api/v10/users/@me"
-        req = urllib.request.Request(url, headers={
-            "Authorization": f"Bot {self.config.bot_token}",
-            "User-Agent": "kage-connector"
-        })
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bot {self.config.bot_token}",
+                "User-Agent": "kage-connector",
+            },
+        )
         try:
             with urllib.request.urlopen(req) as response:
                 data = json.loads(response.read().decode())
@@ -58,10 +39,13 @@ class DiscordConnector(BaseConnector):
         limit = max(1, min(100, self.config.history_limit))
         url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages?limit={limit}"
 
-        req = urllib.request.Request(url, headers={
-            "Authorization": f"Bot {self.config.bot_token}",
-            "User-Agent": "kage-connector"
-        })
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bot {self.config.bot_token}",
+                "User-Agent": "kage-connector",
+            },
+        )
 
         try:
             with urllib.request.urlopen(req) as response:
@@ -153,20 +137,48 @@ class DiscordConnector(BaseConnector):
         # Process the single target message (if any)
         if target_msg:
             content = target_msg.get("content", "").strip()
-            try:
-                prompt_with_history = f"{identity_context}[Recent Chat History]\n{history_context}\n\n[Current Instruction]\n{content}"
-                self._log_history("User", content)
-                reply_data = generate_chat_reply(
-                    prompt_with_history, 
-                    system_prompt=self.config.system_prompt,
-                    working_dir=self.config.working_dir
-                )
-                reply_text = reply_data.get("stdout", "")
-            except Exception as e:
-                reply_text = f"Error generating reply: {e}"
-
+            prompt_with_history = f"{identity_context}[Recent Chat History]\n{history_context}\n\n[Current Instruction]\n{content}"
+            connector_meta = {
+                "connector": {
+                    "name": self.name,
+                    "type": self.config.type,
+                    "channel_id": str(self.config.channel_id),
+                    "conversation_id": str(self.config.channel_id),
+                    "source_message_id": str(target_msg.get("id", "")),
+                    "source_user_id": str(target_msg.get("author", {}).get("id", "")),
+                    "source_user_name": target_msg.get("author", {}).get(
+                        "username", ""
+                    ),
+                    "input_message": content,
+                    "history_snapshot": history_context,
+                }
+            }
+            reply_data = generate_logged_chat_reply(
+                prompt_with_history,
+                system_prompt=self.config.system_prompt,
+                working_dir=self.config.working_dir,
+                run_name=self._build_run_name(),
+                metadata=connector_meta,
+            )
+            run_id = reply_data.get("run_id")
+            reply_text = reply_data.get("stdout", "")
+            if reply_data.get("returncode") != 0 and not reply_text:
+                err_text = reply_data.get("stderr") or "unknown error"
+                reply_text = f"Error generating reply: {err_text}"
             final_reply_text = clean_ai_reply(reply_text)
-            last_reply_id = self._post_reply(final_reply_text)
+            self._log_history("User", content, run_id=run_id)
+            last_reply_id = self._post_reply(final_reply_text, run_id=run_id)
+            if run_id:
+                write_run_metadata(
+                    run_id,
+                    {
+                        "connector": {
+                            **connector_meta["connector"],
+                            "posted_reply_id": last_reply_id,
+                            "posted_reply_text": final_reply_text,
+                        }
+                    },
+                )
 
             # Advance past bot's own reply to prevent self-reply on next poll
             if last_reply_id:
@@ -178,13 +190,13 @@ class DiscordConnector(BaseConnector):
             return
         self._post_reply(clean_ai_reply(text))
 
-    def _post_reply(self, text) -> str | None:
+    def _post_reply(self, text, run_id: str | None = None) -> str | None:
         """Post a reply, splitting if needed. Returns the last posted message ID."""
         if not text:
             return None
-            
-        self._log_history("Assistant", text)
-        
+
+        self._log_history("Assistant", text, run_id=run_id)
+
         # Split into chunks respecting Discord's 2000 char limit
         chunks = self._split_message(text, max_len=1950)
         last_id = None
@@ -200,23 +212,23 @@ class DiscordConnector(BaseConnector):
         Tries to split at newline boundaries when possible."""
         if len(text) <= max_len:
             return [text]
-        
+
         chunks = []
         remaining = text
         while remaining:
             if len(remaining) <= max_len:
                 chunks.append(remaining)
                 break
-            
+
             # Try to find a newline to split at
             split_at = remaining.rfind("\n", 0, max_len)
             if split_at <= 0:
                 # No good newline found, split at max_len
                 split_at = max_len
-            
+
             chunks.append(remaining[:split_at])
             remaining = remaining[split_at:].lstrip("\n")
-        
+
         return chunks
 
     def _send_chunk(self, text: str) -> str | None:
@@ -225,11 +237,16 @@ class DiscordConnector(BaseConnector):
         payload = {"content": text}
 
         data = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=data, headers={
-            "Authorization": f"Bot {self.config.bot_token}",
-            "Content-Type": "application/json",
-            "User-Agent": "kage-connector"
-        }, method="POST")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Authorization": f"Bot {self.config.bot_token}",
+                "Content-Type": "application/json",
+                "User-Agent": "kage-connector",
+            },
+            method="POST",
+        )
 
         try:
             with urllib.request.urlopen(req) as response:
@@ -237,4 +254,3 @@ class DiscordConnector(BaseConnector):
                 return res_data.get("id")
         except Exception:
             return None
-

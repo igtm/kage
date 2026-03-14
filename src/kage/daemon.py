@@ -194,7 +194,7 @@ def _setup_macos_launchd():
     from .config import get_global_config
 
     cfg = get_global_config()
-    
+
     # Use macOS specific interval (seconds) if provided, otherwise fallback to minutes-based conversion
     if cfg.darwin_launchd_interval_seconds is not None:
         # Safety: Must be at least 15 seconds

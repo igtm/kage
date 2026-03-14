@@ -1,3 +1,4 @@
+import io
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -18,13 +19,13 @@ from kage.parser import TaskDef
 
 class DummyProc:
     def __init__(self, stdout="ok", stderr="", returncode=0, pid=4242):
-        self._stdout = stdout
-        self._stderr = stderr
+        self.stdout = io.StringIO(stdout)
+        self.stderr = io.StringIO(stderr)
         self.returncode = returncode
         self.pid = pid
 
-    def communicate(self, timeout=None):
-        return self._stdout, self._stderr
+    def wait(self, timeout=None):
+        return self.returncode
 
 
 @pytest.fixture
@@ -57,7 +58,9 @@ def executor_config():
                 ]
             ),
             "custom_cli": CommandDef(template=["custom_cli", "{prompt}"]),
-            "opencode": CommandDef(template=["opencode", "run", "{model_args}", "{prompt}"]),
+            "opencode": CommandDef(
+                template=["opencode", "run", "{model_args}", "{prompt}"]
+            ),
         },
         providers={
             "codex": ProviderConfig(
@@ -89,7 +92,9 @@ def executor_config():
 @pytest.fixture
 def mock_executor_env(tmp_path: Path, executor_config, mocker):
     mocker.patch("kage.executor.get_global_config", return_value=executor_config)
-    mocker.patch("kage.config.get_system_prompt", return_value="System prompt {thinking_tag}")
+    mocker.patch(
+        "kage.config.get_system_prompt", return_value="System prompt {thinking_tag}"
+    )
     mocker.patch("kage.executor.sys.stdin.isatty", return_value=False)
     mocker.patch("kage.db.init_db")
     mocker.patch("kage.executor.start_execution", return_value="exec-1")
@@ -100,6 +105,7 @@ def mock_executor_env(tmp_path: Path, executor_config, mocker):
     mocker.patch("kage.executor.shutil.which", side_effect=lambda cmd, path=None: cmd)
     mocker.patch("kage.executor.set_execution_pid")
     mocker.patch("kage.executor.KAGE_GLOBAL_DIR", tmp_path / ".global")
+    mocker.patch("kage.runs.KAGE_LOGS_DIR", tmp_path / ".logs")
 
 
 def test_execute_shell_command_with_custom_shell(
@@ -220,8 +226,12 @@ def test_execute_provider_with_jq(tmp_path: Path, mock_executor_env, mocker):
 
 
 def test_render_command_template_inserts_model_before_prompt():
-    provider = ProviderConfig(command="codex", model="gpt-5-codex", model_flag="--model")
-    cmd = render_command_template(["codex", "exec", "{prompt}"], "hello", provider=provider)
+    provider = ProviderConfig(
+        command="codex", model="gpt-5-codex", model_flag="--model"
+    )
+    cmd = render_command_template(
+        ["codex", "exec", "{prompt}"], "hello", provider=provider
+    )
 
     assert cmd == ["codex", "exec", "--model", "gpt-5-codex", "hello"]
 

@@ -8,6 +8,7 @@ KAGE_GLOBAL_DIR = Path.home() / ".kage"
 KAGE_CONFIG_PATH = KAGE_GLOBAL_DIR / "config.toml"
 KAGE_PROJECTS_LIST = KAGE_GLOBAL_DIR / "projects.list"
 KAGE_DB_PATH = KAGE_GLOBAL_DIR / "kage.db"
+KAGE_LOGS_DIR = KAGE_GLOBAL_DIR / "logs"
 
 
 class CommandDef(BaseModel):
@@ -37,6 +38,7 @@ class DiscordConnectorConfig(BaseModel):
     system_prompt: Optional[str] = None
     working_dir: Optional[str] = None
 
+
 class SlackConnectorConfig(BaseModel):
     type: str = "slack"
     poll: bool = False
@@ -56,6 +58,7 @@ class SlackConnectorConfig(BaseModel):
     max_age_seconds: int = 600
     system_prompt: Optional[str] = None
 
+
 class TelegramConnectorConfig(BaseModel):
     type: str = "telegram"
     poll: bool = False
@@ -67,6 +70,7 @@ class TelegramConnectorConfig(BaseModel):
     system_prompt: Optional[str] = None
     working_dir: Optional[str] = None
 
+
 class GlobalConfig(BaseModel):
     model_config = {"extra": "ignore"}
     working_dir: Optional[str] = None
@@ -75,12 +79,17 @@ class GlobalConfig(BaseModel):
     ui_port: int = 8484
     ui_host: str = "127.0.0.1"
     cron_interval_minutes: int = 1  # cron/launchd の起動間隔（分単位）
-    darwin_launchd_interval_seconds: Optional[int] = None  # macOS launchd 専用: 秒単位の間隔
-    darwin_launchd_keep_alive: bool = False  # macOS launchd 専用: KeepAlive を有効にするか
+    darwin_launchd_interval_seconds: Optional[int] = (
+        None  # macOS launchd 専用: 秒単位の間隔
+    )
+    darwin_launchd_keep_alive: bool = (
+        False  # macOS launchd 専用: KeepAlive を有効にするか
+    )
     timezone: str = "UTC"  # cron式のタイムゾーン評価基準
     env_path: Optional[str] = None  # cron実行時に復元するPATH環境変数
     system_prompt: str = ""  # デフォルトのシステムプロンプト
     memory_max_entries: int = 5  # プロンプトに注入する直近メモリの最大件数
+    run_retention_count: int = 100  # 保持する実行履歴数
     commands: dict[str, CommandDef] = {}
     providers: dict[str, ProviderConfig] = {}
     connectors: dict[str, dict] = {}
@@ -355,6 +364,7 @@ def setup_global():
     ユーザーが上書きしたい場合のみ ~/.kage/config.toml を作成する。
     """
     KAGE_GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
+    KAGE_LOGS_DIR.mkdir(parents=True, exist_ok=True)
     if not KAGE_PROJECTS_LIST.exists():
         KAGE_PROJECTS_LIST.touch()
 
@@ -379,9 +389,10 @@ def setup_local(target_dir: Path = None):
                 lang = "ja"
         except Exception:
             pass
-        
+
         # Check env var for overriding locale (useful for tests or specific environments)
         import os
+
         if os.environ.get("LANG", "").startswith("ja"):
             lang = "ja"
 

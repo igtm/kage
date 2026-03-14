@@ -2,45 +2,27 @@ import json
 import urllib.request
 import urllib.parse
 import urllib.error
-from pathlib import Path
 from datetime import datetime, timezone
-from ..ai.chat import generate_chat_reply, clean_ai_reply
+from ..ai.chat import clean_ai_reply, generate_logged_chat_reply
+from ..runs import write_run_metadata
 from .base import BaseConnector
+
 
 class SlackConnector(BaseConnector):
     def __init__(self, name: str, config):
         super().__init__(name, config)
-        self.state_file = Path.home() / ".kage" / "connectors" / f"{self.name}_state.json"
-        self.history_file = Path.home() / ".kage" / "connectors" / f"{self.name}_history.jsonl"
-        
-    def _load_state(self):
-        if self.state_file.exists():
-            try:
-                return json.loads(self.state_file.read_text())
-            except Exception:
-                return {}
-        return {}
-
-    def _save_state(self, state):
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        self.state_file.write_text(json.dumps(state, ensure_ascii=False))
-
-    def _log_history(self, role: str, content: str):
-        if not content:
-            return
-        self.history_file.parent.mkdir(parents=True, exist_ok=True)
-        import time
-        entry = {"timestamp": int(time.time()), "role": role, "content": content}
-        with self.history_file.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def _get_bot_identity(self):
         """Fetch bot's own user_id and name using auth.test."""
         url = "https://slack.com/api/auth.test"
-        req = urllib.request.Request(url, headers={
-            "Authorization": f"Bearer {self.config.bot_token}",
-            "User-Agent": "kage-connector"
-        }, method="POST")
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {self.config.bot_token}",
+                "User-Agent": "kage-connector",
+            },
+            method="POST",
+        )
         try:
             with urllib.request.urlopen(req) as response:
                 data = json.loads(response.read().decode())
@@ -62,10 +44,13 @@ class SlackConnector(BaseConnector):
         limit = max(1, min(100, self.config.history_limit))
         url = f"https://slack.com/api/conversations.history?channel={self.config.channel_id}&limit={limit}&oldest={last_ts}"
 
-        req = urllib.request.Request(url, headers={
-            "Authorization": f"Bearer {self.config.bot_token}",
-            "User-Agent": "kage-connector"
-        })
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {self.config.bot_token}",
+                "User-Agent": "kage-connector",
+            },
+        )
 
         try:
             with urllib.request.urlopen(req) as response:
@@ -90,7 +75,9 @@ class SlackConnector(BaseConnector):
 
         # Slack returns newest first. Sort oldest to newest for context building.
         # Check if the absolutely latest message in the channel is from a bot.
-        if messages and ("bot_id" in messages[0] or messages[0].get("subtype") == "bot_message"):
+        if messages and (
+            "bot_id" in messages[0] or messages[0].get("subtype") == "bot_message"
+        ):
             # If the latest message is a bot, skip processing to avoid double-reply or loops.
             # Still update state so we don't fetch these same messages again.
             state["last_ts"] = messages[0]["ts"]
@@ -159,20 +146,46 @@ class SlackConnector(BaseConnector):
         # Process the single target message (if any)
         if target_msg:
             content = target_msg.get("text", "").strip()
-            try:
-                prompt_with_history = f"{identity_context}[Recent Chat History]\n{history_context}\n\n[Current Instruction]\n{content}"
-                self._log_history("User", content)
-                reply_data = generate_chat_reply(
-                    prompt_with_history, 
-                    system_prompt=self.config.system_prompt,
-                    working_dir=self.config.working_dir
-                )
-                reply_text = reply_data.get("stdout", "")
-            except Exception as e:
-                reply_text = f"Error generating reply: {e}"
-
+            prompt_with_history = f"{identity_context}[Recent Chat History]\n{history_context}\n\n[Current Instruction]\n{content}"
+            connector_meta = {
+                "connector": {
+                    "name": self.name,
+                    "type": self.config.type,
+                    "channel_id": str(self.config.channel_id),
+                    "conversation_id": str(self.config.channel_id),
+                    "source_message_id": str(target_msg.get("ts", "")),
+                    "source_user_id": str(target_msg.get("user", "")),
+                    "source_user_name": str(target_msg.get("user", "")),
+                    "input_message": content,
+                    "history_snapshot": history_context,
+                }
+            }
+            reply_data = generate_logged_chat_reply(
+                prompt_with_history,
+                system_prompt=self.config.system_prompt,
+                working_dir=self.config.working_dir,
+                run_name=self._build_run_name(),
+                metadata=connector_meta,
+            )
+            run_id = reply_data.get("run_id")
+            reply_text = reply_data.get("stdout", "")
+            if reply_data.get("returncode") != 0 and not reply_text:
+                err_text = reply_data.get("stderr") or "unknown error"
+                reply_text = f"Error generating reply: {err_text}"
             final_reply_text = clean_ai_reply(reply_text)
-            last_reply_ts = self._post_reply(final_reply_text)
+            self._log_history("User", content, run_id=run_id)
+            last_reply_ts = self._post_reply(final_reply_text, run_id=run_id)
+            if run_id:
+                write_run_metadata(
+                    run_id,
+                    {
+                        "connector": {
+                            **connector_meta["connector"],
+                            "posted_reply_id": last_reply_ts,
+                            "posted_reply_text": final_reply_text,
+                        }
+                    },
+                )
 
             if last_reply_ts:
                 state["last_ts"] = last_reply_ts
@@ -184,13 +197,13 @@ class SlackConnector(BaseConnector):
         # Even for automated notifications, we clean if someone accidentally used tags
         self._post_reply(clean_ai_reply(text))
 
-    def _post_reply(self, text) -> str | None:
+    def _post_reply(self, text, run_id: str | None = None) -> str | None:
         """Post a reply, splitting if needed. Returns the last posted message ts."""
         if not text:
             return None
-            
-        self._log_history("Assistant", text)
-        
+
+        self._log_history("Assistant", text, run_id=run_id)
+
         # Split into chunks respecting Slack's limit
         chunks = self._split_message(text, max_len=3000)
         last_ts = None
@@ -205,37 +218,39 @@ class SlackConnector(BaseConnector):
         """Split a message into chunks that fit within Slack's character limit."""
         if len(text) <= max_len:
             return [text]
-        
+
         chunks = []
         remaining = text
         while remaining:
             if len(remaining) <= max_len:
                 chunks.append(remaining)
                 break
-            
+
             split_at = remaining.rfind("\n", 0, max_len)
             if split_at <= 0:
                 split_at = max_len
-            
+
             chunks.append(remaining[:split_at])
             remaining = remaining[split_at:].lstrip("\n")
-        
+
         return chunks
 
     def _send_chunk(self, text: str) -> str | None:
         """Send a single message chunk to Slack. Returns the posted message ts."""
         url = "https://slack.com/api/chat.postMessage"
-        payload = {
-            "channel": self.config.channel_id,
-            "text": text
-        }
+        payload = {"channel": self.config.channel_id, "text": text}
 
         data = json.dumps(payload).encode()
-        req = urllib.request.Request(url, data=data, headers={
-            "Authorization": f"Bearer {self.config.bot_token}",
-            "Content-Type": "application/json",
-            "User-Agent": "kage-connector"
-        }, method="POST")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self.config.bot_token}",
+                "Content-Type": "application/json",
+                "User-Agent": "kage-connector",
+            },
+            method="POST",
+        )
 
         try:
             with urllib.request.urlopen(req) as response:

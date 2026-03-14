@@ -34,7 +34,7 @@
     - **時間枠制限**: `allowed_hours: "9-17"`, `denied_hours: "12"` のように実行時間を制限。
 - **Markdown 本位**: YAML front matter を持つシンプルな Markdown ファイルでタスクを定義。
 - **コネクター**: Discord/Slack/Telegram との連携。タスク通知は常に有効。双方向チャットは `poll = true` で有効化（⚠️ チャンネルの参加者にPC上のAIへのアクセスを許可します）。
-- **思考プロセスの隔離**: AIエージェントの推論過程を `<think>` タグで隔離し、通知やログから自動的に除外してクリーンな結果のみを表示します。
+- **思考プロセスの隔離**: AIエージェントの推論過程を `<think>` タグで隔離し、通知・summary・整形済み出力では除外します。`kage logs` では調査用に raw stream をそのまま確認できます。
 - **多層的な設定**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > デフォルト。
 - **Webダッシュボード**: 実行履歴、タスク管理、AIチャットを一箇所で提供。
 
@@ -47,6 +47,8 @@
 ```bash
 curl -sSL https://raw.githubusercontent.com/igtm/kage/main/install.sh | bash
 ```
+
+installer は `kage` 更新後に pending な install-time migration も自動実行します。
 
 このリポジトリの skill は次のコマンドでも追加できます：
 ```bash
@@ -222,23 +224,35 @@ shell: "bash"
 | コマンド | 説明 |
 |---------|-------------|
 | `kage onboard` | グローバルセットアップ |
-| `kage cron install` | システムスケジューラーに登録 |
-| `kage cron status` | バックグラウンド実行状態の確認 |
-### macOS launchd 独自設定
-macOS では `cron` の代わりに `launchd` が使用されます。`config.toml` で以下の独自設定が可能です：
-
-- `darwin_launchd_interval_seconds`: 起動間隔を秒単位で指定（最小 `15`）。
-- `darwin_launchd_keep_alive`: `true` に設定すると、プロセスを常駐させます。
 | `kage init` | 現在のディレクトリに kage を初期化 |
 | `kage run` | スケジュール済みタスクを手動トリガー |
+| `kage runs` | 実行履歴を grep しやすい 1 行形式で表示 |
+| `kage runs show <exec_id>` | 実行メタデータ、状態、ログパスを表示 |
+| `kage runs stop <exec_id>` | 実行中の run を停止 |
+| `kage logs <task>` | task の最新 run の生ログを開く |
+| `kage logs --run <exec_id>` | 特定 run の生ログを開く |
+| `kage cron install` | システムスケジューラーに登録 |
+| `kage cron status` | バックグラウンド実行状態の確認 |
 | `kage task list` | タスク一覧を表示 |
 | `kage task show <name>` | 詳細設定を表示 |
 | `kage connector list` | 設定済みのコネクター一覧を表示 |
 | `kage connector setup <type>` | コネクター（discord, slack, telegram）のセットアップガイドを表示 |
 | `kage connector poll` | `poll = true` のコネクターを即座にポーリング |
+| `kage migrate install` | pending な install-time migration を手動実行 |
 | `kage doctor` | 設定と環境の診断 |
 | `kage skill` | エージェントの指針を表示 |
 | `kage ui` | Webダッシュボードを開く |
+### macOS launchd 独自設定
+macOS では `cron` の代わりに `launchd` が使用されます。`config.toml` で以下の独自設定が可能です：
+
+- `darwin_launchd_interval_seconds`: 起動間隔を秒単位で指定（最小 `15`）。
+- `darwin_launchd_keep_alive`: `true` に設定すると、プロセスを常駐させます。
+
+`kage runs` は実行履歴ビュー、`kage logs` は run ごとの raw output viewer です。生ログ本体は `stdout.log`, `stderr.log`, `events.jsonl` として保持されます。
+
+connector の `poll` 返信も同じ run 履歴に保存されます。`kage runs --source connector_poll` で絞り込み、`kage logs --run <exec_id>` で AI CLI の raw output を確認できます。
+
+install-time migration は `src/kage/migrations/install/` 配下の module を自動検知して実行します。今後 migration を追加した場合も、`kage migrate install` と `install.sh` から同じルールで処理されます。
 
 ## 設定ファイル
 

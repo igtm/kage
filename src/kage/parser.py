@@ -37,7 +37,8 @@ class TaskDef(BaseModel):
         default=None, description="実行を禁止する時間帯（例: '0-5,12'）"
     )
     notify_connectors: Optional[list[str]] = pydantic.Field(
-        default=None, description="実行完了時に結果を通知するコネクター名のリスト（例: ['discord']）"
+        default=None,
+        description="実行完了時に結果を通知するコネクター名のリスト（例: ['discord']）",
     )
     command: Optional[str] = pydantic.Field(
         default=None, description="AIではなく通常のシェルコマンドを実行する場合"
@@ -74,7 +75,11 @@ def _normalize_notify_connectors(value) -> Optional[list[str]]:
             try:
                 parsed = json.loads(stripped)
             except json.JSONDecodeError:
-                return [v.strip().strip("\"'") for v in inner.split(",") if v.strip().strip("\"'")]
+                return [
+                    v.strip().strip("\"'")
+                    for v in inner.split(",")
+                    if v.strip().strip("\"'")
+                ]
             else:
                 if isinstance(parsed, list):
                     if not all(isinstance(v, str) for v in parsed):
@@ -115,11 +120,14 @@ def _parse_task_dict(data: dict) -> Optional[TaskDef]:
             data["notify_connectors"] = _normalize_notify_connectors(val)
 
         if "notify_connectors" in data:
-            data["notify_connectors"] = _normalize_notify_connectors(data["notify_connectors"])
+            data["notify_connectors"] = _normalize_notify_connectors(
+                data["notify_connectors"]
+            )
 
         return TaskDef(**data)
-    except Exception as e:
+    except Exception:
         import traceback
+
         traceback.print_exc()
         return None
 
@@ -199,7 +207,9 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
 
         prompt = body_prompt.strip() if body_prompt else None
         if prompt and command:
-            print(f"Markdown task cannot define both body prompt and command: {filepath}")
+            print(
+                f"Markdown task cannot define both body prompt and command: {filepath}"
+            )
             return []
 
         if not prompt and not command:
@@ -213,7 +223,9 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
             "mode": fm.get("mode", "continuous"),
             "concurrency_policy": fm.get("concurrency_policy", "allow"),
             "timezone": fm.get("timezone"),
-            "timeout_minutes": int(fm.get("timeout_minutes")) if fm.get("timeout_minutes") else None,
+            "timeout_minutes": int(fm.get("timeout_minutes"))
+            if fm.get("timeout_minutes")
+            else None,
             "allowed_hours": fm.get("allowed_hours"),
             "denied_hours": fm.get("denied_hours"),
             "command": command,
@@ -234,6 +246,7 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
     # TOML
     try:
         import tomlkit
+
         with open(filepath, "r", encoding="utf-8") as f:
             doc = tomlkit.load(f)
         data = doc.unwrap() if hasattr(doc, "unwrap") else dict(doc)
@@ -252,7 +265,12 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
 
     # フォーマット 2: [task_xxx] セクション群
     for key, val in data.items():
-        if key.startswith("task") and isinstance(val, dict) and "name" in val and "cron" in val:
+        if (
+            key.startswith("task")
+            and isinstance(val, dict)
+            and "name" in val
+            and "cron" in val
+        ):
             t = _parse_task_dict(val)
             if t:
                 results.append((key, t))
@@ -268,9 +286,11 @@ def load_project_tasks(project_dir: Path) -> List[tuple[Path, LocalTask]]:
         return []
 
     tasks = []
-    
-    for task_file in sorted(list(tasks_dir.glob("*.toml")) + list(tasks_dir.glob("*.md"))):
+
+    for task_file in sorted(
+        list(tasks_dir.glob("*.toml")) + list(tasks_dir.glob("*.md"))
+    ):
         for _, task_def in parse_task_file(task_file):
             tasks.append((task_file, LocalTask(task=task_def)))
-            
+
     return tasks
