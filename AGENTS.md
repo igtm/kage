@@ -14,6 +14,12 @@ As this project's AI coding tool, you must follow the additional conventions bel
 
 ## リリース前チェック
 - version を上げる前に、機能本体だけでなく関連するユーザー向け導線も必ず更新します。
+- 実装後は version を上げる前かどうかに関係なく、少なくとも以下の 5 箇所を毎回確認し、必要なら更新します。
+  - `README.md`
+  - `README_JA.md`
+  - `skills/kage/SKILL.md`
+  - `kage doctor` の診断・説明
+  - `kage --help` / `kage task --help` などの help 導線
 - 少なくとも以下を確認・更新します。
   - `README.md`
   - `README_JA.md`

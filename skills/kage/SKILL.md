@@ -37,6 +37,8 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage migrate install` — Run pending install-time migrations manually.
 - `kage ui` — Open web dashboard.
 
+Shell completion covers positional task/run arguments as well, so `kage logs <task>`, `kage task run <name>`, `kage task show <name>`, `kage runs show <exec_id>`, and `kage stop <exec_id>` can all suggest concrete values after `kage completion install bash|zsh`. `kage doctor` reports whether those completion scripts are installed.
+
 Connector poll replies are recorded as normal runs. Use `kage runs --source connector_poll` to find them and `kage logs --run <exec_id>` to inspect raw AI CLI output.
 
 Install-time migrations are discovered automatically from `src/kage/migrations/install/`. New migration modules added there are picked up by both `kage migrate install` and `install.sh`.

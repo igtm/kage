@@ -36,7 +36,9 @@ runs_app = typer.Typer(
 )
 app.add_typer(runs_app, name="runs")
 
-completion_app = typer.Typer(help="Shell completion helpers")
+completion_app = typer.Typer(
+    help="Shell completion helpers, including task and run ID suggestions"
+)
 app.add_typer(completion_app, name="completion")
 
 
@@ -69,7 +71,7 @@ def _append_source_line_if_missing(rc_file: Path, source_line: str) -> bool:
 def completion_show(
     shell: str = typer.Argument(..., help="Target shell: bash or zsh"),
 ):
-    """Print completion script for bash/zsh."""
+    """Print a completion script that also supports task/run argument suggestions."""
     typer.echo(_completion_script(shell))
 
 
@@ -1187,6 +1189,11 @@ def doctor():
         if is_ja
         else "Run 'kage migrate install'"
     )
+    t_completion_hint = (
+        "kage completion install bash または zsh を実行してください"
+        if is_ja
+        else "Run 'kage completion install bash' or 'kage completion install zsh'"
+    )
 
     console = Console()
     console.print(f"\n[bold cyan]kage doctor[/bold cyan] — {t_title}\n")
@@ -1569,7 +1576,18 @@ def doctor():
             f"{KAGE_LOGS_DIR} ({'created on first run' if not is_ja else '初回実行時に作成'})",
         )
 
-    # 3.6. Install migrations
+    # 3.6. Shell completion
+    completion_dir = KAGE_GLOBAL_DIR / "completions"
+    installed_completion_shells = []
+    for shell_name in ("bash", "zsh"):
+        if (completion_dir / f"kage.{shell_name}").exists():
+            installed_completion_shells.append(shell_name)
+    if installed_completion_shells:
+        ok("shell completion", ", ".join(installed_completion_shells))
+    else:
+        warn("shell completion", t_completion_hint)
+
+    # 3.7. Install migrations
     try:
         from .migrations.runner import (
             InstallMigrationContext,
