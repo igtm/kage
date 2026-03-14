@@ -94,6 +94,9 @@ kage --install-completion
 
 Reload your shell after installation (`exec $SHELL -l`).
 
+Shell completion also suggests task names and recent run IDs for positional arguments like `kage logs <task>`, `kage task run <name>`, and `kage runs show <exec_id>`.
+`kage doctor` also reports whether bash/zsh completion scripts are installed.
+
 ## Use Cases
 
 ### 🌙 Overnight Tech Evaluation (OCR Model Benchmark)

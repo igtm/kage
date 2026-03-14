@@ -94,6 +94,9 @@ kage --install-completion
 
 設定後はシェルを再読み込みしてください（`exec $SHELL -l`）。
 
+シェル補完では `kage logs <task>`、`kage task run <name>`、`kage runs show <exec_id>` のような位置引数に対して task 名や最近の run id も候補に出ます。
+`kage doctor` でも bash / zsh の completion script が入っているか確認できます。
+
 ## ユースケース
 
 ### 🌙 夜間技術選定（OCR モデルベンチマーク）
