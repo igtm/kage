@@ -14,7 +14,7 @@ from kage.config import (
     set_config_value,
 )
 from kage.compiler import get_task_source_fingerprints
-from kage.executor import execute_task
+from kage.executor import _normalize_headless_args, execute_task
 from kage.parser import TaskDef
 
 
@@ -244,6 +244,16 @@ def test_execute_explicit_provider_uses_provider_specific_model(
     assert cmd[cmd.index("--model") + 1] == "openai/gpt-5-codex"
 
 
+def test_normalize_headless_args_preserves_codex_yolo(mocker):
+    mocker.patch("kage.executor.sys.stdin.isatty", return_value=False)
+
+    cmd = _normalize_headless_args(
+        ["codex", "exec", "--yolo", "--model", "gpt-5-codex", "hello"]
+    )
+
+    assert cmd == ["codex", "exec", "--yolo", "--model", "gpt-5-codex", "hello"]
+
+
 def test_execute_inline_command_template_does_not_auto_inject_model(
     tmp_path: Path, mock_executor_env, mocker
 ):
@@ -360,6 +370,13 @@ def test_config_default_loaded():
     assert "copilot" in config.providers
     assert config.providers["codex"].model_flag == "--model"
     assert "copilot" in config.commands
+    assert config.commands["codex"].template == [
+        "codex",
+        "exec",
+        "--yolo",
+        "{model_args}",
+        "{prompt}",
+    ]
     assert config.ui_port == 8484
 
 

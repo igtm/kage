@@ -122,6 +122,20 @@ def _project_short_name(project_path: str) -> str:
     return Path(project_path).name or project_path
 
 
+def _effective_task_provider(task, merged_cfg) -> tuple[str | None, bool]:
+    explicit_provider = task.provider or (task.ai.engine if task.ai else None)
+    effective_provider = explicit_provider or merged_cfg.default_ai_engine
+    return effective_provider, bool(effective_provider and not explicit_provider)
+
+
+def _task_type_label(task, compiled_state: str | None = None) -> str:
+    if task.prompt and not task.command:
+        if compiled_state in {"fresh", "stale"}:
+            return "Prompt (Compiled)"
+        return "Prompt"
+    return "Shell"
+
+
 def _task_completion_items(incomplete: str) -> list[CompletionItem]:
     from .parser import load_project_tasks
     from .scheduler import get_projects
@@ -207,7 +221,23 @@ def app_callback(
     return None
 
 
-def _print_runs(records, json_output: bool = False):
+def _run_status_markup(status: str) -> str:
+    if status == "SUCCESS":
+        return "[green]SUCCESS[/green]"
+    if status == "FAILED":
+        return "[red]FAILED[/red]"
+    if status == "RUNNING":
+        return "[yellow]RUNNING[/yellow]"
+    if status == "STOPPED":
+        return "[yellow]STOPPED[/yellow]"
+    return status
+
+
+def _print_runs(
+    records,
+    json_output: bool = False,
+    absolute_time: bool = False,
+):
     if json_output:
         typer.echo(
             json.dumps(
@@ -216,24 +246,48 @@ def _print_runs(records, json_output: bool = False):
         )
         return
 
+    from rich import box
+    from rich.console import Console
+    from rich.table import Table
+    from .runs import format_local_timestamp, format_relative_timestamp
+
+    is_ja = _is_ja()
+
     if not records:
-        typer.echo("No runs found.")
+        typer.echo("実行履歴がありません。" if is_ja else "No runs found.")
         return
 
+    console = Console()
+    table = Table(
+        show_header=True,
+        header_style="bold",
+        box=box.SIMPLE_HEAD,
+        padding=(0, 1),
+    )
+    table.add_column("日時" if is_ja else "When", style="dim", no_wrap=True)
+    table.add_column("状態" if is_ja else "Status", no_wrap=True)
+    table.add_column("タスク" if is_ja else "Task", style="bold")
+    table.add_column("Project", style="dim")
+    table.add_column("所要時間" if is_ja else "Duration", no_wrap=True)
+    table.add_column("概要" if is_ja else "Summary")
+
     for record in records:
-        typer.echo(
-            "\t".join(
-                [
-                    record.to_dict()["run_at_local"],
-                    record.status,
-                    record.task_name,
-                    record.to_dict()["project_short"],
-                    record.id[:8],
-                    record.to_dict()["duration_display"],
-                    record.output_summary or "",
-                ]
-            )
+        payload = record.to_dict()
+        when = (
+            format_local_timestamp(record.run_at)
+            if absolute_time
+            else format_relative_timestamp(record.run_at, is_ja=is_ja)
         )
+        table.add_row(
+            when,
+            _run_status_markup(record.status),
+            record.task_name,
+            payload["project_short"],
+            payload["duration_display"],
+            record.output_summary or "",
+        )
+
+    console.print(table)
 
 
 def _print_run_details(record, json_output: bool = False):
@@ -395,6 +449,68 @@ def _follow_logs(run_id: str, stream: str):
         time.sleep(0.5)
 
 
+def _follow_all_logs(stream: str, project: str | None = None):
+    from .runs import list_runs, project_short_name, render_combined_events
+
+    positions: dict[str, int] = {}
+
+    for run in list_runs(limit=None, project_filter=project):
+        if not run.events_path:
+            continue
+        path = Path(run.events_path)
+        if path.exists():
+            positions[run.id] = path.stat().st_size
+
+    while True:
+        new_events: list[dict] = []
+        for run in list_runs(limit=None, project_filter=project):
+            path_str = run.events_path
+            if not path_str:
+                continue
+            path = Path(path_str)
+            if not path.exists():
+                continue
+
+            start_pos = positions.get(run.id, 0)
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(start_pos)
+                chunk = handle.read()
+                positions[run.id] = handle.tell()
+
+            if not chunk:
+                continue
+
+            temp_events: list[dict] = []
+            for line in chunk.splitlines():
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                temp_events.append(payload)
+
+            for payload in temp_events:
+                payload_stream = str(payload.get("stream", ""))
+                if stream != "merged" and payload_stream != stream:
+                    continue
+                new_events.append(
+                    {
+                        "ts": str(payload.get("ts", "")),
+                        "stream": payload_stream,
+                        "text": str(payload.get("text", "")),
+                        "run_id": run.id,
+                        "task_name": run.task_name,
+                        "project_path": run.project_path,
+                        "project_short": project_short_name(run.project_path),
+                    }
+                )
+
+        if new_events:
+            typer.echo(render_combined_events(new_events, stream=stream), nl=False)
+        time.sleep(0.5)
+
+
 @project_app.command("list")
 def project_list():
     """List all registered projects."""
@@ -474,8 +590,9 @@ def task_list(
         None, "--project", "-p", help="Filter by project path"
     ),
 ):
-    """List all registered tasks and their status (ON/OFF)."""
+    """List registered tasks with effective type and provider/command details."""
     from .compiler import compiled_task_indicator
+    from .config import get_global_config
     from .scheduler import get_projects
     from .parser import load_project_tasks
     from rich.console import Console
@@ -496,39 +613,39 @@ def task_list(
     table.add_column("Active")
     table.add_column("Schedule")
     table.add_column("Type")
-    table.add_column("Compiled")
     table.add_column("Provider/Command")
 
     found = False
     for proj_dir in projects:
         if project and project not in str(proj_dir):
             continue
+        merged_cfg = get_global_config(workspace_dir=proj_dir)
         tasks = load_project_tasks(proj_dir)
         for toml_file, local_task in tasks:
             t = local_task.task
-            task_type = "AI Prompt" if t.prompt else "Shell"
             compiled = compiled_task_indicator(t, toml_file)
-            if compiled["state"] == "fresh":
-                compiled_display = "[green]FRESH[/green]"
-            elif compiled["state"] == "stale":
-                compiled_display = "[yellow]STALE[/yellow]"
-            elif compiled["state"] == "none":
-                compiled_display = "[dim]none[/dim]"
+            if t.prompt:
+                task_type = _task_type_label(t, compiled["state"])
+                if compiled["state"] == "fresh":
+                    task_type = "Prompt ([green]Compiled[/green])"
+                elif compiled["state"] == "stale":
+                    task_type = "Prompt ([red]Compiled[/red])"
+                effective_provider, inherited = _effective_task_provider(t, merged_cfg)
+                provider_info = (
+                    f"{effective_provider} (Inherited)"
+                    if effective_provider and inherited
+                    else effective_provider
+                )
             else:
-                compiled_display = "[dim]-[/dim]"
-            provider_info = (
-                t.provider or (t.ai.engine if t.ai and t.ai.engine else "")
-                if t.prompt
-                else (t.command or "")[:40]
-            )
+                task_type = _task_type_label(t)
+                provider_info = (t.command or "")[:40]
             status = "[green]ON[/green]" if t.active else "[red]OFF[/red]"
             table.add_row(
-                str(proj_dir),
+                _project_short_name(str(proj_dir)),
                 t.name,
                 status,
                 t.cron,
                 task_type,
-                compiled_display,
                 provider_info or "-",
             )
             found = True
@@ -710,8 +827,9 @@ def task_show(
         None, "--project", "-p", help="Project path substring for task lookup"
     ),
 ):
-    """Show details of a specific task."""
+    """Show detailed task configuration, including compiled lock freshness."""
     from .compiler import compiled_task_status
+    from .config import get_global_config
     from rich.console import Console
     from rich.panel import Panel
 
@@ -730,11 +848,25 @@ def task_show(
     ]
     compiled = compiled_task_status(task, task_file)
     if task.prompt:
-        details.append("[bold]Type:[/bold]           AI Prompt")
-        details.append(f"[bold]Prompt:[/bold]         {task.prompt[:100]}...")
-        details.append(
-            f"[bold]Provider:[/bold]       {task.provider or 'global default'}"
+        merged_cfg = get_global_config(workspace_dir=proj_dir)
+        compiled_state = (
+            "fresh"
+            if compiled and compiled["exists"] and compiled["is_fresh"]
+            else "stale"
+            if compiled and compiled["exists"]
+            else "none"
         )
+        effective_provider, inherited = _effective_task_provider(task, merged_cfg)
+        provider_label = (
+            f"{effective_provider} (Inherited)"
+            if effective_provider and inherited
+            else effective_provider or "unresolved"
+        )
+        details.append(
+            f"[bold]Type:[/bold]           {_task_type_label(task, compiled_state)}"
+        )
+        details.append(f"[bold]Prompt:[/bold]         {task.prompt[:100]}...")
+        details.append(f"[bold]Provider:[/bold]       {provider_label}")
         if compiled:
             if compiled["exists"]:
                 freshness = (
@@ -746,7 +878,7 @@ def task_show(
             else:
                 details.append("[bold]Compiled:[/bold]       none")
     elif task.command:
-        details.append("[bold]Type:[/bold]           Shell Command")
+        details.append(f"[bold]Type:[/bold]           {_task_type_label(task)}")
         details.append(f"[bold]Command:[/bold]        {task.command}")
     console.print(
         Panel("\n".join(details), title=f"[cyan]{task.name}[/cyan]", expand=False)
@@ -922,6 +1054,11 @@ def runs(
         None, "--source", help="Filter by source: task or connector_poll"
     ),
     limit: int = typer.Option(20, "--limit", help="Maximum runs to show"),
+    absolute_time: bool = typer.Option(
+        False,
+        "--absolute-time",
+        help="Show absolute local timestamps instead of relative time",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Print structured JSON"),
 ):
     """List execution runs."""
@@ -937,7 +1074,11 @@ def runs(
         status=status,
         source=source,
     )
-    _print_runs(records, json_output=json_output)
+    _print_runs(
+        records,
+        json_output=json_output,
+        absolute_time=absolute_time,
+    )
 
 
 @runs_app.command("show")
@@ -979,7 +1120,7 @@ def runs_stop(
 def logs(
     task_name: Optional[str] = typer.Argument(
         None,
-        help="Task name to inspect (opens the latest run)",
+        help="Task name to inspect (latest run only). Omit to merge logs across all tasks",
         autocompletion=_complete_task_names,
     ),
     run_id: Optional[str] = typer.Option(
@@ -999,19 +1140,58 @@ def logs(
         "--since",
         help="Only show entries since ISO timestamp or relative time like 10m",
     ),
-    follow: bool = typer.Option(False, "--follow", help="Follow appended output"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow appended output"),
     path_only: bool = typer.Option(
         False, "--path", help="Print the underlying log file path"
     ),
     json_output: bool = typer.Option(False, "--json", help="Print structured JSON"),
 ):
     """View raw execution logs."""
-    from .runs import load_log_text, log_path_for_stream
+    from .runs import load_all_log_text, load_log_text, log_path_for_stream
 
     if stream not in {"merged", "stdout", "stderr"}:
         raise typer.BadParameter("--stream must be one of: merged, stdout, stderr")
     if follow and json_output:
         raise typer.BadParameter("--follow cannot be combined with --json")
+    if path_only and not (task_name or run_id):
+        raise typer.BadParameter("--path requires a task name or --run <exec_id>")
+
+    if not task_name and not run_id:
+        try:
+            content = load_all_log_text(
+                stream=stream,
+                lines=lines,
+                since=since,
+                project_filter=project,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "scope": "all",
+                        "stream": stream,
+                        "project_filter": project,
+                        "content": content,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        elif content:
+            typer.echo(content, nl=not content.endswith("\n"))
+        else:
+            typer.echo(
+                "No log output recorded."
+                if not _is_ja()
+                else "まだログ出力は記録されていません。"
+            )
+
+        if follow:
+            _follow_all_logs(stream=stream, project=project)
+        return
 
     run = _resolve_log_target(task_name=task_name, run_id=run_id, project=project)
     target_path = log_path_for_stream(run, stream)
@@ -1091,6 +1271,14 @@ def ui(
     target_port = port or cfg.ui_port
     typer.echo(f"Starting web UI on {target_host}:{target_port}...")
     start_ui(host=target_host, port=target_port)
+
+
+@app.command()
+def tui():
+    """Launch the terminal UI dashboard."""
+    from .tui import start_tui
+
+    start_tui()
 
 
 @app.command()
@@ -1205,6 +1393,7 @@ def config_show(
 @app.command()
 def doctor():
     """Run setup diagnostics and show potential issues."""
+    import importlib.util
     import os
     from datetime import datetime
     from pathlib import Path
@@ -1269,6 +1458,11 @@ def doctor():
         "kage completion install bash または zsh を実行してください"
         if is_ja
         else "Run 'kage completion install bash' or 'kage completion install zsh'"
+    )
+    t_tui_hint = (
+        "'kage tui' を使うには textual 依存が必要です"
+        if is_ja
+        else "Install the 'textual' dependency to use 'kage tui'"
     )
 
     console = Console()
@@ -1663,7 +1857,13 @@ def doctor():
     else:
         warn("shell completion", t_completion_hint)
 
-    # 3.7. Install migrations
+    # 3.7. TUI backend
+    if importlib.util.find_spec("textual"):
+        ok("tui backend", "textual")
+    else:
+        warn("tui backend", t_tui_hint)
+
+    # 3.8. Install migrations
     try:
         from .migrations.runner import (
             InstallMigrationContext,

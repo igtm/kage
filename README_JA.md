@@ -95,7 +95,7 @@ kage --install-completion
 
 設定後はシェルを再読み込みしてください（`exec $SHELL -l`）。
 
-シェル補完では `kage run <task>`、`kage compile <task>`、`kage logs <task>`、`kage task run <name>`、`kage runs show <exec_id>` のような位置引数に対して task 名や最近の run id も候補に出ます。
+シェル補完では `kage run <task>`、`kage compile <task>`、`kage logs [<task>]`、`kage task run <name>`、`kage runs show <exec_id>` のような位置引数に対して task 名や最近の run id も候補に出ます。
 `kage doctor` でも bash / zsh の completion script が入っているか確認できます。
 
 ## ユースケース
@@ -231,15 +231,15 @@ shell: "bash"
 | `kage init` | 現在のディレクトリに kage を初期化 |
 | `kage run <task>` | 特定 task を即時実行 |
 | `kage compile <task>` | prompt task から同名の `.lock.sh` override を生成 |
-| `kage runs` | 実行履歴を grep しやすい 1 行形式で表示 |
+| `kage runs` | 相対日時付きの色付きテーブルで実行履歴を表示 |
 | `kage runs show <exec_id>` | 実行メタデータ、状態、ログパスを表示 |
 | `kage runs stop <exec_id>` | 実行中の run を停止 |
-| `kage logs <task>` | task の最新 run の生ログを開く |
+| `kage logs [<task>]` | task の最新 run の生ログ、または未指定時は全 task の結合ログを開く |
 | `kage logs --run <exec_id>` | 特定 run の生ログを開く |
 | `kage cron run` | scheduler ループを 1 回実行（cron / launchd 用） |
 | `kage cron install` | システムスケジューラーに登録 |
 | `kage cron status` | バックグラウンド実行状態の確認 |
-| `kage task list` | タスク一覧を表示 |
+| `kage task list` | 状態、実効 Type、Provider/Command 付きでタスク一覧を表示 |
 | `kage task show <name>` | 詳細設定を表示 |
 | `kage connector list` | 設定済みのコネクター一覧を表示 |
 | `kage connector setup <type>` | コネクター（discord, slack, telegram）のセットアップガイドを表示 |
@@ -248,19 +248,24 @@ shell: "bash"
 | `kage doctor` | 設定と環境の診断 |
 | `kage skill` | エージェントの指針を表示 |
 | `kage ui` | Webダッシュボードを開く |
+| `kage tui` | runs/tasks/connectors/config の4タブを持つ端末ダッシュボードを開く |
 ### macOS launchd 独自設定
 macOS では `cron` の代わりに `launchd` が使用されます。`config.toml` で以下の独自設定が可能です：
 
 - `darwin_launchd_interval_seconds`: 起動間隔を秒単位で指定（最小 `15`）。
 - `darwin_launchd_keep_alive`: `true` に設定すると、プロセスを常駐させます。
 
-`kage runs` は実行履歴ビュー、`kage logs` は run ごとの raw output viewer です。生ログ本体は `stdout.log`, `stderr.log`, `events.jsonl` として保持されます。
+`kage runs` は実行履歴ビューです。デフォルトでは `4時間前` のような相対日時付きテーブルで表示し、`--absolute-time` を付けると従来どおり詳細なローカル日時を表示します。`kage logs` は run ごとの raw output viewer で、生ログ本体は `stdout.log`, `stderr.log`, `events.jsonl` として保持されます。`kage logs <task>` は 1 task の最新 run を開き、引数なしの `kage logs` は全 task のログを時系列順に結合して表示します。追従表示は `--follow` または `-f` が使えます。
 
 prompt task と同名の compiled lock 例えば `.kage/tasks/nightly.lock.sh` が存在する場合、kage はその lock に保持された source hash が `.md` と一致している間だけ Markdown 本文の代わりにそれを実行します。prompt 本文や front matter を更新したら lock は stale 扱いになるので、`kage compile <task>` を再実行してください。`kage doctor`、`kage task list`、UI の task card でも fresh / stale / missing を確認できます。
+
+`kage task list` では project 列は末尾ディレクトリ名だけを表示し、prompt task は `Prompt` または `Prompt (Compiled)` として見えます。provider 未指定でも `gemini (Inherited)` のように実際に使われる provider を表示します。built-in の `codex` 実行テンプレートは既定で `codex exec --yolo ...` を使います。
 
 connector の `poll` 返信も同じ run 履歴に保存されます。`kage runs --source connector_poll` で絞り込み、`kage logs --run <exec_id>` で AI CLI の raw output を確認できます。
 
 install-time migration は `src/kage/migrations/install/` 配下の module を自動検知して実行します。今後 migration を追加した場合も、`kage migrate install` と `install.sh` から同じルールで処理されます。
+
+`kage tui` は Textual ベースの端末ダッシュボードです。ログ、タスク、Connector、設定の4タブを持ち、ログタブでは左の task/run 選択で右のログ表示を絞り込めます。タスクタブでは task 詳細、Connector タブではメッセージ履歴、設定タブでは global config を確認できます。
 
 ## 設定ファイル
 

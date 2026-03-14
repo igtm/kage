@@ -1,5 +1,6 @@
 import json
-from datetime import datetime
+import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,7 +11,7 @@ from kage import db
 from kage.config import CommandDef, GlobalConfig, ProviderConfig
 from kage.main import app
 from kage.parser import TaskDef
-from kage.runs import get_run
+from kage.runs import format_local_timestamp, format_relative_timestamp, get_run
 
 runner = CliRunner()
 
@@ -28,9 +29,9 @@ def cli_env(tmp_path: Path, mocker):
     return {"db_path": db_path, "logs_dir": logs_dir}
 
 
-def _append_event(path: Path, stream: str, text: str):
+def _append_event(path: Path, stream: str, text: str, ts: str | None = None):
     payload = {
-        "ts": datetime.now().astimezone().isoformat(),
+        "ts": ts or datetime.now().astimezone().isoformat(),
         "stream": stream,
         "text": text,
     }
@@ -38,23 +39,105 @@ def _append_event(path: Path, stream: str, text: str):
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
-def test_runs_cli_lists_tsv(cli_env):
+def test_format_relative_timestamp_supports_english_and_japanese():
+    now = datetime.now().astimezone()
+    four_hours_ago = (now - timedelta(hours=4)).isoformat()
+    two_days_future = (now + timedelta(days=2)).isoformat()
+
+    assert format_relative_timestamp(four_hours_ago, now=now) == "4h ago"
+    assert format_relative_timestamp(four_hours_ago, now=now, is_ja=True) == "4時間前"
+    assert format_relative_timestamp(two_days_future, now=now) == "in 2d"
+    assert format_relative_timestamp(two_days_future, now=now, is_ja=True) == "2日後"
+
+
+def test_runs_cli_lists_table_with_relative_time(cli_env):
     exec_id = db.start_execution("/tmp/demo", "Nightly Research")
+    start_at = datetime.now().astimezone() - timedelta(hours=4)
+    finished_at = start_at + timedelta(minutes=30)
+    with sqlite3.connect(cli_env["db_path"]) as conn:
+        conn.execute(
+            "UPDATE executions SET run_at = ?, finished_at = ? WHERE id = ?",
+            (start_at.isoformat(), finished_at.isoformat(), exec_id),
+        )
+        conn.commit()
     db.update_execution(
         exec_id,
         "SUCCESS",
         "visible output\n",
         "",
+        finished_at=finished_at.isoformat(),
         exit_code=0,
         output_summary="visible output",
     )
 
-    result = runner.invoke(app, ["runs"])
+    result = runner.invoke(app, ["runs"], env={"COLUMNS": "160"})
 
     assert result.exit_code == 0
+    assert "When" in result.stdout
+    assert "Status" in result.stdout
     assert "Nightly Research" in result.stdout
-    assert exec_id[:8] in result.stdout
-    assert "\tSUCCESS\t" in result.stdout
+    assert "SUCCESS" in result.stdout
+    assert "4h ago" in result.stdout
+    assert "30m 0s" in result.stdout
+    assert exec_id[:8] not in result.stdout
+
+
+def test_runs_cli_can_show_absolute_time(cli_env):
+    exec_id = db.start_execution("/tmp/demo", "Nightly Research")
+    start_at = datetime.now().astimezone() - timedelta(hours=4)
+    finished_at = start_at + timedelta(minutes=15)
+    with sqlite3.connect(cli_env["db_path"]) as conn:
+        conn.execute(
+            "UPDATE executions SET run_at = ?, finished_at = ? WHERE id = ?",
+            (start_at.isoformat(), finished_at.isoformat(), exec_id),
+        )
+        conn.commit()
+    db.update_execution(
+        exec_id,
+        "FAILED",
+        "",
+        "boom\n",
+        finished_at=finished_at.isoformat(),
+        exit_code=1,
+        output_summary="boom",
+    )
+
+    result = runner.invoke(app, ["runs", "--absolute-time"], env={"COLUMNS": "160"})
+
+    assert result.exit_code == 0
+    assert format_local_timestamp(start_at.isoformat()) in result.stdout
+    assert "FAILED" in result.stdout
+
+
+def test_runs_cli_uses_japanese_relative_time_when_lang_is_japanese(cli_env):
+    exec_id = db.start_execution("/tmp/demo", "Nightly Research")
+    start_at = datetime.now().astimezone() - timedelta(hours=4)
+    finished_at = start_at + timedelta(minutes=10)
+    with sqlite3.connect(cli_env["db_path"]) as conn:
+        conn.execute(
+            "UPDATE executions SET run_at = ?, finished_at = ? WHERE id = ?",
+            (start_at.isoformat(), finished_at.isoformat(), exec_id),
+        )
+        conn.commit()
+    db.update_execution(
+        exec_id,
+        "SUCCESS",
+        "ok\n",
+        "",
+        finished_at=finished_at.isoformat(),
+        exit_code=0,
+        output_summary="ok",
+    )
+
+    result = runner.invoke(
+        app,
+        ["runs"],
+        env={"COLUMNS": "160", "LANG": "ja_JP.UTF-8"},
+    )
+
+    assert result.exit_code == 0
+    assert "日時" in result.stdout
+    assert "4時間前" in result.stdout
 
 
 def test_logs_cli_reads_raw_stdout_without_cleaning(cli_env):
@@ -84,6 +167,33 @@ def test_logs_cli_reads_raw_stdout_without_cleaning(cli_env):
     assert "visible" in result.stdout
 
 
+def test_logs_cli_without_task_merges_all_tasks_in_time_order(cli_env):
+    first_id = db.start_execution("/tmp/project-a", "Nightly Research")
+    first_run = get_run(first_id)
+    assert first_run is not None
+
+    second_id = db.start_execution("/tmp/project-b", "Morning Sweep")
+    second_run = get_run(second_id)
+    assert second_run is not None
+
+    older_ts = (datetime.now().astimezone() - timedelta(minutes=2)).isoformat()
+    newer_ts = (datetime.now().astimezone() - timedelta(minutes=1)).isoformat()
+    _append_event(Path(first_run.events_path), "stdout", "alpha\n", ts=older_ts)
+    _append_event(Path(second_run.events_path), "stderr", "beta\n", ts=newer_ts)
+
+    db.update_execution(first_id, "SUCCESS", "alpha\n", "", output_summary="alpha")
+    db.update_execution(second_id, "FAILED", "", "beta\n", output_summary="beta")
+
+    result = runner.invoke(app, ["logs"], env={"COLUMNS": "160"})
+
+    assert result.exit_code == 0
+    assert "project-a/Nightly Research" in result.stdout
+    assert "project-b/Morning Sweep" in result.stdout
+    assert "alpha" in result.stdout
+    assert "beta" in result.stdout
+    assert result.stdout.index("alpha") < result.stdout.index("beta")
+
+
 def test_logs_cli_requires_project_for_duplicate_task_names(cli_env):
     first = db.start_execution("/tmp/project-a", "Shared Task")
     db.update_execution(first, "SUCCESS", "a\n", "", output_summary="a")
@@ -95,6 +205,24 @@ def test_logs_cli_requires_project_for_duplicate_task_names(cli_env):
 
     assert result.exit_code == 1
     assert "Use --project" in result.stdout
+
+
+def test_logs_cli_path_requires_single_target(cli_env):
+    result = runner.invoke(app, ["logs", "--path"])
+
+    assert result.exit_code == 2
+    assert "--path requires a task name or --run <exec_id>" in result.output
+
+
+def test_logs_cli_accepts_follow_short_option(cli_env, mocker):
+    exec_id = db.start_execution("/tmp/demo", "Nightly Research")
+    db.update_execution(exec_id, "SUCCESS", "done\n", "", output_summary="done")
+    follow_logs = mocker.patch("kage.main._follow_logs")
+
+    result = runner.invoke(app, ["logs", "Nightly Research", "-f"])
+
+    assert result.exit_code == 0
+    follow_logs.assert_called_once()
 
 
 def test_runs_cli_filters_connector_poll_source(cli_env):
@@ -137,15 +265,24 @@ def test_cron_run_executes_scheduler(mocker):
 
 
 def test_task_list_shows_compiled_statuses(mocker, tmp_path: Path):
-    project_dir = tmp_path / "proj"
+    project_dir = tmp_path / "workspace" / "proj"
     task_file = project_dir / ".kage" / "tasks" / "nightly.md"
     shell_file = project_dir / ".kage" / "tasks" / "shell.md"
     task_file.parent.mkdir(parents=True)
 
     prompt_task = TaskDef(name="Nightly", cron="* * * * *", prompt="hello")
     shell_task = TaskDef(name="Shell", cron="* * * * *", command="echo hi")
+    cfg = GlobalConfig(
+        default_ai_engine="gemini",
+        commands={"gemini": CommandDef(template=["gemini", "--prompt", "{prompt}"])},
+        providers={"gemini": ProviderConfig(command="gemini")},
+    )
 
     mocker.patch("kage.scheduler.get_projects", return_value=[project_dir])
+    mocker.patch(
+        "kage.config.get_global_config",
+        side_effect=lambda workspace_dir=None: cfg,
+    )
     mocker.patch(
         "kage.parser.load_project_tasks",
         return_value=[
@@ -161,12 +298,15 @@ def test_task_list_shows_compiled_statuses(mocker, tmp_path: Path):
         ],
     )
 
-    result = runner.invoke(app, ["task", "list"])
+    result = runner.invoke(app, ["task", "list"], env={"COLUMNS": "160"})
 
     assert result.exit_code == 0
-    assert "STALE" in result.stdout
     assert "Nightly" in result.stdout
     assert "Shell" in result.stdout
+    assert "Prompt (Compiled)" in result.stdout
+    assert "gemini (Inherited)" in result.stdout
+    assert "proj" in result.stdout
+    assert str(project_dir) not in result.stdout
 
 
 def test_doctor_reports_stale_compiled_locks(mocker, tmp_path: Path):

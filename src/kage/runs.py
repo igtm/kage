@@ -139,6 +139,57 @@ def format_local_timestamp(value: str | None) -> str:
         return value
 
 
+def format_relative_timestamp(
+    value: str | None,
+    *,
+    now: datetime | None = None,
+    is_ja: bool = False,
+) -> str:
+    if not value:
+        return "-"
+
+    try:
+        target = datetime.fromisoformat(value).astimezone()
+    except ValueError:
+        return value
+
+    current = (
+        now.astimezone(target.tzinfo)
+        if now
+        else datetime.now().astimezone(target.tzinfo)
+    )
+    delta_seconds = int((current - target).total_seconds())
+    future = delta_seconds < 0
+    delta_seconds = abs(delta_seconds)
+
+    if delta_seconds < 10:
+        return "たった今" if is_ja else "just now"
+
+    units = [
+        (365 * 24 * 60 * 60, "年", "y"),
+        (30 * 24 * 60 * 60, "か月", "mo"),
+        (24 * 60 * 60, "日", "d"),
+        (60 * 60, "時間", "h"),
+        (60, "分", "m"),
+        (1, "秒", "s"),
+    ]
+    amount = 0
+    ja_unit = "秒"
+    en_unit = "s"
+    for unit_seconds, ja_label, en_label in units:
+        if delta_seconds >= unit_seconds:
+            amount = delta_seconds // unit_seconds
+            ja_unit = ja_label
+            en_unit = en_label
+            break
+
+    if is_ja:
+        suffix = "後" if future else "前"
+        return f"{amount}{ja_unit}{suffix}"
+
+    return f"in {amount}{en_unit}" if future else f"{amount}{en_unit} ago"
+
+
 def get_duration_seconds(run: RunRecord) -> float | None:
     try:
         start = datetime.fromisoformat(run.run_at)
@@ -200,7 +251,7 @@ def get_run(exec_id: str) -> RunRecord | None:
 
 
 def list_runs(
-    limit: int = 20,
+    limit: int | None = 20,
     task_name: str | None = None,
     project_filter: str | None = None,
     status: str | None = None,
@@ -228,10 +279,12 @@ def list_runs(
         params.append(CONNECTOR_POLL_SOURCE)
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    params.append(limit)
-
     conn = _connect()
     try:
+        limit_clause = ""
+        if limit is not None:
+            params.append(limit)
+            limit_clause = "LIMIT ?"
         rows = conn.execute(
             f"""
             SELECT
@@ -242,7 +295,7 @@ def list_runs(
             FROM executions
             {where}
             ORDER BY run_at DESC
-            LIMIT ?
+            {limit_clause}
             """,
             params,
         ).fetchall()
@@ -376,6 +429,95 @@ def _read_events(run: RunRecord) -> list[dict]:
             continue
         events.append(payload)
     return events
+
+
+def _legacy_events(run: RunRecord, stream: LogStream = "merged") -> list[dict]:
+    timestamp = run.last_output_at or run.finished_at or run.run_at
+    events: list[dict] = []
+    if stream in {"merged", "stdout"} and run.stdout:
+        events.append({"ts": timestamp, "stream": "stdout", "text": run.stdout})
+    if stream in {"merged", "stderr"} and run.stderr:
+        events.append({"ts": timestamp, "stream": "stderr", "text": run.stderr})
+    return events
+
+
+def collect_run_events(
+    run: RunRecord,
+    stream: LogStream = "merged",
+    since: str | None = None,
+) -> list[dict]:
+    cutoff = parse_since(since)
+    raw_events = _read_events(run) or _legacy_events(run, stream=stream)
+    events: list[dict] = []
+    for payload in raw_events:
+        event_stream = str(payload.get("stream", ""))
+        if stream != "merged" and event_stream != stream:
+            continue
+        if not _event_after_cutoff(payload, cutoff):
+            continue
+        events.append(
+            {
+                "ts": payload.get("ts", ""),
+                "stream": event_stream,
+                "text": str(payload.get("text", "")),
+                "run_id": run.id,
+                "task_name": run.task_name,
+                "project_path": run.project_path,
+                "project_short": project_short_name(run.project_path),
+            }
+        )
+    return events
+
+
+def _event_sort_key(payload: dict) -> tuple[datetime, str, str]:
+    try:
+        ts = datetime.fromisoformat(str(payload.get("ts", ""))).astimezone()
+    except ValueError:
+        ts = datetime.fromtimestamp(0).astimezone()
+    return ts, str(payload.get("project_path", "")), str(payload.get("task_name", ""))
+
+
+def render_combined_events(
+    events: list[dict],
+    *,
+    stream: LogStream = "merged",
+    lines: int | None = None,
+) -> str:
+    rendered: list[str] = []
+    for payload in sorted(events, key=_event_sort_key):
+        formatted_ts = format_local_timestamp(str(payload.get("ts", "")))
+        ts_parts = formatted_ts.split(" ", 1)
+        ts = ts_parts[1] if len(ts_parts) > 1 else formatted_ts
+        task_label = (
+            f"{payload.get('project_short', '-')}/{payload.get('task_name', '-')}"
+        )
+        stream_name = str(payload.get("stream", "")).upper().ljust(6)
+        text = str(payload.get("text", ""))
+        logical_lines = text.splitlines() or [text]
+        for line in logical_lines:
+            if stream == "merged":
+                rendered.append(f"{ts} {task_label} {stream_name} {line}\n")
+            else:
+                rendered.append(f"{ts} {task_label} {line}\n")
+    return _tail_text("".join(rendered), lines)
+
+
+def load_all_log_text(
+    *,
+    stream: LogStream = "merged",
+    lines: int | None = None,
+    since: str | None = None,
+    project_filter: str | None = None,
+    task_name: str | None = None,
+) -> str:
+    events: list[dict] = []
+    for run in list_runs(
+        limit=None,
+        project_filter=project_filter,
+        task_name=task_name,
+    ):
+        events.extend(collect_run_events(run, stream=stream, since=since))
+    return render_combined_events(events, stream=stream, lines=lines)
 
 
 def _tail_text(text: str, lines: int | None) -> str:
