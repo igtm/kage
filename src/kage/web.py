@@ -1606,53 +1606,53 @@ INDEX_HTML = """
 # Discord Setup Guide
 1. **Developer Portal**: Create app at [discord.com/developers](https://discord.com/developers/applications).
 2. **Bot Token**: Reset Token in **Bot** tab. Enable **Message Content Intent**.
-3. **OAuth2**: URL Generator -> `bot` -> `Send Messages`, `Read Message History`.
+3. **OAuth2**: URL Generator -> \\`bot\\` -> \\`Send Messages\\`, \\`Read Message History\\`.
 4. **Channel ID**: Enable Developer Mode in Discord, right-click channel -> **Copy Channel ID**.
 5. **Config**:
-```toml
+\\`\\`\\`toml
 [connectors.my_discord]
 type = "discord"
 poll = true  # ⚠️ Only in private/trusted channels
 bot_token = "..."
 channel_id = "..."
-```
+\\`\\`\\`
 
-⚠️ **Security**: `poll = true` grants channel members AI access to your PC. Task notifications work even with `poll = false`.
+⚠️ **Security**: \\`poll = true\\` grants channel members AI access to your PC. Task notifications work even with \\`poll = false\\`.
 `,
             slack: `
 # Slack Setup Guide
 1. **Slack API**: Create app at [api.slack.com/apps](https://api.slack.com/apps) (From scratch).
-2. **Scopes**: OAuth & Permissions -> `channels:history`, `chat:write`.
-3. **Install**: Install to Workspace, copy **Bot User OAuth Token** (`xoxb-...`).
-4. **Channel ID**: Channel details -> find ID at bottom (starts with `C`).
-5. **Invite**: Type `/invite @YourBotName` in the channel.
+2. **Scopes**: OAuth & Permissions -> \\`channels:history\\`, \\`chat:write\\`.
+3. **Install**: Install to Workspace, copy **Bot User OAuth Token** (\\`xoxb-...\\`).
+4. **Channel ID**: Channel details -> find ID at bottom (starts with \\`C\\`).
+5. **Invite**: Type \\`/invite @YourBotName\\` in the channel.
 6. **Config**:
-```toml
+\\`\\`\\`toml
 [connectors.my_slack]
 type = "slack"
 poll = true  # ⚠️ Only in private/trusted channels
 bot_token = "xoxb-..."
 channel_id = "..."
-```
+\\`\\`\\`
 
-⚠️ **Security**: `poll = true` grants channel members AI access to your PC. Task notifications work even with `poll = false`.
+⚠️ **Security**: \\`poll = true\\` grants channel members AI access to your PC. Task notifications work even with \\`poll = false\\`.
 `,
             telegram: `
 # Telegram Setup Guide
-1. **BotFather**: Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`.
-2. **Bot Token**: Copy the token BotFather gives you (e.g. `123456:ABC-DEF...`).
+1. **BotFather**: Message [@BotFather](https://t.me/BotFather) on Telegram, send \\`/newbot\\`.
+2. **Bot Token**: Copy the token BotFather gives you (e.g. \\`123456:ABC-DEF...\\`).
 3. **Chat ID**: Add bot to your group/DM, send a message, then visit:
-   `https://api.telegram.org/bot<TOKEN>/getUpdates` — find `chat.id`.
+   \\`https://api.telegram.org/bot<TOKEN>/getUpdates\\` — find \\`chat.id\\`.
 4. **Config**:
-```toml
+\\`\\`\\`toml
 [connectors.my_telegram]
 type = "telegram"
 poll = true  # ⚠️ Only in private/trusted chats
 bot_token = "..."
 chat_id = "..."
-```
+\\`\\`\\`
 
-⚠️ **Security**: `poll = true` grants chat members AI access to your PC. Task notifications work even with `poll = false`.
+⚠️ **Security**: \\`poll = true\\` grants chat members AI access to your PC. Task notifications work even with \\`poll = false\\`.
 `
         };
 

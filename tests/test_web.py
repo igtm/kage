@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from kage.config import CommandDef, GlobalConfig, ProviderConfig
 from kage.parser import TaskDef
-from kage.web import get_config_api
+from kage.web import INDEX_HTML, get_config_api
 
 
 def test_get_config_api_includes_compiled_state(mocker, tmp_path: Path):
@@ -47,3 +47,9 @@ def test_get_config_api_includes_compiled_state(mocker, tmp_path: Path):
     assert payload["tasks"][0]["provider_display"] == "codex (Inherited)"
     assert payload["tasks"][0]["type_display"] == "Prompt (Compiled)"
     assert payload["tasks"][0]["project_name"] == "proj"
+
+
+def test_connector_setup_guides_escape_backticks_in_embedded_js():
+    assert r"\`bot\`" in INDEX_HTML
+    assert r"\`\`\`toml" in INDEX_HTML
+    assert r"\`/newbot\`" in INDEX_HTML
