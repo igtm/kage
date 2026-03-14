@@ -1,4 +1,5 @@
 import typer
+from click.shell_completion import CompletionItem
 from . import config as config_mod, daemon, db
 from typing import Optional
 from importlib import metadata
@@ -113,6 +114,80 @@ def _version_callback(value: bool):
     if value:
         typer.echo(_resolve_version())
         raise typer.Exit()
+
+
+def _project_short_name(project_path: str) -> str:
+    return Path(project_path).name or project_path
+
+
+def _task_completion_items(incomplete: str) -> list[CompletionItem]:
+    from .parser import load_project_tasks
+    from .scheduler import get_projects
+
+    task_projects: dict[str, set[str]] = {}
+    needle = incomplete.lower()
+
+    try:
+        projects = get_projects()
+    except Exception:
+        return []
+
+    for proj_dir in projects:
+        try:
+            tasks = load_project_tasks(proj_dir)
+        except Exception:
+            continue
+        for _task_file, local_task in tasks:
+            task_name = local_task.task.name
+            if not task_name:
+                continue
+            if needle and needle not in task_name.lower():
+                continue
+            task_projects.setdefault(task_name, set()).add(str(proj_dir))
+
+    items: list[CompletionItem] = []
+    for task_name, project_paths in sorted(task_projects.items()):
+        if len(project_paths) == 1:
+            project_hint = _project_short_name(next(iter(project_paths)))
+        else:
+            project_hint = f"{len(project_paths)} projects"
+        items.append(CompletionItem(task_name, help=project_hint))
+    return items
+
+
+def _run_id_completion_items(incomplete: str, limit: int = 50) -> list[CompletionItem]:
+    from .runs import list_runs
+
+    needle = incomplete.lower()
+    items: list[CompletionItem] = []
+    try:
+        records = list_runs(limit=limit)
+    except Exception:
+        return []
+
+    for record in records:
+        run_id = record.id
+        if needle and not run_id.lower().startswith(needle):
+            continue
+        summary = f"{record.task_name} [{record.status}]"
+        if record.project_path:
+            summary += f" {_project_short_name(record.project_path)}"
+        items.append(CompletionItem(run_id, help=summary))
+    return items
+
+
+def _complete_task_names(ctx, args, incomplete: str):
+    del ctx, args
+    return [
+        (item.value, item.help or "") for item in _task_completion_items(incomplete)
+    ]
+
+
+def _complete_run_ids(ctx, args, incomplete: str):
+    del ctx, args
+    return [
+        (item.value, item.help or "") for item in _run_id_completion_items(incomplete)
+    ]
 
 
 @app.callback()
@@ -551,7 +626,11 @@ def _set_task_active_state(name: Optional[str], active: bool, all_tasks: bool = 
 
 @task_app.command("on")
 def task_on(
-    name: Optional[str] = typer.Argument(None, help="Task name to enable"),
+    name: Optional[str] = typer.Argument(
+        None,
+        help="Task name to enable",
+        autocompletion=_complete_task_names,
+    ),
     all_tasks: bool = typer.Option(False, "--all", help="Enable all tasks"),
 ):
     """Enable a specific task or all tasks."""
@@ -563,7 +642,11 @@ def task_on(
 
 @task_app.command("off")
 def task_off(
-    name: Optional[str] = typer.Argument(None, help="Task name to disable"),
+    name: Optional[str] = typer.Argument(
+        None,
+        help="Task name to disable",
+        autocompletion=_complete_task_names,
+    ),
     all_tasks: bool = typer.Option(False, "--all", help="Disable all tasks"),
 ):
     """Disable a specific task or all tasks."""
@@ -574,7 +657,13 @@ def task_off(
 
 
 @task_app.command("show")
-def task_show(name: str = typer.Argument(..., help="Task name to show details for")):
+def task_show(
+    name: str = typer.Argument(
+        ...,
+        help="Task name to show details for",
+        autocompletion=_complete_task_names,
+    ),
+):
     """Show details of a specific task."""
     from .scheduler import get_projects
     from .parser import load_project_tasks
@@ -620,7 +709,13 @@ def task_show(name: str = typer.Argument(..., help="Task name to show details fo
 
 
 @task_app.command("run")
-def task_run(name: str = typer.Argument(..., help="Task name to run immediately")):
+def task_run(
+    name: str = typer.Argument(
+        ...,
+        help="Task name to run immediately",
+        autocompletion=_complete_task_names,
+    ),
+):
     """Run a specific task immediately (ignores schedule)."""
     from .scheduler import get_projects
     from .parser import load_project_tasks
@@ -769,7 +864,11 @@ def runs(
 
 @runs_app.command("show")
 def runs_show(
-    exec_id: str = typer.Argument(..., help="Execution ID to inspect"),
+    exec_id: str = typer.Argument(
+        ...,
+        help="Execution ID to inspect",
+        autocompletion=_complete_run_ids,
+    ),
     json_output: bool = typer.Option(False, "--json", help="Print structured JSON"),
 ):
     """Show details for a single execution run."""
@@ -783,7 +882,13 @@ def runs_show(
 
 
 @runs_app.command("stop")
-def runs_stop(exec_id: str = typer.Argument(..., help="Execution ID to stop")):
+def runs_stop(
+    exec_id: str = typer.Argument(
+        ...,
+        help="Execution ID to stop",
+        autocompletion=_complete_run_ids,
+    ),
+):
     """Stop a running execution."""
     from .executor import stop_execution
 
@@ -795,7 +900,9 @@ def runs_stop(exec_id: str = typer.Argument(..., help="Execution ID to stop")):
 @app.command()
 def logs(
     task_name: Optional[str] = typer.Argument(
-        None, help="Task name to inspect (opens the latest run)"
+        None,
+        help="Task name to inspect (opens the latest run)",
+        autocompletion=_complete_task_names,
     ),
     run_id: Optional[str] = typer.Option(
         None, "--run", help="Execution ID to inspect directly"
@@ -879,7 +986,13 @@ def logs(
 
 
 @app.command()
-def stop(exec_id: str = typer.Argument(..., help="Execution ID to stop")):
+def stop(
+    exec_id: str = typer.Argument(
+        ...,
+        help="Execution ID to stop",
+        autocompletion=_complete_run_ids,
+    ),
+):
     """Stop a running execution."""
     runs_stop(exec_id)
 
