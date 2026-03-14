@@ -231,7 +231,7 @@ shell: "bash"
 | `kage init` | 現在のディレクトリに kage を初期化 |
 | `kage run <task>` | 特定 task を即時実行 |
 | `kage compile <task>` | prompt task から同名の `.lock.sh` override を生成 |
-| `kage runs` | 実行履歴を grep しやすい 1 行形式で表示 |
+| `kage runs` | 相対日時付きの色付きテーブルで実行履歴を表示 |
 | `kage runs show <exec_id>` | 実行メタデータ、状態、ログパスを表示 |
 | `kage runs stop <exec_id>` | 実行中の run を停止 |
 | `kage logs <task>` | task の最新 run の生ログを開く |
@@ -254,7 +254,7 @@ macOS では `cron` の代わりに `launchd` が使用されます。`config.to
 - `darwin_launchd_interval_seconds`: 起動間隔を秒単位で指定（最小 `15`）。
 - `darwin_launchd_keep_alive`: `true` に設定すると、プロセスを常駐させます。
 
-`kage runs` は実行履歴ビュー、`kage logs` は run ごとの raw output viewer です。生ログ本体は `stdout.log`, `stderr.log`, `events.jsonl` として保持されます。
+`kage runs` は実行履歴ビューです。デフォルトでは `4時間前` のような相対日時付きテーブルで表示し、`--absolute-time` を付けると従来どおり詳細なローカル日時を表示します。`kage logs` は run ごとの raw output viewer で、生ログ本体は `stdout.log`, `stderr.log`, `events.jsonl` として保持されます。
 
 prompt task と同名の compiled lock 例えば `.kage/tasks/nightly.lock.sh` が存在する場合、kage はその lock に保持された source hash が `.md` と一致している間だけ Markdown 本文の代わりにそれを実行します。prompt 本文や front matter を更新したら lock は stale 扱いになるので、`kage compile <task>` を再実行してください。`kage doctor`、`kage task list`、UI の task card でも fresh / stale / missing を確認できます。
 

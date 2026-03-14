@@ -25,7 +25,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage run <task>` — Execute a specific task immediately.
 - `kage compile <task>` — Compile a prompt task into a sibling `.lock.sh` override.
 - `kage cron run` — Execute the scheduler loop once (used by cron/launchd).
-- `kage runs` — List execution runs in a 1-line, grep-friendly format.
+- `kage runs` — List execution runs in a relative-time table; add `--absolute-time` for detailed timestamps.
 - `kage runs show <exec_id>` — Inspect run metadata and log paths.
 - `kage runs stop <exec_id>` — Stop a running execution.
 - `kage logs <task>` — Open raw logs for the latest run of a task.

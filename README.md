@@ -231,7 +231,7 @@ Cleanup old logs every midnight.
 | `kage init` | Initialize kage in the current directory |
 | `kage run <task>` | Run a specific task immediately |
 | `kage compile <task>` | Compile a prompt task into a sibling `.lock.sh` override |
-| `kage runs` | List execution runs in grep-friendly 1-line format |
+| `kage runs` | List execution runs in a status-colored table with relative time |
 | `kage runs show <exec_id>` | Show run metadata, paths, and status details |
 | `kage runs stop <exec_id>` | Stop a running execution |
 | `kage logs <task>` | Open raw logs for the latest run of a task |
@@ -255,7 +255,7 @@ On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its
 - `darwin_launchd_interval_seconds`: Set the launch interval in seconds (minimum `15`).
 - `darwin_launchd_keep_alive`: Set to `true` to keep the process running (not recommended for simple polling).
 
-`kage runs` is the run-history view. `kage logs` is the raw-output viewer backed by per-run log files (`stdout.log`, `stderr.log`, `events.jsonl`).
+`kage runs` is the run-history view. By default it shows a compact table with relative timestamps like `4h ago`; add `--absolute-time` to show detailed local timestamps again. `kage logs` is the raw-output viewer backed by per-run log files (`stdout.log`, `stderr.log`, `events.jsonl`).
 
 If a prompt task has a sibling compiled lock such as `.kage/tasks/nightly.lock.sh`, kage executes that lock instead of the prompt body only while its stored source hashes still match the `.md` task file. When the source prompt or front matter changes, the lock becomes stale and you need to run `kage compile <task>` again. `kage doctor`, `kage task list`, and the UI task cards all show whether a lock is fresh, stale, or missing.
 

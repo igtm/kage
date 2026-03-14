@@ -221,7 +221,23 @@ def app_callback(
     return None
 
 
-def _print_runs(records, json_output: bool = False):
+def _run_status_markup(status: str) -> str:
+    if status == "SUCCESS":
+        return "[green]SUCCESS[/green]"
+    if status == "FAILED":
+        return "[red]FAILED[/red]"
+    if status == "RUNNING":
+        return "[yellow]RUNNING[/yellow]"
+    if status == "STOPPED":
+        return "[yellow]STOPPED[/yellow]"
+    return status
+
+
+def _print_runs(
+    records,
+    json_output: bool = False,
+    absolute_time: bool = False,
+):
     if json_output:
         typer.echo(
             json.dumps(
@@ -230,24 +246,48 @@ def _print_runs(records, json_output: bool = False):
         )
         return
 
+    from rich import box
+    from rich.console import Console
+    from rich.table import Table
+    from .runs import format_local_timestamp, format_relative_timestamp
+
+    is_ja = _is_ja()
+
     if not records:
-        typer.echo("No runs found.")
+        typer.echo("実行履歴がありません。" if is_ja else "No runs found.")
         return
 
+    console = Console()
+    table = Table(
+        show_header=True,
+        header_style="bold",
+        box=box.SIMPLE_HEAD,
+        padding=(0, 1),
+    )
+    table.add_column("日時" if is_ja else "When", style="dim", no_wrap=True)
+    table.add_column("状態" if is_ja else "Status", no_wrap=True)
+    table.add_column("タスク" if is_ja else "Task", style="bold")
+    table.add_column("Project", style="dim")
+    table.add_column("所要時間" if is_ja else "Duration", no_wrap=True)
+    table.add_column("概要" if is_ja else "Summary")
+
     for record in records:
-        typer.echo(
-            "\t".join(
-                [
-                    record.to_dict()["run_at_local"],
-                    record.status,
-                    record.task_name,
-                    record.to_dict()["project_short"],
-                    record.id[:8],
-                    record.to_dict()["duration_display"],
-                    record.output_summary or "",
-                ]
-            )
+        payload = record.to_dict()
+        when = (
+            format_local_timestamp(record.run_at)
+            if absolute_time
+            else format_relative_timestamp(record.run_at, is_ja=is_ja)
         )
+        table.add_row(
+            when,
+            _run_status_markup(record.status),
+            record.task_name,
+            payload["project_short"],
+            payload["duration_display"],
+            record.output_summary or "",
+        )
+
+    console.print(table)
 
 
 def _print_run_details(record, json_output: bool = False):
@@ -952,6 +992,11 @@ def runs(
         None, "--source", help="Filter by source: task or connector_poll"
     ),
     limit: int = typer.Option(20, "--limit", help="Maximum runs to show"),
+    absolute_time: bool = typer.Option(
+        False,
+        "--absolute-time",
+        help="Show absolute local timestamps instead of relative time",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Print structured JSON"),
 ):
     """List execution runs."""
@@ -967,7 +1012,11 @@ def runs(
         status=status,
         source=source,
     )
-    _print_runs(records, json_output=json_output)
+    _print_runs(
+        records,
+        json_output=json_output,
+        absolute_time=absolute_time,
+    )
 
 
 @runs_app.command("show")

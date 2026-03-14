@@ -1,5 +1,6 @@
 import json
-from datetime import datetime
+import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,7 +11,7 @@ from kage import db
 from kage.config import CommandDef, GlobalConfig, ProviderConfig
 from kage.main import app
 from kage.parser import TaskDef
-from kage.runs import get_run
+from kage.runs import format_local_timestamp, format_relative_timestamp, get_run
 
 runner = CliRunner()
 
@@ -38,23 +39,105 @@ def _append_event(path: Path, stream: str, text: str):
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
-def test_runs_cli_lists_tsv(cli_env):
+def test_format_relative_timestamp_supports_english_and_japanese():
+    now = datetime.now().astimezone()
+    four_hours_ago = (now - timedelta(hours=4)).isoformat()
+    two_days_future = (now + timedelta(days=2)).isoformat()
+
+    assert format_relative_timestamp(four_hours_ago, now=now) == "4h ago"
+    assert format_relative_timestamp(four_hours_ago, now=now, is_ja=True) == "4時間前"
+    assert format_relative_timestamp(two_days_future, now=now) == "in 2d"
+    assert format_relative_timestamp(two_days_future, now=now, is_ja=True) == "2日後"
+
+
+def test_runs_cli_lists_table_with_relative_time(cli_env):
     exec_id = db.start_execution("/tmp/demo", "Nightly Research")
+    start_at = datetime.now().astimezone() - timedelta(hours=4)
+    finished_at = start_at + timedelta(minutes=30)
+    with sqlite3.connect(cli_env["db_path"]) as conn:
+        conn.execute(
+            "UPDATE executions SET run_at = ?, finished_at = ? WHERE id = ?",
+            (start_at.isoformat(), finished_at.isoformat(), exec_id),
+        )
+        conn.commit()
     db.update_execution(
         exec_id,
         "SUCCESS",
         "visible output\n",
         "",
+        finished_at=finished_at.isoformat(),
         exit_code=0,
         output_summary="visible output",
     )
 
-    result = runner.invoke(app, ["runs"])
+    result = runner.invoke(app, ["runs"], env={"COLUMNS": "160"})
 
     assert result.exit_code == 0
+    assert "When" in result.stdout
+    assert "Status" in result.stdout
     assert "Nightly Research" in result.stdout
-    assert exec_id[:8] in result.stdout
-    assert "\tSUCCESS\t" in result.stdout
+    assert "SUCCESS" in result.stdout
+    assert "4h ago" in result.stdout
+    assert "30m 0s" in result.stdout
+    assert exec_id[:8] not in result.stdout
+
+
+def test_runs_cli_can_show_absolute_time(cli_env):
+    exec_id = db.start_execution("/tmp/demo", "Nightly Research")
+    start_at = datetime.now().astimezone() - timedelta(hours=4)
+    finished_at = start_at + timedelta(minutes=15)
+    with sqlite3.connect(cli_env["db_path"]) as conn:
+        conn.execute(
+            "UPDATE executions SET run_at = ?, finished_at = ? WHERE id = ?",
+            (start_at.isoformat(), finished_at.isoformat(), exec_id),
+        )
+        conn.commit()
+    db.update_execution(
+        exec_id,
+        "FAILED",
+        "",
+        "boom\n",
+        finished_at=finished_at.isoformat(),
+        exit_code=1,
+        output_summary="boom",
+    )
+
+    result = runner.invoke(app, ["runs", "--absolute-time"], env={"COLUMNS": "160"})
+
+    assert result.exit_code == 0
+    assert format_local_timestamp(start_at.isoformat()) in result.stdout
+    assert "FAILED" in result.stdout
+
+
+def test_runs_cli_uses_japanese_relative_time_when_lang_is_japanese(cli_env):
+    exec_id = db.start_execution("/tmp/demo", "Nightly Research")
+    start_at = datetime.now().astimezone() - timedelta(hours=4)
+    finished_at = start_at + timedelta(minutes=10)
+    with sqlite3.connect(cli_env["db_path"]) as conn:
+        conn.execute(
+            "UPDATE executions SET run_at = ?, finished_at = ? WHERE id = ?",
+            (start_at.isoformat(), finished_at.isoformat(), exec_id),
+        )
+        conn.commit()
+    db.update_execution(
+        exec_id,
+        "SUCCESS",
+        "ok\n",
+        "",
+        finished_at=finished_at.isoformat(),
+        exit_code=0,
+        output_summary="ok",
+    )
+
+    result = runner.invoke(
+        app,
+        ["runs"],
+        env={"COLUMNS": "160", "LANG": "ja_JP.UTF-8"},
+    )
+
+    assert result.exit_code == 0
+    assert "日時" in result.stdout
+    assert "4時間前" in result.stdout
 
 
 def test_logs_cli_reads_raw_stdout_without_cleaning(cli_env):

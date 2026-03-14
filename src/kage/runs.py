@@ -139,6 +139,57 @@ def format_local_timestamp(value: str | None) -> str:
         return value
 
 
+def format_relative_timestamp(
+    value: str | None,
+    *,
+    now: datetime | None = None,
+    is_ja: bool = False,
+) -> str:
+    if not value:
+        return "-"
+
+    try:
+        target = datetime.fromisoformat(value).astimezone()
+    except ValueError:
+        return value
+
+    current = (
+        now.astimezone(target.tzinfo)
+        if now
+        else datetime.now().astimezone(target.tzinfo)
+    )
+    delta_seconds = int((current - target).total_seconds())
+    future = delta_seconds < 0
+    delta_seconds = abs(delta_seconds)
+
+    if delta_seconds < 10:
+        return "たった今" if is_ja else "just now"
+
+    units = [
+        (365 * 24 * 60 * 60, "年", "y"),
+        (30 * 24 * 60 * 60, "か月", "mo"),
+        (24 * 60 * 60, "日", "d"),
+        (60 * 60, "時間", "h"),
+        (60, "分", "m"),
+        (1, "秒", "s"),
+    ]
+    amount = 0
+    ja_unit = "秒"
+    en_unit = "s"
+    for unit_seconds, ja_label, en_label in units:
+        if delta_seconds >= unit_seconds:
+            amount = delta_seconds // unit_seconds
+            ja_unit = ja_label
+            en_unit = en_label
+            break
+
+    if is_ja:
+        suffix = "後" if future else "前"
+        return f"{amount}{ja_unit}{suffix}"
+
+    return f"in {amount}{en_unit}" if future else f"{amount}{en_unit} ago"
+
+
 def get_duration_seconds(run: RunRecord) -> float | None:
     try:
         start = datetime.fromisoformat(run.run_at)
