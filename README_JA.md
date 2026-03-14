@@ -28,7 +28,7 @@
 - **永続メモリシステム**: `.kage/memory/` に状態を保存し、実行を跨いだ文脈の維持が可能。
 - **超軽量な実行**: OS 標準のスケジューラーを活用。バックグラウンドでの無駄なリソース消費がありません。
 - **柔軟な実行形式**: AIプロンプト、シェルコマンド、カスタムスクリプトに対応。AI プロンプト（Markdown 本文）と直接コマンド実行（Front Matter 内の `command`）の両方をサポート。
-- **コンパイル済みタスク**: `kage compile <task>` で prompt task から同名の `.lock.sh` を生成でき、source hash が一致している間だけその lock script が優先実行されます。
+- **コンパイル済みタスク**: `kage compile <task>` で prompt task から同名の `.lock.sh` を生成でき、保存された `prompt_hash` が現在の prompt 本文と一致している間だけその lock script が優先実行されます。
 - **高度な制御 (Workflow)**:
     - **実行モード**: `continuous` (常時), `once` (一回), `autostop` (AIが完了判断時に停止)。
     - **多重起動制御**: `allow`, `forbid` (重複スキップ), `replace` (古い方を終了)。
@@ -240,7 +240,7 @@ shell: "bash"
 | `kage cron install` | システムスケジューラーに登録 |
 | `kage cron status` | バックグラウンド実行状態の確認 |
 | `kage task list` | 状態、実効 Type、Provider/Command 付きでタスク一覧を表示 |
-| `kage task show <name>` | 詳細設定を表示 |
+| `kage task show <name>` | 詳細設定と prompt hash を表示 |
 | `kage connector list` | 設定済みのコネクター一覧を表示 |
 | `kage connector setup <type>` | コネクター（discord, slack, telegram）のセットアップガイドを表示 |
 | `kage connector poll` | `poll = true` のコネクターを即座にポーリング |
@@ -257,7 +257,7 @@ macOS では `cron` の代わりに `launchd` が使用されます。`config.to
 
 `kage runs` は実行履歴ビューです。デフォルトでは `4時間前` のような相対日時付きテーブルで表示し、`--absolute-time` を付けると従来どおり詳細なローカル日時を表示します。`kage logs` は run ごとの raw output viewer で、生ログ本体は `stdout.log`, `stderr.log`, `events.jsonl` として保持されます。`kage logs <task>` は 1 task の最新 run を開き、引数なしの `kage logs` は全 task のログを時系列順に結合して表示します。追従表示は `--follow` または `-f` が使えます。
 
-prompt task と同名の compiled lock 例えば `.kage/tasks/nightly.lock.sh` が存在する場合、kage はその lock に保持された source hash が `.md` と一致している間だけ Markdown 本文の代わりにそれを実行します。prompt 本文や front matter を更新したら lock は stale 扱いになるので、`kage compile <task>` を再実行してください。`kage doctor`、`kage task list`、UI の task card でも fresh / stale / missing を確認できます。
+prompt task と同名の compiled lock 例えば `.kage/tasks/nightly.lock.sh` が存在する場合、kage はその lock に保持された `prompt_hash` が現在の prompt 本文と一致している間だけ Markdown 本文の代わりにそれを実行します。prompt 本文を更新したら lock は stale 扱いになるので、`kage compile <task>` を再実行してください。`kage doctor`、`kage task list`、UI の task card でも fresh / stale / missing を確認できます。`kage task show <name>` では現在の prompt hash も確認できます。
 
 `kage task list` では project 列は末尾ディレクトリ名だけを表示し、prompt task は `Prompt` または `Prompt (Compiled)` として見えます。provider 未指定でも `gemini (Inherited)` のように実際に使われる provider を表示します。built-in の `codex` 実行テンプレートは既定で `codex exec --yolo ...` を使います。
 

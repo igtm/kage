@@ -31,7 +31,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage logs [<task>]` — Open raw logs for the latest run of a task, or merge all task logs when omitted.
 - `kage logs --run <exec_id>` — Open raw logs for a specific run.
 - `kage task list` — List tasks with short project names, effective type, and provider/command.
-- `kage task show <name>` — Detailed task configuration.
+- `kage task show <name>` — Detailed task configuration, including the current prompt hash.
 - `kage connector list` — List all configured connectors.
 - `kage connector setup <type>` — Show setup guide for a connector (discord, slack, telegram).
 - `kage connector poll` — Manually trigger polling for all connectors.
@@ -42,7 +42,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 
 Shell completion covers positional task/run arguments as well, so `kage run <task>`, `kage compile <task>`, `kage logs [<task>]`, `kage task run <name>`, `kage task show <name>`, `kage runs show <exec_id>`, and `kage stop <exec_id>` can all suggest concrete values after `kage completion install bash|zsh`. `kage doctor` reports whether those completion scripts are installed.
 
-If a prompt task has a sibling compiled lock like `.kage/tasks/nightly.lock.sh`, kage executes that lock instead of the Markdown prompt body only while the stored source hashes still match the `.md` task file. If the prompt body or front matter changes, the lock becomes stale and must be regenerated with `kage compile <task>`. `kage doctor`, `kage task list`, and the UI all surface whether the lock is fresh, stale, or missing.
+If a prompt task has a sibling compiled lock like `.kage/tasks/nightly.lock.sh`, kage executes that lock instead of the Markdown prompt body only while the stored `prompt_hash` still matches the current prompt body. If the prompt body changes, the lock becomes stale and must be regenerated with `kage compile <task>`. `kage doctor`, `kage task list`, and the UI all surface whether the lock is fresh, stale, or missing, and `kage task show <name>` prints the current prompt hash.
 
 In `kage task list`, prompt tasks render as `Prompt` or `Prompt (Compiled)`, stale compiled locks are highlighted, the project column uses only the leaf directory name, and inherited providers show up explicitly as values like `gemini (Inherited)`. The built-in `codex` command template runs `codex exec --yolo ...` by default.
 

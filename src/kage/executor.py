@@ -622,8 +622,6 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                             "source_task_file": str(task_file) if task_file else None,
                             "script_path": str(compiled_status["path"]),
                             "is_fresh": compiled_status["is_fresh"],
-                            "source_hash": compiled_status["source_hash"],
-                            "frontmatter_hash": compiled_status["frontmatter_hash"],
                             "prompt_hash": compiled_status["prompt_hash"],
                         }
                     },

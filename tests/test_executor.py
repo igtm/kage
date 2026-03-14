@@ -172,8 +172,6 @@ Fix this
             [
                 "#!/usr/bin/env bash",
                 "# kage-lock-version: 1",
-                f"# kage-source-hash: {fingerprints['source_hash']}",
-                f"# kage-frontmatter-hash: {fingerprints['frontmatter_hash']}",
                 f"# kage-prompt-hash: {fingerprints['prompt_hash']}",
                 "echo compiled",
                 "",

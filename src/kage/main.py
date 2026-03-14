@@ -827,8 +827,8 @@ def task_show(
         None, "--project", "-p", help="Project path substring for task lookup"
     ),
 ):
-    """Show detailed task configuration, including compiled lock freshness."""
-    from .compiler import compiled_task_status
+    """Show detailed task configuration, including compiled lock freshness and prompt hash."""
+    from .compiler import compiled_task_status, prompt_hash
     from .config import get_global_config
     from rich.console import Console
     from rich.panel import Panel
@@ -866,6 +866,9 @@ def task_show(
             f"[bold]Type:[/bold]           {_task_type_label(task, compiled_state)}"
         )
         details.append(f"[bold]Prompt:[/bold]         {task.prompt[:100]}...")
+        details.append(
+            f"[bold]Prompt Hash:[/bold]    {(compiled or {}).get('prompt_hash', prompt_hash(task.prompt or ''))}"
+        )
         details.append(f"[bold]Provider:[/bold]       {provider_label}")
         if compiled:
             if compiled["exists"]:

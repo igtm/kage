@@ -28,7 +28,7 @@ English | [日本語](./README_JA.md)
 - **Persistent Memory**: Stores task state in `.kage/memory/` to maintain context across runs.
 - **Lightweight Execution**: Leverages OS-native schedulers. Zero background overhead.
 - **Flexible Execution**: Supports AI prompt execution, shell commands, and custom scripts.
-- **Compiled Task Overrides**: `kage compile <task>` can materialize a prompt task into a sibling `.lock.sh` script with source hashes, and kage will only execute that lock script while it matches the source `.md`.
+- **Compiled Task Overrides**: `kage compile <task>` can materialize a prompt task into a sibling `.lock.sh` script with a stored `prompt_hash`, and kage will only execute that lock script while it matches the current prompt body.
 - **Advanced Workflow Controls**:
     - **Execution Modes**: `continuous`, `once`, `autostop`.
     - **Concurrency Policy**: `allow`, `forbid` (skip if running), `replace` (kill old).
@@ -240,7 +240,7 @@ Cleanup old logs every midnight.
 | `kage cron install` | Register to system scheduler |
 | `kage cron status` | Check background status |
 | `kage task list` | List tasks with status, effective type, and provider/command |
-| `kage task show <name>` | Show detailed task configuration |
+| `kage task show <name>` | Show detailed task configuration and prompt hash |
 | `kage connector list` | List all configured connectors |
 | `kage connector setup <type>` | Show setup guide for a connector (discord, slack, telegram) |
 | `kage connector poll` | Manually poll connectors with `poll = true` |
@@ -258,7 +258,7 @@ On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its
 
 `kage runs` is the run-history view. By default it shows a compact table with relative timestamps like `4h ago`; add `--absolute-time` to show detailed local timestamps again. `kage logs` is the raw-output viewer backed by per-run log files (`stdout.log`, `stderr.log`, `events.jsonl`). `kage logs <task>` opens the latest run for one task, while bare `kage logs` merges all task logs in chronological order. Use `--follow` or `-f` to keep tailing appended output.
 
-If a prompt task has a sibling compiled lock such as `.kage/tasks/nightly.lock.sh`, kage executes that lock instead of the prompt body only while its stored source hashes still match the `.md` task file. When the source prompt or front matter changes, the lock becomes stale and you need to run `kage compile <task>` again. `kage doctor`, `kage task list`, and the UI task cards all show whether a lock is fresh, stale, or missing.
+If a prompt task has a sibling compiled lock such as `.kage/tasks/nightly.lock.sh`, kage executes that lock instead of the prompt body only while its stored `prompt_hash` still matches the current prompt body. When the prompt changes, the lock becomes stale and you need to run `kage compile <task>` again. `kage doctor`, `kage task list`, and the UI task cards all show whether a lock is fresh, stale, or missing. `kage task show <name>` also prints the current prompt hash so you can inspect what the lock should match.
 
 `kage task list` shortens the project column to the leaf directory name, shows prompt tasks as `Prompt` or `Prompt (Compiled)`, and resolves inherited providers as values like `gemini (Inherited)` so you can see what will actually run. Built-in `codex` runs now use `codex exec --yolo ...` in the default command template.
 

@@ -3,7 +3,11 @@ from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
-from kage.compiler import compile_prompt_task, compiled_task_status
+from kage.compiler import (
+    compile_prompt_task,
+    compiled_task_status,
+    get_task_source_fingerprints,
+)
 from kage.main import app
 from kage.parser import TaskDef
 
@@ -46,6 +50,45 @@ fresh prompt
     assert status["matches_prompt"] is False
 
 
+def test_compiled_task_status_ignores_non_prompt_hash_metadata(tmp_path: Path):
+    task_file = tmp_path / "nightly.md"
+    task_file.write_text(
+        """---
+name: Nightly
+cron: "* * * * *"
+provider: codex
+---
+
+fresh prompt
+""",
+        encoding="utf-8",
+    )
+    prompt_fingerprint = get_task_source_fingerprints(task_file)
+    compiled_file = task_file.with_suffix(".lock.sh")
+    compiled_file.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "# kage-lock-version: 1",
+                "# kage-source-hash: stale-source",
+                "# kage-frontmatter-hash: stale-frontmatter",
+                f"# kage-prompt-hash: {prompt_fingerprint['prompt_hash']}",
+                "echo hello",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    task = TaskDef(name="Nightly", cron="* * * * *", prompt="fresh prompt")
+    status = compiled_task_status(task, task_file)
+
+    assert status is not None
+    assert status["exists"] is True
+    assert status["matches_prompt"] is True
+    assert status["is_fresh"] is True
+
+
 def test_compile_prompt_task_writes_shell_script(tmp_path: Path, mocker):
     task_file = tmp_path / "nightly.md"
     task_file.write_text(
@@ -79,9 +122,10 @@ Create a report
     assert compiled_path == task_file.with_suffix(".lock.sh")
     assert content.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
     assert "# kage-lock-version: 1" in content
-    assert "# kage-source-hash:" in content
-    assert "# kage-frontmatter-hash:" in content
     assert "# kage-source-task: Nightly" in content
+    assert "# kage-prompt-hash:" in content
+    assert "# kage-source-hash:" not in content
+    assert "# kage-frontmatter-hash:" not in content
     assert "echo hello" in content
     assert "```" not in content
 
