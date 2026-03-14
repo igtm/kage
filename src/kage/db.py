@@ -1,14 +1,18 @@
+import shutil
 import sqlite3
 import uuid
 from datetime import datetime
-from .config import KAGE_DB_PATH
+
+from .config import KAGE_DB_PATH, get_global_config
+from .runs import ensure_run_log_files, get_run_log_dir
 
 
 def init_db():
     KAGE_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(KAGE_DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS executions (
             id TEXT PRIMARY KEY,
             project_path TEXT,
@@ -17,37 +21,100 @@ def init_db():
             status TEXT,
             stdout TEXT,
             stderr TEXT,
-            pid INTEGER
+            pid INTEGER,
+            finished_at TEXT,
+            log_dir TEXT,
+            stdout_path TEXT,
+            stderr_path TEXT,
+            events_path TEXT,
+            exit_code INTEGER,
+            output_summary TEXT,
+            stdout_bytes INTEGER,
+            stderr_bytes INTEGER,
+            last_output_at TEXT,
+            working_dir TEXT,
+            execution_kind TEXT,
+            provider_name TEXT
         )
-    """)
-    # Migration: finished_at カラムを追加（既存DB対応）
-    try:
-        cursor.execute("ALTER TABLE executions ADD COLUMN finished_at TEXT")
-    except sqlite3.OperationalError:
-        pass  # 既に存在する場合
+    """
+    )
 
-    # Migration: pid カラムを追加（既存DB対応）
-    try:
-        cursor.execute("ALTER TABLE executions ADD COLUMN pid INTEGER")
-    except sqlite3.OperationalError:
-        pass
+    migrations = {
+        "finished_at": "TEXT",
+        "pid": "INTEGER",
+        "log_dir": "TEXT",
+        "stdout_path": "TEXT",
+        "stderr_path": "TEXT",
+        "events_path": "TEXT",
+        "exit_code": "INTEGER",
+        "output_summary": "TEXT",
+        "stdout_bytes": "INTEGER",
+        "stderr_bytes": "INTEGER",
+        "last_output_at": "TEXT",
+        "working_dir": "TEXT",
+        "execution_kind": "TEXT",
+        "provider_name": "TEXT",
+    }
+    for column_name, column_type in migrations.items():
+        try:
+            cursor.execute(
+                f"ALTER TABLE executions ADD COLUMN {column_name} {column_type}"
+            )
+        except sqlite3.OperationalError:
+            pass
 
     conn.commit()
     conn.close()
 
 
-def start_execution(project_path: str, task_name: str, pid: int = None) -> str:
+def start_execution(
+    project_path: str,
+    task_name: str,
+    pid: int = None,
+    working_dir: str | None = None,
+    execution_kind: str | None = None,
+    provider_name: str | None = None,
+) -> str:
     """実行開始を記録し、実行IDを返す。"""
+    init_db()
     conn = sqlite3.connect(KAGE_DB_PATH)
     cursor = conn.cursor()
-    run_at = datetime.now().isoformat()
+    run_at = datetime.now().astimezone().isoformat()
     exec_id = str(uuid.uuid4())
+    log_paths = ensure_run_log_files(exec_id)
     cursor.execute(
         """
-        INSERT INTO executions (id, project_path, task_name, run_at, status, stdout, stderr, finished_at, pid)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO executions (
+            id, project_path, task_name, run_at, status, stdout, stderr, finished_at,
+            pid, log_dir, stdout_path, stderr_path, events_path, exit_code,
+            output_summary, stdout_bytes, stderr_bytes, last_output_at, working_dir,
+            execution_kind, provider_name
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
-        (exec_id, project_path, task_name, run_at, "RUNNING", "", "", None, pid),
+        (
+            exec_id,
+            project_path,
+            task_name,
+            run_at,
+            "RUNNING",
+            "",
+            "",
+            None,
+            pid,
+            str(log_paths["log_dir"]),
+            str(log_paths["stdout_path"]),
+            str(log_paths["stderr_path"]),
+            str(log_paths["events_path"]),
+            None,
+            "",
+            0,
+            0,
+            None,
+            working_dir,
+            execution_kind,
+            provider_name,
+        ),
     )
     conn.commit()
     conn.close()
@@ -74,44 +141,91 @@ def get_execution_status(exec_id: str) -> str | None:
     return row[0] if row else None
 
 
+def _prune_runs(cursor: sqlite3.Cursor):
+    retention = get_global_config().run_retention_count
+    if retention <= 0:
+        return
+
+    cursor.execute(
+        """
+        SELECT id, log_dir
+        FROM executions
+        WHERE id NOT IN (
+            SELECT id FROM executions
+            ORDER BY run_at DESC
+            LIMIT ?
+        )
+    """,
+        (retention,),
+    )
+    rows = cursor.fetchall()
+    for exec_id, log_dir in rows:
+        target = log_dir or str(get_run_log_dir(exec_id))
+        try:
+            shutil.rmtree(target)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+    cursor.execute(
+        """
+        DELETE FROM executions
+        WHERE id NOT IN (
+            SELECT id FROM executions
+            ORDER BY run_at DESC
+            LIMIT ?
+        )
+    """,
+        (retention,),
+    )
+
+
 def update_execution(
-    exec_id: str, status: str, stdout: str, stderr: str, finished_at: str = None
+    exec_id: str,
+    status: str,
+    stdout: str,
+    stderr: str,
+    finished_at: str = None,
+    exit_code: int | None = None,
+    output_summary: str | None = None,
+    stdout_bytes: int | None = None,
+    stderr_bytes: int | None = None,
+    last_output_at: str | None = None,
 ):
     """実行結果を更新する。"""
     conn = sqlite3.connect(KAGE_DB_PATH)
     cursor = conn.cursor()
     if finished_at is None:
-        finished_at = datetime.now().isoformat()
+        finished_at = datetime.now().astimezone().isoformat()
 
-    if status == "STOPPED":
-        cursor.execute(
-            """
-            UPDATE executions
-            SET status = ?, stdout = ?, stderr = ?, finished_at = ?
-            WHERE id = ?
-        """,
-            (status, stdout, stderr, finished_at, exec_id),
-        )
-    else:
-        cursor.execute(
-            """
-            UPDATE executions
-            SET status = ?, stdout = ?, stderr = ?, finished_at = ?
-            WHERE id = ? AND status != 'STOPPED'
-        """,
-            (status, stdout, stderr, finished_at, exec_id),
-        )
+    where = "WHERE id = ?"
+    if status != "STOPPED":
+        where += " AND status != 'STOPPED'"
+
+    cursor.execute(
+        f"""
+        UPDATE executions
+        SET status = ?, stdout = ?, stderr = ?, finished_at = ?, exit_code = ?,
+            output_summary = ?, stdout_bytes = ?, stderr_bytes = ?,
+            last_output_at = ?
+        {where}
+    """,
+        (
+            status,
+            stdout,
+            stderr,
+            finished_at,
+            exit_code,
+            output_summary,
+            stdout_bytes,
+            stderr_bytes,
+            last_output_at,
+            exec_id,
+        ),
+    )
     updated = cursor.rowcount > 0
-
-    # ログを最大100件に制限
-    cursor.execute("""
-        DELETE FROM executions 
-        WHERE id NOT IN (
-            SELECT id FROM executions 
-            ORDER BY run_at DESC 
-            LIMIT 100
-        )
-    """)
+    _prune_runs(cursor)
 
     conn.commit()
     conn.close()

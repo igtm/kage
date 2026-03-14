@@ -5,6 +5,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -25,6 +26,7 @@ from .db import (
 )
 from .parser import TaskDef
 from .ai.chat import clean_ai_reply, get_thinking_tag
+from .runs import ensure_run_log_files, get_run, infer_output_summary
 
 
 def _normalize_headless_args(cmd: list[str]) -> list[str]:
@@ -158,6 +160,7 @@ def _load_task_json(memory_dir: Path) -> dict:
 def _compute_prompt_hash(prompt: str) -> str:
     """プロンプト本文のSHA256ハッシュを返す。"""
     import hashlib
+
     return hashlib.sha256(prompt.strip().encode("utf-8")).hexdigest()
 
 
@@ -191,23 +194,162 @@ def _check_running(lock_path: Path) -> Optional[int]:
     except (ProcessLookupError, ValueError, OverflowError):
         return None
 
+
 def _notify_connectors(task: TaskDef, status: str, stdout: str, stderr: str):
     if not task.notify_connectors:
         return
-        
+
     from .connectors.runner import get_connector
-    
+
     msg = f"**[{task.name}]** Execution completed with status: `{status}`"
-    
+
     if stdout:
         msg += f"\n{stdout[:2000]}"
         if len(stdout) > 2000:
             msg += "\n...(truncated)"
-        
+
     for c_name in task.notify_connectors:
         connector = get_connector(c_name)
         if connector:
             connector.send_message(msg)
+
+
+def _pump_stream(
+    stream,
+    stream_name: str,
+    raw_path: Path,
+    events_path: Path,
+    events_lock: threading.Lock,
+    state: dict,
+    state_lock: threading.Lock,
+):
+    if stream is None:
+        return
+
+    with raw_path.open("a", encoding="utf-8", errors="replace") as raw_file:
+        while True:
+            chunk = stream.readline()
+            if chunk == "":
+                break
+
+            raw_file.write(chunk)
+            raw_file.flush()
+
+            event = {
+                "ts": datetime.now().astimezone().isoformat(),
+                "stream": stream_name,
+                "text": chunk,
+            }
+            with events_lock:
+                with events_path.open(
+                    "a", encoding="utf-8", errors="replace"
+                ) as events_file:
+                    events_file.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+            with state_lock:
+                state[f"{stream_name}_chunks"].append(chunk)
+                state[f"{stream_name}_bytes"] += len(chunk.encode("utf-8"))
+                state["last_output_at"] = event["ts"]
+
+    try:
+        stream.close()
+    except Exception:
+        pass
+
+
+def _stream_process_output(proc: subprocess.Popen, exec_id: str) -> dict:
+    log_paths = ensure_run_log_files(exec_id)
+    state = {
+        "stdout_chunks": [],
+        "stderr_chunks": [],
+        "stdout_bytes": 0,
+        "stderr_bytes": 0,
+        "last_output_at": None,
+    }
+    state_lock = threading.Lock()
+    events_lock = threading.Lock()
+    threads = [
+        threading.Thread(
+            target=_pump_stream,
+            args=(
+                proc.stdout,
+                "stdout",
+                log_paths["stdout_path"],
+                log_paths["events_path"],
+                events_lock,
+                state,
+                state_lock,
+            ),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=_pump_stream,
+            args=(
+                proc.stderr,
+                "stderr",
+                log_paths["stderr_path"],
+                log_paths["events_path"],
+                events_lock,
+                state,
+                state_lock,
+            ),
+            daemon=True,
+        ),
+    ]
+    for thread in threads:
+        thread.start()
+    state["threads"] = threads
+    return state
+
+
+def prepare_command_for_execution(cmd: list[str], env: dict[str, str]) -> list[str]:
+    prepared = list(cmd)
+    if prepared and prepared[0]:
+        exe_path = shutil.which(prepared[0], path=env.get("PATH"))
+        if exe_path:
+            prepared[0] = exe_path
+    return _normalize_headless_args(prepared)
+
+
+def run_logged_command(
+    cmd: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    exec_id: str,
+    timeout: float | None = None,
+) -> dict:
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
+
+    set_execution_pid(exec_id, proc.pid)
+
+    stream_state = _stream_process_output(proc, exec_id)
+    try:
+        returncode = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        proc.wait()
+        raise
+    finally:
+        for thread in stream_state["threads"]:
+            thread.join()
+
+    return {
+        "returncode": returncode,
+        "stdout": "".join(stream_state["stdout_chunks"]),
+        "stderr": "".join(stream_state["stderr_chunks"]),
+        "stdout_bytes": stream_state["stdout_bytes"],
+        "stderr_bytes": stream_state["stderr_bytes"],
+        "last_output_at": stream_state["last_output_at"],
+        "pid": proc.pid,
+    }
 
 
 def stop_execution(exec_id: str):
@@ -217,14 +359,38 @@ def stop_execution(exec_id: str):
         print(f"No PID found for execution {exec_id}")
         return
 
+    current = get_run(exec_id)
+    current_stdout = current.stdout if current else ""
+    current_stderr = current.stderr if current else ""
+
     try:
         # プロセスグループ全体にSIGTERMを送信
         os.killpg(os.getpgid(pid), signal.SIGTERM)
-        update_execution(exec_id, "STOPPED", "", "Terminated by user")
+        merged_stderr = current_stderr or ""
+        if merged_stderr:
+            merged_stderr += "\n"
+        merged_stderr += "Terminated by user"
+        update_execution(
+            exec_id,
+            "STOPPED",
+            current_stdout,
+            merged_stderr,
+            output_summary=infer_output_summary(current_stdout, merged_stderr),
+        )
         print(f"Stopped execution {exec_id} (PID: {pid})")
     except ProcessLookupError:
         # 既に終了している場合
-        update_execution(exec_id, "STOPPED", "", "Terminated by user (already dead)")
+        merged_stderr = current_stderr or ""
+        if merged_stderr:
+            merged_stderr += "\n"
+        merged_stderr += "Terminated by user (already dead)"
+        update_execution(
+            exec_id,
+            "STOPPED",
+            current_stdout,
+            merged_stderr,
+            output_summary=infer_output_summary(current_stdout, merged_stderr),
+        )
     except Exception as e:
         print(f"Failed to stop execution {exec_id}: {e}")
 
@@ -260,6 +426,8 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
     system_prompt = get_system_prompt(workspace_dir=project_dir)
     execution_dir = _resolve_task_working_dir(project_dir, task, task_file)
 
+    exec_id: str | None = None
+
     # ロックファイル作成
     try:
         lock_path.write_text(str(os.getpid()))
@@ -288,8 +456,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 plan_json = json.dumps(task_plan, indent=2, ensure_ascii=False)
                 if stored_hash == current_hash:
                     task_plan_context = (
-                        f"\n\n## Task Plan ({task_plan_file})\n"
-                        f"{plan_json}"
+                        f"\n\n## Task Plan ({task_plan_file})\n{plan_json}"
                     )
                 else:
                     task_plan_context = (
@@ -326,7 +493,9 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
 
             # プロンプトの構築: System Prompt + Task Plan + Memory + Task Instructions
             thinking_tag = get_thinking_tag(engine_name)
-            formatted_system_prompt = system_prompt.replace("{thinking_tag}", thinking_tag)
+            formatted_system_prompt = system_prompt.replace(
+                "{thinking_tag}", thinking_tag
+            )
             full_prompt = f"{formatted_system_prompt}{task_plan_context}{memory_section}\n\n## Task Instructions\n{task.prompt}"
 
             provider = global_config.providers.get(engine_name)
@@ -352,7 +521,12 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                     auto_inject_model=not bool(task.command_template),
                 )
             else:
-                cmd = [engine_name, *build_model_args(provider), full_prompt, *extra_args]
+                cmd = [
+                    engine_name,
+                    *build_model_args(provider),
+                    full_prompt,
+                    *extra_args,
+                ]
 
         elif task.command:
             shell_cmd = task.shell or "sh"
@@ -369,49 +543,44 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
 
         try:
             from .db import init_db
+
             init_db()  # Migration ensure
             # まだPIDがわからないのでNoneで開始
-            exec_id = start_execution(str(project_dir), task.name)
+            exec_id = start_execution(
+                str(project_dir),
+                task.name,
+                working_dir=str(execution_dir),
+                execution_kind="prompt" if task.prompt else "command",
+                provider_name=engine_name if task.prompt else None,
+            )
 
             print(f"Executing task '{task.name}' in {execution_dir}")
             env = os.environ.copy()
             if global_config.env_path:
                 env["PATH"] = global_config.env_path
 
-            if cmd and cmd[0]:
-                exe_path = shutil.which(cmd[0], path=env.get("PATH"))
-                if exe_path:
-                    cmd[0] = exe_path
-            cmd = _normalize_headless_args(cmd)
+            cmd = prepare_command_for_execution(cmd, env)
 
             # タイムアウト設定 (デフォルトなし)
             timeout = task.timeout_minutes * 60 if task.timeout_minutes else None
 
-            # プロセス開始
-            proc = subprocess.Popen(
-                cmd,
-                cwd=execution_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=env,
-                start_new_session=True,  # 新しいセッション（プロセスグループ）を作成
-            )
-
-            # PID を更新
-            set_execution_pid(exec_id, proc.pid)
-
             try:
-                stdout, stderr = proc.communicate(timeout=timeout)
-                returncode = proc.returncode
+                result_data = run_logged_command(
+                    cmd=cmd,
+                    cwd=execution_dir,
+                    env=env,
+                    exec_id=exec_id,
+                    timeout=timeout,
+                )
             except subprocess.TimeoutExpired:
                 # タイムアウト時はプロセスグループごと終了させる
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                stdout, stderr = proc.communicate()
-                returncode = -1
-                raise  # re-raise to be caught by outer try
-
-            result = subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+                raise
+            result = subprocess.CompletedProcess(
+                cmd,
+                result_data["returncode"],
+                result_data["stdout"],
+                result_data["stderr"],
+            )
 
             if get_execution_status(exec_id) == "STOPPED":
                 return
@@ -423,8 +592,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 updated_plan = _load_task_json(memory_dir)
                 if updated_plan.get("sub_tasks"):
                     all_done = all(
-                        t.get("status") == "done"
-                        for t in updated_plan["sub_tasks"]
+                        t.get("status") == "done" for t in updated_plan["sub_tasks"]
                     )
                     if all_done:
                         should_stop = True
@@ -454,7 +622,18 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             # Clean thinking tags from AI output before storing and notifying
             if task.prompt:
                 result.stdout = clean_ai_reply(result.stdout)
-            updated = update_execution(exec_id, status, result.stdout, result.stderr)
+            summary = infer_output_summary(result.stdout, result.stderr)
+            updated = update_execution(
+                exec_id,
+                status,
+                result.stdout,
+                result.stderr,
+                exit_code=result.returncode,
+                output_summary=summary,
+                stdout_bytes=result_data["stdout_bytes"],
+                stderr_bytes=result_data["stderr_bytes"],
+                last_output_at=result_data["last_output_at"],
+            )
             if updated:
                 _notify_connectors(task, status, result.stdout, result.stderr)
         except subprocess.TimeoutExpired:
@@ -464,19 +643,28 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 "TIMEOUT",
                 "",
                 stderr,
+                exit_code=-1,
+                output_summary=infer_output_summary("", stderr),
             )
             if updated:
                 _notify_connectors(task, "TIMEOUT", "", stderr)
         except Exception as e:
-            updated = update_execution(exec_id, "ERROR", "", str(e))
+            updated = update_execution(
+                exec_id,
+                "ERROR",
+                "",
+                str(e),
+                output_summary=infer_output_summary("", str(e)),
+            )
             if updated:
                 _notify_connectors(task, "ERROR", "", str(e))
     finally:
         if lock_path.exists():
             lock_path.unlink()
-        
+
         # 最終的に PID を NULL にしておく (終了済みを明示)
         try:
-            set_execution_pid(exec_id, None)
-        except:
+            if exec_id:
+                set_execution_pid(exec_id, None)
+        except Exception:
             pass

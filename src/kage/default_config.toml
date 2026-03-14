@@ -10,6 +10,7 @@ cron_interval_minutes = 1
 # darwin_launchd_keep_alive = false     # macOS launchd専用 (常駐させるか)
 timezone = "UTC"       # cronスケジュールなどで使うタイムゾーン
 memory_max_entries = 5 # プロンプトに注入する直近メモリの最大件数
+run_retention_count = 100 # 保持する実行履歴数
 
 # working_dir = "~/tmp/my-project" # AI (provider) が実行されるデフォルトのディレクトリ
 

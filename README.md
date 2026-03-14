@@ -35,7 +35,7 @@ English | [日本語](./README_JA.md)
 - **Markdown-First**: Define tasks using simple Markdown files with YAML front matter.
 - **Layered Configuration**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > defaults.
 - **Connectors**: Integrate with Discord/Slack/Telegram. Task notifications are always enabled; bi-directional chat requires `poll = true` (⚠️ grants channel members AI access to your PC).
-- **Thinking Process Isolation**: AI workers automatically wrap reasoning in `<think>` tags, which are hidden from notifications and logs for a cleaner experience.
+- **Thinking Process Isolation**: AI workers automatically wrap reasoning in `<think>` tags. Notifications, summaries, and cleaned outputs hide them, while `kage logs` keeps the raw stream available for debugging.
 - **Web Dashboard**: Execution history, task management, and AI chat — all in one place.
 
 Default built-in AI providers: `codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`.
@@ -47,6 +47,8 @@ Check out the [Technical Architecture](ARCHITECTURE.md) for more details.
 ```bash
 curl -sSL https://raw.githubusercontent.com/igtm/kage/main/install.sh | bash
 ```
+
+The installer automatically runs pending install-time migrations after upgrading `kage`.
 
 You can also add this repository's skills with:
 ```bash
@@ -224,22 +226,34 @@ Cleanup old logs every midnight.
 | `kage onboard` | Global setup (cron, directories, DB) |
 | `kage init` | Initialize kage in the current directory |
 | `kage run` | Execute current directory tasks once |
+| `kage runs` | List execution runs in grep-friendly 1-line format |
+| `kage runs show <exec_id>` | Show run metadata, paths, and status details |
+| `kage runs stop <exec_id>` | Stop a running execution |
+| `kage logs <task>` | Open raw logs for the latest run of a task |
+| `kage logs --run <exec_id>` | Open raw logs for a specific run |
 | `kage cron install` | Register to system scheduler |
 | `kage cron status` | Check background status |
+| `kage task list` | List all tasks with status and schedule |
+| `kage task show <name>` | Show detailed task configuration |
+| `kage connector list` | List all configured connectors |
+| `kage connector setup <type>` | Show setup guide for a connector (discord, slack, telegram) |
+| `kage connector poll` | Manually poll connectors with `poll = true` |
+| `kage migrate install` | Run pending install-time migrations manually |
+| `kage doctor` | Diagnose configuration health |
+| `kage skill` | Display agent skill guidelines |
+| `kage ui` | Open the web dashboard |
 
 ### macOS launchd Specific Settings
 On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its behavior in `config.toml`:
 
 - `darwin_launchd_interval_seconds`: Set the launch interval in seconds (minimum `15`).
 - `darwin_launchd_keep_alive`: Set to `true` to keep the process running (not recommended for simple polling).
-| `kage task list` | List all tasks with status and schedule |
-| `kage task show <name>` | Show detailed task configuration |
-| `kage connector list` | List all configured connectors |
-| `kage connector setup <type>` | Show setup guide for a connector (discord, slack, telegram) |
-| `kage connector poll` | Manually poll connectors with `poll = true` |
-| `kage doctor` | Diagnose configuration health |
-| `kage skill` | Display agent skill guidelines |
-| `kage ui` | Open the web dashboard |
+
+`kage runs` is the run-history view. `kage logs` is the raw-output viewer backed by per-run log files (`stdout.log`, `stderr.log`, `events.jsonl`).
+
+Connector polling replies are recorded in the same run history. Use `kage runs --source connector_poll` to isolate them, then inspect the raw AI CLI output with `kage logs --run <exec_id>`.
+
+Install-time migrations are discovered automatically from `src/kage/migrations/install/`. New migration modules added there are picked up by both `kage migrate install` and `install.sh`.
 
 ## Configuration
 

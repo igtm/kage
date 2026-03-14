@@ -3,6 +3,8 @@ from . import config as config_mod, daemon, db
 from typing import Optional
 from importlib import metadata
 from pathlib import Path
+import json
+import time
 from typer import completion as typer_completion
 
 app = typer.Typer(
@@ -19,8 +21,19 @@ app.add_typer(task_app, name="task")
 project_app = typer.Typer(help="Manage registered projects")
 app.add_typer(project_app, name="project")
 
-connector_app = typer.Typer(help="Manage chat connectors (Discord, Slack, Telegram, etc.)")
+connector_app = typer.Typer(
+    help="Manage chat connectors (Discord, Slack, Telegram, etc.)"
+)
 app.add_typer(connector_app, name="connector")
+
+migrate_app = typer.Typer(help="Run install/data migrations")
+app.add_typer(migrate_app, name="migrate")
+
+runs_app = typer.Typer(
+    help="View and manage execution runs",
+    invoke_without_command=True,
+)
+app.add_typer(runs_app, name="runs")
 
 completion_app = typer.Typer(help="Shell completion helpers")
 app.add_typer(completion_app, name="completion")
@@ -115,6 +128,165 @@ def app_callback(
 ):
     """kage CLI."""
     return None
+
+
+def _print_runs(records, json_output: bool = False):
+    if json_output:
+        typer.echo(
+            json.dumps(
+                [record.to_dict() for record in records], ensure_ascii=False, indent=2
+            )
+        )
+        return
+
+    if not records:
+        typer.echo("No runs found.")
+        return
+
+    for record in records:
+        typer.echo(
+            "\t".join(
+                [
+                    record.to_dict()["run_at_local"],
+                    record.status,
+                    record.task_name,
+                    record.to_dict()["project_short"],
+                    record.id[:8],
+                    record.to_dict()["duration_display"],
+                    record.output_summary or "",
+                ]
+            )
+        )
+
+
+def _print_run_details(record, json_output: bool = False):
+    from .runs import format_local_timestamp, load_run_metadata
+
+    metadata = load_run_metadata(record)
+    connector_meta = metadata.get("connector", {}) if isinstance(metadata, dict) else {}
+
+    if json_output:
+        payload = record.to_dict()
+        payload["metadata"] = metadata
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    details = [
+        ("id", record.id),
+        ("task", record.task_name),
+        ("project", record.project_path),
+        ("working_dir", record.working_dir or "-"),
+        ("status", record.status),
+        ("run_at", record.to_dict()["run_at_local"]),
+        (
+            "finished_at",
+            "-"
+            if not record.finished_at
+            else format_local_timestamp(record.finished_at),
+        ),
+        ("duration", record.to_dict()["duration_display"]),
+        ("source", record.to_dict()["source"]),
+        ("kind", record.execution_kind or "-"),
+        ("provider", record.provider_name or "-"),
+        ("exit_code", "-" if record.exit_code is None else str(record.exit_code)),
+        ("summary", record.output_summary or "-"),
+        ("stdout_log", record.stdout_path or "-"),
+        ("stderr_log", record.stderr_path or "-"),
+        ("events_log", record.events_path or "-"),
+    ]
+    if connector_meta:
+        details.extend(
+            [
+                ("connector", connector_meta.get("name", "-")),
+                ("connector_type", connector_meta.get("type", "-")),
+                ("conversation_id", connector_meta.get("conversation_id", "-")),
+                ("source_message_id", connector_meta.get("source_message_id", "-")),
+                ("source_user", connector_meta.get("source_user_name", "-")),
+                ("source_user_id", connector_meta.get("source_user_id", "-")),
+                ("reply_id", connector_meta.get("posted_reply_id", "-")),
+            ]
+        )
+    for key, value in details:
+        typer.echo(f"{key}: {value}")
+
+
+def _resolve_log_target(task_name: str | None, run_id: str | None, project: str | None):
+    from .runs import get_run, resolve_latest_run_for_task
+
+    if run_id:
+        run = get_run(run_id)
+        if not run:
+            typer.echo(f"Run not found: {run_id}")
+            raise typer.Exit(1)
+        return run
+
+    if not task_name:
+        typer.echo("Specify a task name or use --run <exec_id>.")
+        raise typer.Exit(1)
+
+    run, projects = resolve_latest_run_for_task(task_name, project_filter=project)
+    if run:
+        return run
+    if projects:
+        typer.echo(
+            f"Task '{task_name}' exists in multiple projects. Use --project with one of:"
+        )
+        for project_path in projects:
+            typer.echo(project_path)
+        raise typer.Exit(1)
+
+    typer.echo(f"No runs found for task '{task_name}'.")
+    raise typer.Exit(1)
+
+
+def _follow_logs(run_id: str, stream: str):
+    from .runs import format_local_timestamp, get_run, log_path_for_stream
+
+    run = get_run(run_id)
+    if not run:
+        raise typer.Exit(1)
+
+    path = log_path_for_stream(run, stream)
+    if not path or not path.exists():
+        return
+
+    position = path.stat().st_size
+    while True:
+        current = get_run(run_id)
+        if path.exists():
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(position)
+                chunk = handle.read()
+                position = handle.tell()
+            if chunk:
+                if stream == "merged":
+                    # merged follow uses fresh snapshot of appended events only
+                    for line in chunk.splitlines():
+                        try:
+                            payload = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if not isinstance(payload, dict):
+                            continue
+                        ts = payload.get("ts", "")
+                        stream_name = str(payload.get("stream", "")).upper().ljust(6)
+                        text = str(payload.get("text", ""))
+                        for logical_line in text.splitlines() or [text]:
+                            if ts:
+                                try:
+                                    local_ts = format_local_timestamp(ts).split(" ", 1)[
+                                        1
+                                    ]
+                                except Exception:
+                                    local_ts = ts
+                            else:
+                                local_ts = "-"
+                            typer.echo(f"{local_ts} {stream_name} {logical_line}")
+                else:
+                    typer.echo(chunk, nl=False)
+        if not current or current.status != "RUNNING":
+            break
+        time.sleep(0.5)
 
 
 @project_app.command("list")
@@ -274,6 +446,7 @@ def task_new(
         raise typer.Exit(1)
 
     import locale
+
     lang = "en"
     try:
         loc, _ = locale.getlocale()
@@ -281,8 +454,9 @@ def task_new(
             lang = "ja"
     except Exception:
         pass
-    
+
     import os
+
     if os.environ.get("LANG", "").startswith("ja"):
         lang = "ja"
 
@@ -509,6 +683,7 @@ def cron_restart():
 def _is_ja() -> bool:
     import locale
     import os
+
     if os.environ.get("LANG", "").startswith("ja"):
         return True
     try:
@@ -527,11 +702,11 @@ def onboard():
         typer.echo("kage の初期セットアップを実行中...")
     else:
         typer.echo("Initializing kage onboard...")
-    
+
     config_mod.setup_global()
     daemon.install()
     db.init_db()
-    
+
     if _is_ja():
         typer.echo("グローバル設定とデータベースのセットアップが完了しました。")
     else:
@@ -545,9 +720,9 @@ def init():
         typer.echo("プロジェクトを初期化中...")
     else:
         typer.echo("Initializing kage project...")
-    
+
     config_mod.setup_local()
-    
+
     if _is_ja():
         typer.echo("初期化が完了しました。")
     else:
@@ -562,111 +737,158 @@ def run():
     run_all_scheduled_tasks()
 
 
-@app.command()
-def logs(limit: int = 10):
-    """View kage execution logs."""
-    from .config import KAGE_DB_PATH
-    import sqlite3
-    from rich.table import Table
-    from rich.console import Console
-
-    if not KAGE_DB_PATH.exists():
-        typer.echo("No logs found.")
+@runs_app.callback(invoke_without_command=True)
+def runs(
+    ctx: typer.Context,
+    task: Optional[str] = typer.Option(None, "--task", help="Filter by task name"),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Filter by project path substring"
+    ),
+    status: Optional[str] = typer.Option(None, "--status", help="Filter by status"),
+    source: Optional[str] = typer.Option(
+        None, "--source", help="Filter by source: task or connector_poll"
+    ),
+    limit: int = typer.Option(20, "--limit", help="Maximum runs to show"),
+    json_output: bool = typer.Option(False, "--json", help="Print structured JSON"),
+):
+    """List execution runs."""
+    if ctx.invoked_subcommand:
         return
 
-    conn = sqlite3.connect(KAGE_DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT run_at, project_path, task_name, status, stdout, stderr, finished_at
-        FROM executions 
-        ORDER BY run_at DESC LIMIT ?
-    """,
-        (limit,),
+    from .runs import list_runs
+
+    records = list_runs(
+        limit=limit,
+        task_name=task,
+        project_filter=project,
+        status=status,
+        source=source,
     )
-    rows = cursor.fetchall()
+    _print_runs(records, json_output=json_output)
 
-    console = Console()
-    table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Run At")
-    table.add_column("Project")
-    table.add_column("Task")
-    table.add_column("Status")
-    table.add_column("Duration", justify="right")
-    table.add_column("Output (stdout / stderr)", style="dim")
 
-    for row in rows:
-        run_at, proj, name, status, stdout_val, stderr_val, finished_at = row
+@runs_app.command("show")
+def runs_show(
+    exec_id: str = typer.Argument(..., help="Execution ID to inspect"),
+    json_output: bool = typer.Option(False, "--json", help="Print structured JSON"),
+):
+    """Show details for a single execution run."""
+    from .runs import get_run
 
-        # 整形: "2026-02-23T18:28:01.032891" -> "02/23 18:28:01"
-        try:
-            from datetime import datetime
+    record = get_run(exec_id)
+    if not record:
+        typer.echo(f"Run not found: {exec_id}")
+        raise typer.Exit(1)
+    _print_run_details(record, json_output=json_output)
 
-            dt_start = datetime.fromisoformat(run_at)
-            run_at_str = dt_start.strftime("%m/%d %H:%M:%S")
-            
-            if finished_at:
-                dt_end = datetime.fromisoformat(finished_at)
-                duration_sec = (dt_end - dt_start).total_seconds()
-                duration_str = f"{int(duration_sec)}s"
-            else:
-                if status == "RUNNING":
-                    duration_sec = (datetime.now() - dt_start).total_seconds()
-                    duration_str = f"{int(duration_sec)}s+"
-                else:
-                    duration_str = "-"
-        except ValueError:
-            run_at_str = run_at[:19].replace("T", " ")
-            duration_str = "-"
 
-        # Output 整形
-        out_str = []
-        if stdout_val and str(stdout_val).strip():
-            clean_out = str(stdout_val).strip().replace("\n", " ").replace("\r", "")
-            out_str.append(f"[STDOUT] {clean_out[:40]}")
-        if stderr_val and str(stderr_val).strip():
-            clean_err = str(stderr_val).strip().replace("\n", " ").replace("\r", "")
-            out_str.append(f"[STDERR] {clean_err[:40]}")
+@runs_app.command("stop")
+def runs_stop(exec_id: str = typer.Argument(..., help="Execution ID to stop")):
+    """Stop a running execution."""
+    from .executor import stop_execution
 
-        final_out = " | ".join(out_str)
-        if len(final_out) > 65:
-            final_out = final_out[:62] + "..."
+    typer.echo(f"Stopping execution {exec_id}...")
+    stop_execution(exec_id)
+    typer.echo("Stop signal sent.")
 
-        # ステータスの色付け
-        if status == "SUCCESS":
-            status_colored = f"[green]{status}[/green]"
-        elif status == "RUNNING":
-            status_colored = f"[yellow]{status}[/yellow]"
+
+@app.command()
+def logs(
+    task_name: Optional[str] = typer.Argument(
+        None, help="Task name to inspect (opens the latest run)"
+    ),
+    run_id: Optional[str] = typer.Option(
+        None, "--run", help="Execution ID to inspect directly"
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project path substring for task lookup"
+    ),
+    stream: str = typer.Option(
+        "merged", "--stream", help="Log stream: merged, stdout, stderr"
+    ),
+    lines: Optional[int] = typer.Option(
+        None, "--lines", help="Show only the last N lines"
+    ),
+    since: Optional[str] = typer.Option(
+        None,
+        "--since",
+        help="Only show entries since ISO timestamp or relative time like 10m",
+    ),
+    follow: bool = typer.Option(False, "--follow", help="Follow appended output"),
+    path_only: bool = typer.Option(
+        False, "--path", help="Print the underlying log file path"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print structured JSON"),
+):
+    """View raw execution logs."""
+    from .runs import load_log_text, log_path_for_stream
+
+    if stream not in {"merged", "stdout", "stderr"}:
+        raise typer.BadParameter("--stream must be one of: merged, stdout, stderr")
+    if follow and json_output:
+        raise typer.BadParameter("--follow cannot be combined with --json")
+
+    run = _resolve_log_target(task_name=task_name, run_id=run_id, project=project)
+    target_path = log_path_for_stream(run, stream)
+
+    if path_only:
+        if not target_path or not target_path.exists():
+            typer.echo("No raw log file is available for this run.")
+            raise typer.Exit(1)
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "run_id": run.id,
+                        "task_name": run.task_name,
+                        "stream": stream,
+                        "path": str(target_path),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
         else:
-            status_colored = f"[red]{status}[/red]"
+            typer.echo(str(target_path))
+        return
 
-        # プロジェクトパスの短縮 (最後の2ディレクトリなどを表示)
-        from pathlib import Path
+    try:
+        content = load_log_text(run, stream=stream, lines=lines, since=since)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "run": run.to_dict(),
+                    "stream": stream,
+                    "path": str(target_path) if target_path else None,
+                    "content": content,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    elif content:
+        typer.echo(content, nl=not content.endswith("\n"))
+    else:
+        typer.echo("No log output recorded.")
 
-        p = Path(proj)
-        proj_str = f".../{p.parent.name}/{p.name}" if len(p.parts) > 2 else proj
-
-        table.add_row(run_at_str, proj_str, str(name), status_colored, duration_str, final_out)
-
-    console.print(table)
-    conn.close()
+    if follow:
+        _follow_logs(run.id, stream)
 
 
 @app.command()
 def stop(exec_id: str = typer.Argument(..., help="Execution ID to stop")):
     """Stop a running execution."""
-    from .executor import stop_execution
-    from rich.console import Console
-
-    console = Console()
-    console.print(f"[yellow]Stopping execution {exec_id}...[/yellow]")
-    stop_execution(exec_id)
-    console.print("[green]Stop signal sent.[/green]")
+    runs_stop(exec_id)
 
 
 @app.command()
 def ui(
-    host: Optional[str] = typer.Option(None, "--host", "-h", help="Bind host (e.g., '0.0.0.0' for external access)"),
+    host: Optional[str] = typer.Option(
+        None, "--host", "-h", help="Bind host (e.g., '0.0.0.0' for external access)"
+    ),
     port: Optional[int] = typer.Option(None, "--port", "-p", help="Bind port"),
 ):
     """Launch the web UI dashboard."""
@@ -682,7 +904,9 @@ def ui(
 
 @app.command()
 def config(
-    key: str = typer.Argument(..., help="Setting key (e.g., 'default_ai_engine' or 'providers.codex.model')"),
+    key: str = typer.Argument(
+        ..., help="Setting key (e.g., 'default_ai_engine' or 'providers.codex.model')"
+    ),
     value: str = typer.Argument(..., help="New value"),
     is_global: bool = typer.Option(
         False,
@@ -749,6 +973,7 @@ def config_show(
     summary.add_row("log_level", str(cfg.log_level))
     summary.add_row("timezone", str(cfg.timezone))
     summary.add_row("cron_interval_minutes", str(cfg.cron_interval_minutes))
+    summary.add_row("run_retention_count", str(cfg.run_retention_count))
     summary.add_row("env_path", str(cfg.env_path or "None"))
     console.print(summary)
 
@@ -802,6 +1027,7 @@ def doctor():
         KAGE_CONFIG_PATH,
         KAGE_PROJECTS_LIST,
         KAGE_DB_PATH,
+        KAGE_LOGS_DIR,
     )
 
     is_ja = os.environ.get("LANG", "").startswith("ja")
@@ -843,6 +1069,11 @@ def doctor():
     t_res = "結果:" if is_ja else "Result:"
     t_err = "エラー" if is_ja else "errors"
     t_warn = "警告" if is_ja else "warnings"
+    t_migrate_hint = (
+        "kage migrate install を実行してください"
+        if is_ja
+        else "Run 'kage migrate install'"
+    )
 
     console = Console()
     console.print(f"\n[bold cyan]kage doctor[/bold cyan] — {t_title}\n")
@@ -896,6 +1127,7 @@ def doctor():
             "providers",
             "connectors",
             "memory_max_entries",
+            "run_retention_count",
             "working_dir",
         }
         for k in data.keys():
@@ -912,6 +1144,7 @@ def doctor():
             "env_path": (str,),
             "system_prompt": (str,),
             "memory_max_entries": (int,),
+            "run_retention_count": (int,),
             "working_dir": (str,),
         }
         for key, expected in typed_keys.items():
@@ -950,7 +1183,13 @@ def doctor():
                         fail(scope, f"providers.{name} must be a table")
                         continue
                     for k in prov.keys():
-                        if k not in {"command", "parser", "parser_args", "model", "model_flag"}:
+                        if k not in {
+                            "command",
+                            "parser",
+                            "parser_args",
+                            "model",
+                            "model_flag",
+                        }:
                             warn(scope, f"providers.{name}: unknown key {k}")
                     if "command" in prov and not isinstance(prov["command"], str):
                         fail(scope, f"providers.{name}.command must be string")
@@ -960,12 +1199,16 @@ def doctor():
                         prov["parser_args"], str
                     ):
                         fail(scope, f"providers.{name}.parser_args must be string")
-                    if "model" in prov and prov["model"] is not None and not isinstance(
-                        prov["model"], str
+                    if (
+                        "model" in prov
+                        and prov["model"] is not None
+                        and not isinstance(prov["model"], str)
                     ):
                         fail(scope, f"providers.{name}.model must be string")
-                    if "model_flag" in prov and prov["model_flag"] is not None and not isinstance(
-                        prov["model_flag"], str
+                    if (
+                        "model_flag" in prov
+                        and prov["model_flag"] is not None
+                        and not isinstance(prov["model_flag"], str)
                     ):
                         fail(scope, f"providers.{name}.model_flag must be string")
                     if isinstance(commands, dict):
@@ -1157,7 +1400,11 @@ def doctor():
                 label,
                 "markdown task requires either body prompt or 'command' in front matter",
             )
-        if body.strip() and isinstance(fm.get("command"), str) and fm.get("command", "").strip():
+        if (
+            body.strip()
+            and isinstance(fm.get("command"), str)
+            and fm.get("command", "").strip()
+        ):
             fail(label, "markdown task cannot define both body prompt and command")
 
         task_data = {
@@ -1165,7 +1412,9 @@ def doctor():
             "cron": fm.get("cron"),
             "active": fm.get("active", "true"),
             "prompt": body if body.strip() else None,
-            "command": fm.get("command", "").strip() if isinstance(fm.get("command"), str) else fm.get("command"),
+            "command": fm.get("command", "").strip()
+            if isinstance(fm.get("command"), str)
+            else fm.get("command"),
             "shell": fm.get("shell"),
             "working_dir": fm.get("working_dir"),
             "provider": fm.get("provider"),
@@ -1197,6 +1446,65 @@ def doctor():
         ok("kage.db", str(KAGE_DB_PATH))
     else:
         fail(f"kage.db {t_not_found}", t_run_onboard)
+
+    # 3.5. Logs directory
+    if KAGE_LOGS_DIR.exists():
+        ok("logs dir", str(KAGE_LOGS_DIR))
+    else:
+        warn(
+            "logs dir",
+            f"{KAGE_LOGS_DIR} ({'created on first run' if not is_ja else '初回実行時に作成'})",
+        )
+
+    # 3.6. Install migrations
+    try:
+        from .migrations.runner import (
+            InstallMigrationContext,
+            discover_install_migrations,
+            get_install_migration_state_path,
+        )
+
+        migration_state_path = get_install_migration_state_path()
+        if migration_state_path.exists():
+            try:
+                migration_state = json.loads(
+                    migration_state_path.read_text(encoding="utf-8")
+                )
+            except Exception:
+                migration_state = {}
+        else:
+            migration_state = {}
+        applied_migrations = migration_state.get("applied", {})
+        if not isinstance(applied_migrations, dict):
+            applied_migrations = {}
+
+        migration_ctx = InstallMigrationContext(
+            from_version=None,
+            to_version=_resolve_version(),
+            global_dir=KAGE_GLOBAL_DIR,
+            db_path=KAGE_DB_PATH,
+            logs_dir=KAGE_LOGS_DIR,
+            state_path=migration_state_path,
+        )
+        pending_migrations = [
+            migration.migration_id
+            for migration in discover_install_migrations()
+            if migration.migration_id not in applied_migrations
+            and migration.should_run(migration_ctx)
+        ]
+        applied_count = len(applied_migrations)
+        if pending_migrations:
+            warn(
+                "install migrations",
+                f"{len(pending_migrations)} pending / {applied_count} applied ({', '.join(pending_migrations)}) · {t_migrate_hint}",
+            )
+        else:
+            ok(
+                "install migrations",
+                f"0 pending / {applied_count} applied",
+            )
+    except Exception as e:
+        warn("install migrations", str(e))
 
     # 4. Projects
     if KAGE_PROJECTS_LIST.exists():
@@ -1280,6 +1588,46 @@ def version():
     typer.echo(_resolve_version())
 
 
+@migrate_app.command("install")
+def migrate_install(
+    from_version: Optional[str] = typer.Option(
+        None, "--from-version", help="Previously installed version"
+    ),
+    to_version: Optional[str] = typer.Option(
+        None, "--to-version", help="Installed version after update"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print structured JSON"),
+):
+    """Run install-time migrations."""
+    from .migrations.runner import (
+        install_migration_results_to_json,
+        run_install_migrations,
+    )
+
+    results = run_install_migrations(
+        from_version=from_version,
+        to_version=to_version or _resolve_version(),
+    )
+
+    if json_output:
+        typer.echo(install_migration_results_to_json(results))
+        return
+
+    if not results:
+        typer.echo("No install migrations were required.")
+        return
+
+    for result in results:
+        summary = result.summary
+        details = ", ".join(
+            f"{key}={value}" for key, value in sorted(result.details.items())
+        )
+        if details:
+            typer.echo(f"Applied {result.migration_id}: {summary} ({details})")
+        else:
+            typer.echo(f"Applied {result.migration_id}: {summary}")
+
+
 @app.command("skill")
 def skill():
     """Fetch and display the kage agent skill definition (SKILL.md) from GitHub."""
@@ -1304,9 +1652,12 @@ def skill():
             "[yellow]Hint:[/yellow] Make sure you are using a tagged version and have internet access."
         )
 
+
 @connector_app.command("setup")
 def connector_setup(
-    ctype: Optional[str] = typer.Argument(None, help="Connector type (discord, slack, telegram)")
+    ctype: Optional[str] = typer.Argument(
+        None, help="Connector type (discord, slack, telegram)"
+    ),
 ):
     """Show setup instructions for a connector type."""
     from rich.console import Console
@@ -1320,7 +1671,9 @@ def connector_setup(
         console.print("- [bold magenta]discord[/bold magenta]")
         console.print("- [bold blue]slack[/bold blue]")
         console.print("- [bold cyan]telegram[/bold cyan]")
-        console.print("\nRun [bold]kage connector setup discord[/bold] for instructions.")
+        console.print(
+            "\nRun [bold]kage connector setup discord[/bold] for instructions."
+        )
         return
 
     ctype = ctype.lower()
@@ -1354,7 +1707,9 @@ system_prompt = "Optional additional instructions for this connector"
 
 > **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
 """
-        console.print(Panel(Markdown(text), title="Discord Setup", border_style="magenta"))
+        console.print(
+            Panel(Markdown(text), title="Discord Setup", border_style="magenta")
+        )
     elif ctype == "slack":
         text = """
 # Slack Connector Setup Guide
@@ -1411,13 +1766,18 @@ system_prompt = "Optional additional instructions for this connector"
 
 > **⚠️ Security**: `poll = true` allows anyone in the chat to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
 """
-        console.print(Panel(Markdown(text), title="Telegram Setup", border_style="cyan"))
+        console.print(
+            Panel(Markdown(text), title="Telegram Setup", border_style="cyan")
+        )
     else:
         console.print(f"[red]Unknown connector type: {ctype}[/red]")
         console.print("Available types: discord, slack, telegram")
 
+
 if __name__ == "__main__":
     app()
+
+
 @connector_app.command("list")
 def connector_list():
     """List all configured connectors."""
@@ -1427,7 +1787,7 @@ def connector_list():
 
     console = Console()
     config = get_global_config()
-    
+
     if not config.connectors:
         console.print("[yellow]No connectors configured.[/yellow]")
         console.print("Add [[connectors.name]] blocks to your config.toml.")
@@ -1445,9 +1805,9 @@ def connector_list():
         is_polling = c_dict.get("poll", False)
         if hasattr(is_polling, "unwrap"):
             is_polling = is_polling.unwrap()
-            
+
         status = "[green]Poll ON[/green]" if is_polling else "[dim]Poll OFF[/dim]"
-        
+
         details = []
         if c_type == "discord":
             details.append(f"Channel: {c_dict.get('channel_id', 'N/A')}")
@@ -1461,7 +1821,7 @@ def connector_list():
             details.append(f"Chat: {c_dict.get('chat_id', 'N/A')}")
             if c_dict.get("user_id"):
                 details.append(f"User Filter: {str(c_dict.get('user_id'))}")
-        
+
         table.add_row(name, c_type, status, ", ".join(details))
 
     console.print(table)
@@ -1472,7 +1832,7 @@ def connector_poll():
     """Poll and reply messages for connectors with poll=true."""
     from .connectors.runner import run_connectors
     from rich.console import Console
-    
+
     console = Console()
     console.print("[bold blue]Polling connectors...[/bold blue]")
     try:

@@ -4,7 +4,12 @@ from .base import BaseConnector
 from .discord import DiscordConnector
 from .slack import SlackConnector
 from .telegram import TelegramConnector
-from ..config import DiscordConnectorConfig, SlackConnectorConfig, TelegramConnectorConfig
+from ..config import (
+    DiscordConnectorConfig,
+    SlackConnectorConfig,
+    TelegramConnectorConfig,
+)
+
 
 def _build_connector(name: str, c_dict: dict) -> BaseConnector | None:
     """
@@ -48,17 +53,17 @@ def run_connectors():
     """
     config = get_global_config()
     poll_connectors = []
-    
+
     for name, c_dict in config.connectors.items():
         connector = _build_connector(name, c_dict)
         if connector and connector.config.poll:
             poll_connectors.append(connector)
-        
+
     threads = []
     for connector in poll_connectors:
         t = threading.Thread(target=connector.poll_and_reply)
         threads.append(t)
         t.start()
-        
+
     for t in threads:
         t.join()

@@ -52,11 +52,13 @@ if $IS_JA; then
     MSG_AFTER_VER="  インストール後:     %s"
     MSG_INSTALLED="kage のインストール完了"
     MSG_ONBOARD="kage onboard を実行中..."
+    MSG_MIGRATE="インストール migration を実行中..."
     MSG_DOCTOR="セットアップ診断を実行中..."
     MSG_DONE="インストール完了！"
     MSG_UI="  Web UI を起動:        kage ui"
     MSG_INIT="  プロジェクト初期化:   kage init"
-    MSG_LOGS="  実行ログ表示:         kage logs"
+    MSG_LOGS="  実行履歴:             kage runs"
+    MSG_RAW_LOGS="  生ログ閲覧:           kage logs <task>"
     MSG_AI="  AIエンジンを設定する場合:"
     MSG_AI_CMD="    kage config default_ai_engine codex --global"
     MSG_HACK="Happy hacking! 🌑"
@@ -70,11 +72,13 @@ else
     MSG_AFTER_VER="  Installed version:   %s"
     MSG_INSTALLED="kage installed successfully"
     MSG_ONBOARD="Running kage onboard..."
+    MSG_MIGRATE="Running install migrations..."
     MSG_DOCTOR="Running setup diagnostics..."
     MSG_DONE="Installation complete!"
     MSG_UI="  Launch Web UI:         kage ui"
     MSG_INIT="  Initialize a project:  kage init"
-    MSG_LOGS="  View execution logs:   kage logs"
+    MSG_LOGS="  View run history:      kage runs"
+    MSG_RAW_LOGS="  View raw logs:        kage logs <task>"
     MSG_AI="  To set an AI engine:"
     MSG_AI_CMD="    kage config default_ai_engine codex --global"
     MSG_HACK="Happy hacking! 🌑"
@@ -109,7 +113,12 @@ ui_info "$MSG_ONBOARD"
 kage onboard
 echo ""
 
-# 4. 診断
+# 4. install-time migration
+ui_info "$MSG_MIGRATE"
+kage migrate install --from-version "$CURRENT_VERSION" --to-version "$INSTALLED_VERSION"
+echo ""
+
+# 5. 診断
 ui_info "$MSG_DOCTOR"
 kage doctor || true
 echo ""
@@ -119,9 +128,10 @@ echo ""
 echo "$MSG_UI"
 echo "$MSG_INIT"
 echo "$MSG_LOGS"
+echo "$MSG_RAW_LOGS"
 echo ""
 
-# 5. AIエンジン未設定の場合は案内を出す
+# 6. AIエンジン未設定の場合は案内を出す
 HAS_AI=false
 if command -v kage >/dev/null 2>&1; then
     # default_ai_engine None をチェック

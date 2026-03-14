@@ -104,7 +104,7 @@ def update_project_version(pyproject_path: Path, next_version: str) -> None:
     content = pyproject_path.read_text(encoding="utf-8")
     if VERSION_PATTERN.search(content) is None:
         raise ValueError(f"could not find project version in {pyproject_path}")
-    updated = VERSION_PATTERN.sub(rf'\g<1>{next_version}\g<3>', content, count=1)
+    updated = VERSION_PATTERN.sub(rf"\g<1>{next_version}\g<3>", content, count=1)
     pyproject_path.write_text(updated, encoding="utf-8")
 
 
@@ -181,7 +181,9 @@ def main() -> int:
         return 0
 
     if args.pr_number is None:
-        raise ValueError("--pr-number is required unless --select-pending-label is used")
+        raise ValueError(
+            "--pr-number is required unless --select-pending-label is used"
+        )
 
     plan = build_release_plan(parse_labels(args.labels), args.pr_number, args.pyproject)
     apply_release_plan(plan, args.pyproject)
