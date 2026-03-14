@@ -1,6 +1,6 @@
 import asyncio
 
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Log
 from typer.testing import CliRunner
 
 from kage.main import app
@@ -175,5 +175,64 @@ def test_tui_left_tables_update_selection_on_cursor_move(mocker):
             await pilot.press("down")
             await pilot.pause()
             assert app.selected_connector_name == "beta-bot"
+
+    asyncio.run(exercise())
+
+
+def test_tui_logs_panel_scrolls_when_focused(mocker):
+    tasks = [
+        {
+            "name": "alpha",
+            "project_name": "proj-a",
+            "project_path": "/tmp/proj-a",
+            "file": "/tmp/proj-a/.kage/tasks/alpha.md",
+            "type_display": "Prompt",
+            "provider_display": "gemini (Inherited)",
+            "cron": "* * * * *",
+            "active": True,
+            "mode": "oneshot",
+            "concurrency_policy": "allow",
+            "task_timezone": "UTC",
+            "allowed_hours": None,
+            "denied_hours": None,
+            "timeout_minutes": 15,
+            "compiled_state": "none",
+            "compiled_path": None,
+            "command": None,
+            "prompt": "alpha prompt",
+        }
+    ]
+    runs = [
+        RunRecord(
+            id="run-alpha",
+            project_path="/tmp/proj-a",
+            task_name="alpha",
+            run_at="2026-03-15T10:00:00+09:00",
+            status="SUCCESS",
+        )
+    ]
+    long_log = "\n".join(f"line {index}" for index in range(1, 200))
+
+    mocker.patch("kage.tui.get_config_api", return_value={"tasks": tasks})
+    mocker.patch("kage.tui.list_runs", return_value=runs)
+    mocker.patch("kage.tui.get_connectors", return_value=[])
+    mocker.patch("kage.tui.get_connector_history", side_effect=lambda _name: [])
+    mocker.patch("kage.tui.load_all_log_text", return_value=long_log)
+    mocker.patch("kage.tui.load_log_text", return_value=long_log)
+
+    async def exercise() -> None:
+        app = KageTuiApp()
+        async with app.run_test(size=(80, 16)) as pilot:
+            await pilot.pause()
+
+            logs_widget = app.query_one("#logs-content", Log)
+            logs_widget.focus()
+            await pilot.pause()
+            assert logs_widget.scroll_y == 0
+
+            await pilot.press("pagedown")
+            await pilot.pause()
+
+            assert logs_widget.scroll_y > 0
 
     asyncio.run(exercise())
