@@ -29,9 +29,9 @@ def cli_env(tmp_path: Path, mocker):
     return {"db_path": db_path, "logs_dir": logs_dir}
 
 
-def _append_event(path: Path, stream: str, text: str):
+def _append_event(path: Path, stream: str, text: str, ts: str | None = None):
     payload = {
-        "ts": datetime.now().astimezone().isoformat(),
+        "ts": ts or datetime.now().astimezone().isoformat(),
         "stream": stream,
         "text": text,
     }
@@ -167,6 +167,33 @@ def test_logs_cli_reads_raw_stdout_without_cleaning(cli_env):
     assert "visible" in result.stdout
 
 
+def test_logs_cli_without_task_merges_all_tasks_in_time_order(cli_env):
+    first_id = db.start_execution("/tmp/project-a", "Nightly Research")
+    first_run = get_run(first_id)
+    assert first_run is not None
+
+    second_id = db.start_execution("/tmp/project-b", "Morning Sweep")
+    second_run = get_run(second_id)
+    assert second_run is not None
+
+    older_ts = (datetime.now().astimezone() - timedelta(minutes=2)).isoformat()
+    newer_ts = (datetime.now().astimezone() - timedelta(minutes=1)).isoformat()
+    _append_event(Path(first_run.events_path), "stdout", "alpha\n", ts=older_ts)
+    _append_event(Path(second_run.events_path), "stderr", "beta\n", ts=newer_ts)
+
+    db.update_execution(first_id, "SUCCESS", "alpha\n", "", output_summary="alpha")
+    db.update_execution(second_id, "FAILED", "", "beta\n", output_summary="beta")
+
+    result = runner.invoke(app, ["logs"], env={"COLUMNS": "160"})
+
+    assert result.exit_code == 0
+    assert "project-a/Nightly Research" in result.stdout
+    assert "project-b/Morning Sweep" in result.stdout
+    assert "alpha" in result.stdout
+    assert "beta" in result.stdout
+    assert result.stdout.index("alpha") < result.stdout.index("beta")
+
+
 def test_logs_cli_requires_project_for_duplicate_task_names(cli_env):
     first = db.start_execution("/tmp/project-a", "Shared Task")
     db.update_execution(first, "SUCCESS", "a\n", "", output_summary="a")
@@ -178,6 +205,24 @@ def test_logs_cli_requires_project_for_duplicate_task_names(cli_env):
 
     assert result.exit_code == 1
     assert "Use --project" in result.stdout
+
+
+def test_logs_cli_path_requires_single_target(cli_env):
+    result = runner.invoke(app, ["logs", "--path"])
+
+    assert result.exit_code == 2
+    assert "--path requires a task name or --run <exec_id>" in result.output
+
+
+def test_logs_cli_accepts_follow_short_option(cli_env, mocker):
+    exec_id = db.start_execution("/tmp/demo", "Nightly Research")
+    db.update_execution(exec_id, "SUCCESS", "done\n", "", output_summary="done")
+    follow_logs = mocker.patch("kage.main._follow_logs")
+
+    result = runner.invoke(app, ["logs", "Nightly Research", "-f"])
+
+    assert result.exit_code == 0
+    follow_logs.assert_called_once()
 
 
 def test_runs_cli_filters_connector_poll_source(cli_env):

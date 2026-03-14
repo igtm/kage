@@ -28,7 +28,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage runs` — List execution runs in a relative-time table; add `--absolute-time` for detailed timestamps.
 - `kage runs show <exec_id>` — Inspect run metadata and log paths.
 - `kage runs stop <exec_id>` — Stop a running execution.
-- `kage logs <task>` — Open raw logs for the latest run of a task.
+- `kage logs [<task>]` — Open raw logs for the latest run of a task, or merge all task logs when omitted.
 - `kage logs --run <exec_id>` — Open raw logs for a specific run.
 - `kage task list` — List tasks with short project names, effective type, and provider/command.
 - `kage task show <name>` — Detailed task configuration.
@@ -39,7 +39,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage migrate install` — Run pending install-time migrations manually.
 - `kage ui` — Open web dashboard.
 
-Shell completion covers positional task/run arguments as well, so `kage run <task>`, `kage compile <task>`, `kage logs <task>`, `kage task run <name>`, `kage task show <name>`, `kage runs show <exec_id>`, and `kage stop <exec_id>` can all suggest concrete values after `kage completion install bash|zsh`. `kage doctor` reports whether those completion scripts are installed.
+Shell completion covers positional task/run arguments as well, so `kage run <task>`, `kage compile <task>`, `kage logs [<task>]`, `kage task run <name>`, `kage task show <name>`, `kage runs show <exec_id>`, and `kage stop <exec_id>` can all suggest concrete values after `kage completion install bash|zsh`. `kage doctor` reports whether those completion scripts are installed.
 
 If a prompt task has a sibling compiled lock like `.kage/tasks/nightly.lock.sh`, kage executes that lock instead of the Markdown prompt body only while the stored source hashes still match the `.md` task file. If the prompt body or front matter changes, the lock becomes stale and must be regenerated with `kage compile <task>`. `kage doctor`, `kage task list`, and the UI all surface whether the lock is fresh, stale, or missing.
 

@@ -449,6 +449,68 @@ def _follow_logs(run_id: str, stream: str):
         time.sleep(0.5)
 
 
+def _follow_all_logs(stream: str, project: str | None = None):
+    from .runs import list_runs, project_short_name, render_combined_events
+
+    positions: dict[str, int] = {}
+
+    for run in list_runs(limit=None, project_filter=project):
+        if not run.events_path:
+            continue
+        path = Path(run.events_path)
+        if path.exists():
+            positions[run.id] = path.stat().st_size
+
+    while True:
+        new_events: list[dict] = []
+        for run in list_runs(limit=None, project_filter=project):
+            path_str = run.events_path
+            if not path_str:
+                continue
+            path = Path(path_str)
+            if not path.exists():
+                continue
+
+            start_pos = positions.get(run.id, 0)
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(start_pos)
+                chunk = handle.read()
+                positions[run.id] = handle.tell()
+
+            if not chunk:
+                continue
+
+            temp_events: list[dict] = []
+            for line in chunk.splitlines():
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                temp_events.append(payload)
+
+            for payload in temp_events:
+                payload_stream = str(payload.get("stream", ""))
+                if stream != "merged" and payload_stream != stream:
+                    continue
+                new_events.append(
+                    {
+                        "ts": str(payload.get("ts", "")),
+                        "stream": payload_stream,
+                        "text": str(payload.get("text", "")),
+                        "run_id": run.id,
+                        "task_name": run.task_name,
+                        "project_path": run.project_path,
+                        "project_short": project_short_name(run.project_path),
+                    }
+                )
+
+        if new_events:
+            typer.echo(render_combined_events(new_events, stream=stream), nl=False)
+        time.sleep(0.5)
+
+
 @project_app.command("list")
 def project_list():
     """List all registered projects."""
@@ -1058,7 +1120,7 @@ def runs_stop(
 def logs(
     task_name: Optional[str] = typer.Argument(
         None,
-        help="Task name to inspect (opens the latest run)",
+        help="Task name to inspect (latest run only). Omit to merge logs across all tasks",
         autocompletion=_complete_task_names,
     ),
     run_id: Optional[str] = typer.Option(
@@ -1078,19 +1140,58 @@ def logs(
         "--since",
         help="Only show entries since ISO timestamp or relative time like 10m",
     ),
-    follow: bool = typer.Option(False, "--follow", help="Follow appended output"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow appended output"),
     path_only: bool = typer.Option(
         False, "--path", help="Print the underlying log file path"
     ),
     json_output: bool = typer.Option(False, "--json", help="Print structured JSON"),
 ):
     """View raw execution logs."""
-    from .runs import load_log_text, log_path_for_stream
+    from .runs import load_all_log_text, load_log_text, log_path_for_stream
 
     if stream not in {"merged", "stdout", "stderr"}:
         raise typer.BadParameter("--stream must be one of: merged, stdout, stderr")
     if follow and json_output:
         raise typer.BadParameter("--follow cannot be combined with --json")
+    if path_only and not (task_name or run_id):
+        raise typer.BadParameter("--path requires a task name or --run <exec_id>")
+
+    if not task_name and not run_id:
+        try:
+            content = load_all_log_text(
+                stream=stream,
+                lines=lines,
+                since=since,
+                project_filter=project,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "scope": "all",
+                        "stream": stream,
+                        "project_filter": project,
+                        "content": content,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        elif content:
+            typer.echo(content, nl=not content.endswith("\n"))
+        else:
+            typer.echo(
+                "No log output recorded."
+                if not _is_ja()
+                else "まだログ出力は記録されていません。"
+            )
+
+        if follow:
+            _follow_all_logs(stream=stream, project=project)
+        return
 
     run = _resolve_log_target(task_name=task_name, run_id=run_id, project=project)
     target_path = log_path_for_stream(run, stream)

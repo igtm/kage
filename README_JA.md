@@ -95,7 +95,7 @@ kage --install-completion
 
 設定後はシェルを再読み込みしてください（`exec $SHELL -l`）。
 
-シェル補完では `kage run <task>`、`kage compile <task>`、`kage logs <task>`、`kage task run <name>`、`kage runs show <exec_id>` のような位置引数に対して task 名や最近の run id も候補に出ます。
+シェル補完では `kage run <task>`、`kage compile <task>`、`kage logs [<task>]`、`kage task run <name>`、`kage runs show <exec_id>` のような位置引数に対して task 名や最近の run id も候補に出ます。
 `kage doctor` でも bash / zsh の completion script が入っているか確認できます。
 
 ## ユースケース
@@ -234,7 +234,7 @@ shell: "bash"
 | `kage runs` | 相対日時付きの色付きテーブルで実行履歴を表示 |
 | `kage runs show <exec_id>` | 実行メタデータ、状態、ログパスを表示 |
 | `kage runs stop <exec_id>` | 実行中の run を停止 |
-| `kage logs <task>` | task の最新 run の生ログを開く |
+| `kage logs [<task>]` | task の最新 run の生ログ、または未指定時は全 task の結合ログを開く |
 | `kage logs --run <exec_id>` | 特定 run の生ログを開く |
 | `kage cron run` | scheduler ループを 1 回実行（cron / launchd 用） |
 | `kage cron install` | システムスケジューラーに登録 |
@@ -254,7 +254,7 @@ macOS では `cron` の代わりに `launchd` が使用されます。`config.to
 - `darwin_launchd_interval_seconds`: 起動間隔を秒単位で指定（最小 `15`）。
 - `darwin_launchd_keep_alive`: `true` に設定すると、プロセスを常駐させます。
 
-`kage runs` は実行履歴ビューです。デフォルトでは `4時間前` のような相対日時付きテーブルで表示し、`--absolute-time` を付けると従来どおり詳細なローカル日時を表示します。`kage logs` は run ごとの raw output viewer で、生ログ本体は `stdout.log`, `stderr.log`, `events.jsonl` として保持されます。
+`kage runs` は実行履歴ビューです。デフォルトでは `4時間前` のような相対日時付きテーブルで表示し、`--absolute-time` を付けると従来どおり詳細なローカル日時を表示します。`kage logs` は run ごとの raw output viewer で、生ログ本体は `stdout.log`, `stderr.log`, `events.jsonl` として保持されます。`kage logs <task>` は 1 task の最新 run を開き、引数なしの `kage logs` は全 task のログを時系列順に結合して表示します。追従表示は `--follow` または `-f` が使えます。
 
 prompt task と同名の compiled lock 例えば `.kage/tasks/nightly.lock.sh` が存在する場合、kage はその lock に保持された source hash が `.md` と一致している間だけ Markdown 本文の代わりにそれを実行します。prompt 本文や front matter を更新したら lock は stale 扱いになるので、`kage compile <task>` を再実行してください。`kage doctor`、`kage task list`、UI の task card でも fresh / stale / missing を確認できます。
 
