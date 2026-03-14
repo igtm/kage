@@ -1,7 +1,16 @@
+import asyncio
+
+from textual.widgets import DataTable
 from typer.testing import CliRunner
 
 from kage.main import app
-from kage.tui import _format_connector_history, _format_task_details
+from kage.runs import RunRecord
+from kage.tui import (
+    KageTuiApp,
+    _format_connector_history,
+    _format_task_details,
+    _task_key,
+)
 
 runner = CliRunner()
 
@@ -63,3 +72,108 @@ def test_format_connector_history_includes_run_id_and_content():
     assert "assistant" in rendered
     assert "done" in rendered
     assert "[run: 12345678]" in rendered
+
+
+def test_tui_left_tables_update_selection_on_cursor_move(mocker):
+    tasks = [
+        {
+            "name": "alpha",
+            "project_name": "proj-a",
+            "project_path": "/tmp/proj-a",
+            "file": "/tmp/proj-a/.kage/tasks/alpha.md",
+            "type_display": "Prompt",
+            "provider_display": "gemini (Inherited)",
+            "cron": "* * * * *",
+            "active": True,
+            "mode": "oneshot",
+            "concurrency_policy": "allow",
+            "task_timezone": "UTC",
+            "allowed_hours": None,
+            "denied_hours": None,
+            "timeout_minutes": 15,
+            "compiled_state": "none",
+            "compiled_path": None,
+            "command": None,
+            "prompt": "alpha prompt",
+        },
+        {
+            "name": "beta",
+            "project_name": "proj-b",
+            "project_path": "/tmp/proj-b",
+            "file": "/tmp/proj-b/.kage/tasks/beta.md",
+            "type_display": "Prompt (Compiled)",
+            "provider_display": "codex (Inherited)",
+            "cron": "*/5 * * * *",
+            "active": True,
+            "mode": "oneshot",
+            "concurrency_policy": "allow",
+            "task_timezone": "UTC",
+            "allowed_hours": None,
+            "denied_hours": None,
+            "timeout_minutes": 15,
+            "compiled_state": "fresh",
+            "compiled_path": "/tmp/proj-b/.kage/tasks/beta.lock.sh",
+            "command": None,
+            "prompt": "beta prompt",
+        },
+    ]
+    runs = [
+        RunRecord(
+            id="run-alpha",
+            project_path="/tmp/proj-a",
+            task_name="alpha",
+            run_at="2026-03-15T10:00:00+09:00",
+            status="SUCCESS",
+        ),
+        RunRecord(
+            id="run-beta",
+            project_path="/tmp/proj-b",
+            task_name="beta",
+            run_at="2026-03-15T11:00:00+09:00",
+            status="FAILED",
+        ),
+    ]
+    connectors = [
+        {"name": "alpha-bot", "config": {"type": "discord", "poll": True}},
+        {"name": "beta-bot", "config": {"type": "slack", "poll": True}},
+    ]
+
+    mocker.patch("kage.tui.get_config_api", return_value={"tasks": tasks})
+    mocker.patch("kage.tui.list_runs", return_value=runs)
+    mocker.patch("kage.tui.get_connectors", return_value=connectors)
+    mocker.patch("kage.tui.get_connector_history", side_effect=lambda _name: [])
+    mocker.patch("kage.tui.load_all_log_text", return_value="merged logs")
+    mocker.patch("kage.tui.load_log_text", return_value="run logs")
+
+    async def exercise() -> None:
+        app = KageTuiApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            logs_task_table = app.query_one("#logs-task-table", DataTable)
+            logs_task_table.focus()
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            assert app.selected_logs_task_key == _task_key(tasks[0])
+            assert app.selected_run_id == "run-alpha"
+
+            app.action_show_tab("tasks")
+            await pilot.pause()
+            tasks_table = app.query_one("#tasks-table", DataTable)
+            tasks_table.focus()
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            assert app.selected_task_detail_key == _task_key(tasks[1])
+
+            app.action_show_tab("connectors")
+            await pilot.pause()
+            connectors_table = app.query_one("#connectors-table", DataTable)
+            connectors_table.focus()
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.pause()
+            assert app.selected_connector_name == "beta-bot"
+
+    asyncio.run(exercise())

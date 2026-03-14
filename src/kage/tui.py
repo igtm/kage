@@ -71,7 +71,9 @@ def _format_task_details(task: dict[str, Any], *, is_ja: bool) -> str:
         f"{'Compiled' if not is_ja else 'Compiled'}: {_safe_str(task.get('compiled_state'))}",
     ]
     if task.get("compiled_path"):
-        lines.append(f"{'Compiled Path' if not is_ja else 'Compiled Path'}: {task['compiled_path']}")
+        lines.append(
+            f"{'Compiled Path' if not is_ja else 'Compiled Path'}: {task['compiled_path']}"
+        )
     if task.get("command"):
         lines.extend(["", "Command:", task["command"]])
     if task.get("prompt"):
@@ -98,7 +100,9 @@ def _format_connector_history(
     for entry in history:
         ts = entry.get("timestamp")
         if isinstance(ts, (int, float)):
-            stamp = datetime.fromtimestamp(ts).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            stamp = (
+                datetime.fromtimestamp(ts).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            )
         else:
             stamp = "-"
         role = str(entry.get("role", "-"))
@@ -249,16 +253,20 @@ class KageTuiApp(App[None]):
 
     def _setup_tables(self) -> None:
         logs_task_table = self.query_one("#logs-task-table", DataTable)
+        logs_task_table.cursor_type = "row"
         logs_task_table.add_columns("Task")
         logs_run_table = self.query_one("#logs-run-table", DataTable)
+        logs_run_table.cursor_type = "row"
         logs_run_table.add_columns(
             "When" if not self.is_ja else "日時",
             "Status" if not self.is_ja else "状態",
             "Task",
         )
         tasks_table = self.query_one("#tasks-table", DataTable)
+        tasks_table.cursor_type = "row"
         tasks_table.add_columns("Task")
         connectors_table = self.query_one("#connectors-table", DataTable)
+        connectors_table.cursor_type = "row"
         connectors_table.add_columns("Name", "Type")
 
     def action_refresh(self) -> None:
@@ -278,12 +286,19 @@ class KageTuiApp(App[None]):
         self.runs_by_id = {run.id: run for run in self.runs}
         self.connectors = sorted(get_connectors(), key=lambda item: item["name"])
 
-        if self.selected_logs_task_key != ALL_TASKS_KEY and self.selected_logs_task_key not in self.task_by_key:
+        if (
+            self.selected_logs_task_key != ALL_TASKS_KEY
+            and self.selected_logs_task_key not in self.task_by_key
+        ):
             self.selected_logs_task_key = ALL_TASKS_KEY
         if self.selected_task_detail_key not in self.task_by_key:
             self.selected_task_detail_key = next(iter(self.task_by_key), None)
-        if self.selected_connector_name not in {item["name"] for item in self.connectors}:
-            self.selected_connector_name = self.connectors[0]["name"] if self.connectors else None
+        if self.selected_connector_name not in {
+            item["name"] for item in self.connectors
+        }:
+            self.selected_connector_name = (
+                self.connectors[0]["name"] if self.connectors else None
+            )
         if self.selected_run_id not in self.runs_by_id:
             self.selected_run_id = None
 
@@ -294,7 +309,9 @@ class KageTuiApp(App[None]):
         self._refresh_task_detail()
         self._refresh_connectors_table()
         self._refresh_connector_history()
-        self.query_one("#settings-content", Static).update(_format_global_config(self.is_ja))
+        self.query_one("#settings-content", Static).update(
+            _format_global_config(self.is_ja)
+        )
 
     def _refresh_logs_task_table(self) -> None:
         table = self.query_one("#logs-task-table", DataTable)
@@ -303,7 +320,12 @@ class KageTuiApp(App[None]):
         table.add_row(label, key=ALL_TASKS_KEY)
         for task in self.tasks:
             table.add_row(_task_label(task), key=_task_key(task))
-        self._move_cursor(table, 0 if self.selected_logs_task_key == ALL_TASKS_KEY else self._task_row_index(self.selected_logs_task_key))
+        self._move_cursor(
+            table,
+            0
+            if self.selected_logs_task_key == ALL_TASKS_KEY
+            else self._task_row_index(self.selected_logs_task_key),
+        )
 
     def _task_row_index(self, task_key: str) -> int:
         if task_key == ALL_TASKS_KEY:
@@ -323,14 +345,17 @@ class KageTuiApp(App[None]):
         return [
             run
             for run in self.runs
-            if run.task_name == task["name"] and run.project_path == task["project_path"]
+            if run.task_name == task["name"]
+            and run.project_path == task["project_path"]
         ]
 
     def _refresh_runs_table(self) -> None:
         table = self.query_one("#logs-run-table", DataTable)
         table.clear(columns=False)
         filtered_runs = self._filtered_runs()
-        if filtered_runs and self.selected_run_id not in {run.id for run in filtered_runs}:
+        if filtered_runs and self.selected_run_id not in {
+            run.id for run in filtered_runs
+        }:
             self.selected_run_id = filtered_runs[0].id
         if not filtered_runs:
             self.selected_run_id = None
@@ -348,9 +373,7 @@ class KageTuiApp(App[None]):
             run = self.runs_by_id.get(self.selected_run_id)
             if run:
                 content = load_log_text(run, stream="merged", lines=LOG_LINE_LIMIT)
-                label = (
-                    f"{run.task_name} · {run.status} · {format_local_timestamp(run.run_at)}"
-                )
+                label = f"{run.task_name} · {run.status} · {format_local_timestamp(run.run_at)}"
         elif self.selected_logs_task_key != ALL_TASKS_KEY:
             task = self.task_by_key.get(self.selected_logs_task_key)
             if task:
@@ -366,7 +389,14 @@ class KageTuiApp(App[None]):
             label = "All Tasks" if not self.is_ja else "すべてのタスク"
 
         meta.update(label)
-        content_widget.update(content or ("No log output recorded." if not self.is_ja else "まだログ出力は記録されていません。"))
+        content_widget.update(
+            content
+            or (
+                "No log output recorded."
+                if not self.is_ja
+                else "まだログ出力は記録されていません。"
+            )
+        )
 
     def _refresh_tasks_table(self) -> None:
         table = self.query_one("#tasks-table", DataTable)
@@ -384,7 +414,11 @@ class KageTuiApp(App[None]):
         detail = self.query_one("#task-detail", Static)
         task = self.task_by_key.get(self.selected_task_detail_key or "")
         if not task:
-            detail.update("No tasks registered." if not self.is_ja else "タスクは登録されていません。")
+            detail.update(
+                "No tasks registered."
+                if not self.is_ja
+                else "タスクは登録されていません。"
+            )
             return
         detail.update(_format_task_details(task, is_ja=self.is_ja))
 
@@ -402,14 +436,26 @@ class KageTuiApp(App[None]):
     def _refresh_connector_history(self) -> None:
         widget = self.query_one("#connector-history", Static)
         if not self.selected_connector_name:
-            widget.update("No connectors configured." if not self.is_ja else "コネクタは設定されていません。")
+            widget.update(
+                "No connectors configured."
+                if not self.is_ja
+                else "コネクタは設定されていません。"
+            )
             return
         connector = next(
-            (item for item in self.connectors if item["name"] == self.selected_connector_name),
+            (
+                item
+                for item in self.connectors
+                if item["name"] == self.selected_connector_name
+            ),
             None,
         )
         if connector is None:
-            widget.update("No connectors configured." if not self.is_ja else "コネクタは設定されていません。")
+            widget.update(
+                "No connectors configured."
+                if not self.is_ja
+                else "コネクタは設定されていません。"
+            )
             return
         history = get_connector_history(self.selected_connector_name)
         widget.update(_format_connector_history(connector, history, is_ja=self.is_ja))
@@ -420,9 +466,7 @@ class KageTuiApp(App[None]):
         except Exception:
             pass
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        table_id = event.data_table.id or ""
-        row_key = _row_key_to_str(event.row_key)
+    def _handle_table_selection(self, table_id: str, row_key: str) -> None:
         if table_id == "logs-task-table":
             self.selected_logs_task_key = row_key
             self.selected_run_id = None
@@ -437,6 +481,16 @@ class KageTuiApp(App[None]):
         elif table_id == "connectors-table":
             self.selected_connector_name = row_key
             self._refresh_connector_history()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        self._handle_table_selection(
+            event.data_table.id or "", _row_key_to_str(event.row_key)
+        )
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        self._handle_table_selection(
+            event.data_table.id or "", _row_key_to_str(event.row_key)
+        )
 
 
 def start_tui() -> None:
