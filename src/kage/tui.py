@@ -8,7 +8,15 @@ from typing import Any
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Footer, Header, Static, TabPane, TabbedContent
+from textual.widgets import (
+    DataTable,
+    Footer,
+    Header,
+    Log,
+    Static,
+    TabPane,
+    TabbedContent,
+)
 
 from .config import get_global_config
 from .runs import (
@@ -186,7 +194,7 @@ class KageTuiApp(App[None]):
     .content {
         height: 1fr;
         padding: 0 1;
-        overflow-y: auto;
+        min-height: 0;
     }
     """
     BINDINGS = [
@@ -224,7 +232,9 @@ class KageTuiApp(App[None]):
                     with Vertical(classes="right-pane section"):
                         yield Static("Logs", classes="panel-title")
                         yield Static("", id="logs-meta")
-                        yield Static("", id="logs-content", classes="content")
+                        yield Log(
+                            auto_scroll=False, id="logs-content", classes="content"
+                        )
             with TabPane("タスク" if self.is_ja else "Tasks", id="tasks"):
                 with Horizontal(classes="stack"):
                     with Vertical(classes="left-pane section"):
@@ -232,7 +242,9 @@ class KageTuiApp(App[None]):
                         yield DataTable(id="tasks-table")
                     with Vertical(classes="right-pane section"):
                         yield Static("Details", classes="panel-title")
-                        yield Static("", id="task-detail", classes="content")
+                        yield Log(
+                            auto_scroll=False, id="task-detail", classes="content"
+                        )
             with TabPane("Connector", id="connectors"):
                 with Horizontal(classes="stack"):
                     with Vertical(classes="left-pane section"):
@@ -240,11 +252,19 @@ class KageTuiApp(App[None]):
                         yield DataTable(id="connectors-table")
                     with Vertical(classes="right-pane section"):
                         yield Static("History", classes="panel-title")
-                        yield Static("", id="connector-history", classes="content")
+                        yield Log(
+                            auto_scroll=False,
+                            id="connector-history",
+                            classes="content",
+                        )
             with TabPane("設定" if self.is_ja else "Settings", id="settings"):
                 with Vertical(classes="right-pane section"):
                     yield Static("Global Config", classes="panel-title")
-                    yield Static("", id="settings-content", classes="content")
+                    yield Log(
+                        auto_scroll=False,
+                        id="settings-content",
+                        classes="content",
+                    )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -309,8 +329,9 @@ class KageTuiApp(App[None]):
         self._refresh_task_detail()
         self._refresh_connectors_table()
         self._refresh_connector_history()
-        self.query_one("#settings-content", Static).update(
-            _format_global_config(self.is_ja)
+        self._update_text_panel(
+            "#settings-content",
+            _format_global_config(self.is_ja),
         )
 
     def _refresh_logs_task_table(self) -> None:
@@ -366,7 +387,6 @@ class KageTuiApp(App[None]):
 
     def _refresh_log_view(self) -> None:
         meta = self.query_one("#logs-meta", Static)
-        content_widget = self.query_one("#logs-content", Static)
         content = ""
         label = ""
         if self.selected_run_id:
@@ -389,13 +409,14 @@ class KageTuiApp(App[None]):
             label = "All Tasks" if not self.is_ja else "すべてのタスク"
 
         meta.update(label)
-        content_widget.update(
+        self._update_text_panel(
+            "#logs-content",
             content
             or (
                 "No log output recorded."
                 if not self.is_ja
                 else "まだログ出力は記録されていません。"
-            )
+            ),
         )
 
     def _refresh_tasks_table(self) -> None:
@@ -411,16 +432,19 @@ class KageTuiApp(App[None]):
         )
 
     def _refresh_task_detail(self) -> None:
-        detail = self.query_one("#task-detail", Static)
         task = self.task_by_key.get(self.selected_task_detail_key or "")
         if not task:
-            detail.update(
+            self._update_text_panel(
+                "#task-detail",
                 "No tasks registered."
                 if not self.is_ja
-                else "タスクは登録されていません。"
+                else "タスクは登録されていません。",
             )
             return
-        detail.update(_format_task_details(task, is_ja=self.is_ja))
+        self._update_text_panel(
+            "#task-detail",
+            _format_task_details(task, is_ja=self.is_ja),
+        )
 
     def _refresh_connectors_table(self) -> None:
         table = self.query_one("#connectors-table", DataTable)
@@ -434,12 +458,12 @@ class KageTuiApp(App[None]):
         self._move_cursor(table, 0)
 
     def _refresh_connector_history(self) -> None:
-        widget = self.query_one("#connector-history", Static)
         if not self.selected_connector_name:
-            widget.update(
+            self._update_text_panel(
+                "#connector-history",
                 "No connectors configured."
                 if not self.is_ja
-                else "コネクタは設定されていません。"
+                else "コネクタは設定されていません。",
             )
             return
         connector = next(
@@ -451,20 +475,30 @@ class KageTuiApp(App[None]):
             None,
         )
         if connector is None:
-            widget.update(
+            self._update_text_panel(
+                "#connector-history",
                 "No connectors configured."
                 if not self.is_ja
-                else "コネクタは設定されていません。"
+                else "コネクタは設定されていません。",
             )
             return
         history = get_connector_history(self.selected_connector_name)
-        widget.update(_format_connector_history(connector, history, is_ja=self.is_ja))
+        self._update_text_panel(
+            "#connector-history",
+            _format_connector_history(connector, history, is_ja=self.is_ja),
+        )
 
     def _move_cursor(self, table: DataTable, row: int) -> None:
         try:
             table.move_cursor(row=row, column=0, animate=False)
         except Exception:
             pass
+
+    def _update_text_panel(self, panel_id: str, content: str) -> None:
+        widget = self.query_one(panel_id, Log)
+        widget.clear()
+        widget.write(content)
+        widget.scroll_home(animate=False)
 
     def _handle_table_selection(self, table_id: str, row_key: str) -> None:
         if table_id == "logs-task-table":
