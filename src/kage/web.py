@@ -1288,6 +1288,16 @@ INDEX_HTML = """
                     }
                 });
 
+                if (task.compiled_state && task.compiled_state !== 'n/a') {
+                    let compiledValue = 'none';
+                    if (task.compiled_state === 'fresh') {
+                        compiledValue = `fresh ${task.compiled_path ? `<code>${escapeHtml(task.compiled_path)}</code>` : ''}`.trim();
+                    } else if (task.compiled_state === 'stale') {
+                        compiledValue = `stale; recompile required ${task.compiled_path ? `<code>${escapeHtml(task.compiled_path)}</code>` : ''}`.trim();
+                    }
+                    detailsHtml += `<div class="kv-row"><span class="kv-key">Compiled</span><span class="kv-val">${compiledValue}</span></div>`;
+                }
+
                 let promptHtml = '';
                 if (task.prompt) {
                     promptHtml = `
@@ -1301,7 +1311,12 @@ INDEX_HTML = """
                 tasksHtml += `
                     <div class="card ${task.active ? '' : 'inactive'}" style="margin-bottom: 16px;" id="task-${escapeHtml(task.name)}">
                         <div class="card-header">
-                            <h4 style="margin:0; font-size: 1rem;">${escapeHtml(task.name)}</h4>
+                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <h4 style="margin:0; font-size: 1rem;">${escapeHtml(task.name)}</h4>
+                                ${task.compiled_state === 'fresh' ? '<span class="status-badge" style="background:rgba(35,134,54,0.15); color:var(--success-text);">LOCK FRESH</span>' : ''}
+                                ${task.compiled_state === 'stale' ? '<span class="status-badge" style="background:rgba(184,115,51,0.15); color:var(--warning-text);">LOCK STALE</span>' : ''}
+                                ${task.compiled_state === 'none' ? '<span class="status-badge" style="background:rgba(110,118,129,0.15); color:var(--text-dim);">NO LOCK</span>' : ''}
+                            </div>
                             <label class="switch" title="Enable/Disable task">
                                 <input type="checkbox" class="task-toggle" 
                                     data-project-path="${escapeHtml(task.project_path)}"
@@ -1579,53 +1594,53 @@ INDEX_HTML = """
 # Discord Setup Guide
 1. **Developer Portal**: Create app at [discord.com/developers](https://discord.com/developers/applications).
 2. **Bot Token**: Reset Token in **Bot** tab. Enable **Message Content Intent**.
-3. **OAuth2**: URL Generator -> \`bot\` -> \`Send Messages\`, \`Read Message History\`.
+3. **OAuth2**: URL Generator -> `bot` -> `Send Messages`, `Read Message History`.
 4. **Channel ID**: Enable Developer Mode in Discord, right-click channel -> **Copy Channel ID**.
 5. **Config**:
-\`\`\`toml
+```toml
 [connectors.my_discord]
 type = "discord"
 poll = true  # ⚠️ Only in private/trusted channels
 bot_token = "..."
 channel_id = "..."
-\`\`\`
+```
 
-⚠️ **Security**: \`poll = true\` grants channel members AI access to your PC. Task notifications work even with \`poll = false\`.
+⚠️ **Security**: `poll = true` grants channel members AI access to your PC. Task notifications work even with `poll = false`.
 `,
             slack: `
 # Slack Setup Guide
 1. **Slack API**: Create app at [api.slack.com/apps](https://api.slack.com/apps) (From scratch).
-2. **Scopes**: OAuth & Permissions -> \`channels:history\`, \`chat:write\`.
-3. **Install**: Install to Workspace, copy **Bot User OAuth Token** (\`xoxb-...\`).
-4. **Channel ID**: Channel details -> find ID at bottom (starts with \`C\`).
-5. **Invite**: Type \`/invite @YourBotName\` in the channel.
+2. **Scopes**: OAuth & Permissions -> `channels:history`, `chat:write`.
+3. **Install**: Install to Workspace, copy **Bot User OAuth Token** (`xoxb-...`).
+4. **Channel ID**: Channel details -> find ID at bottom (starts with `C`).
+5. **Invite**: Type `/invite @YourBotName` in the channel.
 6. **Config**:
-\`\`\`toml
+```toml
 [connectors.my_slack]
 type = "slack"
 poll = true  # ⚠️ Only in private/trusted channels
 bot_token = "xoxb-..."
 channel_id = "..."
-\`\`\`
+```
 
-⚠️ **Security**: \`poll = true\` grants channel members AI access to your PC. Task notifications work even with \`poll = false\`.
+⚠️ **Security**: `poll = true` grants channel members AI access to your PC. Task notifications work even with `poll = false`.
 `,
             telegram: `
 # Telegram Setup Guide
-1. **BotFather**: Message [@BotFather](https://t.me/BotFather) on Telegram, send \`/newbot\`.
-2. **Bot Token**: Copy the token BotFather gives you (e.g. \`123456:ABC-DEF...\`).
+1. **BotFather**: Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`.
+2. **Bot Token**: Copy the token BotFather gives you (e.g. `123456:ABC-DEF...`).
 3. **Chat ID**: Add bot to your group/DM, send a message, then visit:
-   \`https://api.telegram.org/bot<TOKEN>/getUpdates\` — find \`chat.id\`.
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` — find `chat.id`.
 4. **Config**:
-\`\`\`toml
+```toml
 [connectors.my_telegram]
 type = "telegram"
 poll = true  # ⚠️ Only in private/trusted chats
 bot_token = "..."
 chat_id = "..."
-\`\`\`
+```
 
-⚠️ **Security**: \`poll = true\` grants chat members AI access to your PC. Task notifications work even with \`poll = false\`.
+⚠️ **Security**: `poll = true` grants chat members AI access to your PC. Task notifications work even with `poll = false`.
 `
         };
 
@@ -1821,6 +1836,7 @@ def get_run_logs(
 
 @app.get("/api/config")
 def get_config_api():
+    from .compiler import compiled_task_indicator
     from .scheduler import get_projects
     from .parser import load_project_tasks
     from datetime import datetime, timezone as dt_timezone
@@ -1841,6 +1857,7 @@ def get_config_api():
         tasks = load_project_tasks(proj_dir)
         for toml_path, task_def in tasks:
             t = task_def.task
+            compiled = compiled_task_indicator(t, toml_path)
 
             # Use task-specific timezone if defined, otherwise fallback to global
             task_tz = tz
@@ -1879,6 +1896,9 @@ def get_config_api():
                     "project_path": str(proj_dir),
                     "file": str(toml_path),
                     "task_timezone": str(task_tz),
+                    "compiled_state": compiled["state"],
+                    "compiled_path": compiled["path"],
+                    "compiled_needs_compile": compiled["needs_compile"],
                 }
             )
 

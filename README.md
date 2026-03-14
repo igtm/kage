@@ -28,6 +28,7 @@ English | [日本語](./README_JA.md)
 - **Persistent Memory**: Stores task state in `.kage/memory/` to maintain context across runs.
 - **Lightweight Execution**: Leverages OS-native schedulers. Zero background overhead.
 - **Flexible Execution**: Supports AI prompt execution, shell commands, and custom scripts.
+- **Compiled Task Overrides**: `kage compile <task>` can materialize a prompt task into a sibling `.lock.sh` script with source hashes, and kage will only execute that lock script while it matches the source `.md`.
 - **Advanced Workflow Controls**:
     - **Execution Modes**: `continuous`, `once`, `autostop`.
     - **Concurrency Policy**: `allow`, `forbid` (skip if running), `replace` (kill old).
@@ -94,7 +95,7 @@ kage --install-completion
 
 Reload your shell after installation (`exec $SHELL -l`).
 
-Shell completion also suggests task names and recent run IDs for positional arguments like `kage logs <task>`, `kage task run <name>`, and `kage runs show <exec_id>`.
+Shell completion also suggests task names and recent run IDs for positional arguments like `kage run <task>`, `kage compile <task>`, `kage logs <task>`, `kage task run <name>`, and `kage runs show <exec_id>`.
 `kage doctor` also reports whether bash/zsh completion scripts are installed.
 
 ## Use Cases
@@ -228,12 +229,14 @@ Cleanup old logs every midnight.
 |---------|-------------|
 | `kage onboard` | Global setup (cron, directories, DB) |
 | `kage init` | Initialize kage in the current directory |
-| `kage run` | Execute current directory tasks once |
+| `kage run <task>` | Run a specific task immediately |
+| `kage compile <task>` | Compile a prompt task into a sibling `.lock.sh` override |
 | `kage runs` | List execution runs in grep-friendly 1-line format |
 | `kage runs show <exec_id>` | Show run metadata, paths, and status details |
 | `kage runs stop <exec_id>` | Stop a running execution |
 | `kage logs <task>` | Open raw logs for the latest run of a task |
 | `kage logs --run <exec_id>` | Open raw logs for a specific run |
+| `kage cron run` | Run the scheduler loop once (used by cron / launchd) |
 | `kage cron install` | Register to system scheduler |
 | `kage cron status` | Check background status |
 | `kage task list` | List all tasks with status and schedule |
@@ -253,6 +256,8 @@ On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its
 - `darwin_launchd_keep_alive`: Set to `true` to keep the process running (not recommended for simple polling).
 
 `kage runs` is the run-history view. `kage logs` is the raw-output viewer backed by per-run log files (`stdout.log`, `stderr.log`, `events.jsonl`).
+
+If a prompt task has a sibling compiled lock such as `.kage/tasks/nightly.lock.sh`, kage executes that lock instead of the prompt body only while its stored source hashes still match the `.md` task file. When the source prompt or front matter changes, the lock becomes stale and you need to run `kage compile <task>` again. `kage doctor`, `kage task list`, and the UI task cards all show whether a lock is fresh, stale, or missing.
 
 Connector polling replies are recorded in the same run history. Use `kage runs --source connector_poll` to isolate them, then inspect the raw AI CLI output with `kage logs --run <exec_id>`.
 

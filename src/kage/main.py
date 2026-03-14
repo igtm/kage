@@ -316,6 +316,35 @@ def _resolve_log_target(task_name: str | None, run_id: str | None, project: str 
     raise typer.Exit(1)
 
 
+def _find_named_tasks(name: str, project: str | None = None):
+    from .parser import load_project_tasks
+    from .scheduler import get_projects
+
+    matches = []
+    for proj_dir in get_projects():
+        if project and project not in str(proj_dir):
+            continue
+        for task_file, local_task in load_project_tasks(proj_dir):
+            if local_task.task.name == name:
+                matches.append((proj_dir, task_file, local_task.task))
+    return matches
+
+
+def _resolve_named_task(name: str, project: str | None = None):
+    matches = _find_named_tasks(name, project=project)
+    if not matches:
+        typer.echo(f"Task '{name}' not found.")
+        raise typer.Exit(1)
+    if len(matches) > 1:
+        typer.echo(
+            f"Task '{name}' exists in multiple projects. Use --project with one of:"
+        )
+        for proj_dir, _task_file, _task in matches:
+            typer.echo(str(proj_dir))
+        raise typer.Exit(1)
+    return matches[0]
+
+
 def _follow_logs(run_id: str, stream: str):
     from .runs import format_local_timestamp, get_run, log_path_for_stream
 
@@ -446,6 +475,7 @@ def task_list(
     ),
 ):
     """List all registered tasks and their status (ON/OFF)."""
+    from .compiler import compiled_task_indicator
     from .scheduler import get_projects
     from .parser import load_project_tasks
     from rich.console import Console
@@ -466,6 +496,7 @@ def task_list(
     table.add_column("Active")
     table.add_column("Schedule")
     table.add_column("Type")
+    table.add_column("Compiled")
     table.add_column("Provider/Command")
 
     found = False
@@ -476,6 +507,15 @@ def task_list(
         for toml_file, local_task in tasks:
             t = local_task.task
             task_type = "AI Prompt" if t.prompt else "Shell"
+            compiled = compiled_task_indicator(t, toml_file)
+            if compiled["state"] == "fresh":
+                compiled_display = "[green]FRESH[/green]"
+            elif compiled["state"] == "stale":
+                compiled_display = "[yellow]STALE[/yellow]"
+            elif compiled["state"] == "none":
+                compiled_display = "[dim]none[/dim]"
+            else:
+                compiled_display = "[dim]-[/dim]"
             provider_info = (
                 t.provider or (t.ai.engine if t.ai and t.ai.engine else "")
                 if t.prompt
@@ -488,6 +528,7 @@ def task_list(
                 status,
                 t.cron,
                 task_type,
+                compiled_display,
                 provider_info or "-",
             )
             found = True
@@ -665,49 +706,51 @@ def task_show(
         help="Task name to show details for",
         autocompletion=_complete_task_names,
     ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project path substring for task lookup"
+    ),
 ):
     """Show details of a specific task."""
-    from .scheduler import get_projects
-    from .parser import load_project_tasks
+    from .compiler import compiled_task_status
     from rich.console import Console
     from rich.panel import Panel
 
     console = Console()
-    projects = get_projects()
-
-    for proj_dir in projects:
-        for toml_file, local_task in load_project_tasks(proj_dir):
-            t = local_task.task
-            if t.name == name:
-                details = [
-                    f"[bold]Name:[/bold]           {t.name}",
-                    f"[bold]Schedule:[/bold]       {t.cron}",
-                    f"[bold]Mode:[/bold]           {t.mode}",
-                    f"[bold]Concurrency:[/bold]    {t.concurrency_policy}",
-                    f"[bold]Timezone:[/bold]       {t.timezone or 'global'}",
-                    f"[bold]Allowed Hours:[/bold]  {t.allowed_hours or 'any'}",
-                    f"[bold]Denied Hours:[/bold]   {t.denied_hours or 'none'}",
-                    f"[bold]Project:[/bold]        {proj_dir}",
-                    f"[bold]File:[/bold]           {toml_file}",
-                ]
-                if t.prompt:
-                    details.append("[bold]Type:[/bold]           AI Prompt")
-                    details.append(f"[bold]Prompt:[/bold]         {t.prompt[:100]}...")
-                    details.append(
-                        f"[bold]Provider:[/bold]       {t.provider or 'global default'}"
-                    )
-                elif t.command:
-                    details.append("[bold]Type:[/bold]           Shell Command")
-                    details.append(f"[bold]Command:[/bold]        {t.command}")
-                console.print(
-                    Panel(
-                        "\n".join(details), title=f"[cyan]{t.name}[/cyan]", expand=False
-                    )
+    proj_dir, task_file, task = _resolve_named_task(name, project=project)
+    details = [
+        f"[bold]Name:[/bold]           {task.name}",
+        f"[bold]Schedule:[/bold]       {task.cron}",
+        f"[bold]Mode:[/bold]           {task.mode}",
+        f"[bold]Concurrency:[/bold]    {task.concurrency_policy}",
+        f"[bold]Timezone:[/bold]       {task.timezone or 'global'}",
+        f"[bold]Allowed Hours:[/bold]  {task.allowed_hours or 'any'}",
+        f"[bold]Denied Hours:[/bold]   {task.denied_hours or 'none'}",
+        f"[bold]Project:[/bold]        {proj_dir}",
+        f"[bold]File:[/bold]           {task_file}",
+    ]
+    compiled = compiled_task_status(task, task_file)
+    if task.prompt:
+        details.append("[bold]Type:[/bold]           AI Prompt")
+        details.append(f"[bold]Prompt:[/bold]         {task.prompt[:100]}...")
+        details.append(
+            f"[bold]Provider:[/bold]       {task.provider or 'global default'}"
+        )
+        if compiled:
+            if compiled["exists"]:
+                freshness = (
+                    "fresh" if compiled["is_fresh"] else "stale; recompile required"
                 )
-                return
-
-    console.print(f"[red]Task '{name}' not found.[/red]")
-    raise typer.Exit(1)
+                details.append(
+                    f"[bold]Compiled:[/bold]       {compiled['path']} ({freshness})"
+                )
+            else:
+                details.append("[bold]Compiled:[/bold]       none")
+    elif task.command:
+        details.append("[bold]Type:[/bold]           Shell Command")
+        details.append(f"[bold]Command:[/bold]        {task.command}")
+    console.print(
+        Panel("\n".join(details), title=f"[cyan]{task.name}[/cyan]", expand=False)
+    )
 
 
 @task_app.command("run")
@@ -717,45 +760,36 @@ def task_run(
         help="Task name to run immediately",
         autocompletion=_complete_task_names,
     ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project path substring for task lookup"
+    ),
 ):
     """Run a specific task immediately (ignores schedule)."""
-    from .scheduler import get_projects
-    from .parser import load_project_tasks
     from .executor import execute_task
     from rich.console import Console
 
     console = Console()
-    projects = get_projects()
-
-    for proj_dir in projects:
-        for toml_file, local_task in load_project_tasks(proj_dir):
-            if local_task.task.name == name:
-                console.print(
-                    f"[cyan]Running task:[/cyan] [bold]{name}[/bold] in {proj_dir}"
-                )
-                execute_task(proj_dir, local_task.task, task_file=toml_file)
-                console.print(f"[green]✓ Task '{name}' completed.[/green]")
-                return
-
-    console.print(f"[red]Task '{name}' not found.[/red]")
-    raise typer.Exit(1)
+    proj_dir, task_file, task = _resolve_named_task(name, project=project)
+    console.print(f"[cyan]Running task:[/cyan] [bold]{name}[/bold] in {proj_dir}")
+    execute_task(proj_dir, task, task_file=task_file)
+    console.print(f"[green]✓ Task '{name}' completed.[/green]")
 
 
 @cron_app.command("install")
 def cron_install():
-    """Register kage run to system scheduler (cron/launchd)."""
+    """Register the scheduler loop in cron/launchd."""
     daemon.install()
 
 
 @cron_app.command("remove")
 def cron_remove():
-    """Unregister kage run from system scheduler."""
+    """Unregister the scheduler loop from cron/launchd."""
     daemon.remove()
 
 
 @cron_app.command("status")
 def cron_status():
-    """Check if kage is registered in system scheduler."""
+    """Check whether the scheduler loop is registered."""
     daemon.status()
 
 
@@ -775,6 +809,14 @@ def cron_stop():
 def cron_restart():
     """Restart background tasks."""
     daemon.restart()
+
+
+@cron_app.command("run")
+def cron_run():
+    """Run scheduled tasks once for the system scheduler."""
+    from .scheduler import run_all_scheduled_tasks
+
+    run_all_scheduled_tasks()
 
 
 def _is_ja() -> bool:
@@ -827,11 +869,45 @@ def init():
 
 
 @app.command()
-def run():
-    """Run scheduled tasks."""
-    from .scheduler import run_all_scheduled_tasks
+def run(
+    name: str = typer.Argument(
+        ...,
+        help="Task name to run immediately",
+        autocompletion=_complete_task_names,
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project path substring for task lookup"
+    ),
+):
+    """Run a specific task immediately."""
+    task_run(name=name, project=project)
 
-    run_all_scheduled_tasks()
+
+@app.command()
+def compile(
+    name: str = typer.Argument(
+        ...,
+        help="Task name to compile into a .lock.sh script",
+        autocompletion=_complete_task_names,
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project path substring for task lookup"
+    ),
+):
+    """Compile a prompt task into a .lock.sh override."""
+    from .compiler import compile_prompt_task
+
+    proj_dir, task_file, task = _resolve_named_task(name, project=project)
+    try:
+        compiled_path = compile_prompt_task(proj_dir, task, task_file)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Compiled '{name}' -> {compiled_path}")
 
 
 @runs_app.callback(invoke_without_command=True)
@@ -1214,7 +1290,7 @@ def doctor():
             fail(label, "cron must be a string")
             return
         try:
-            croniter(expr, datetime.utcnow())
+            croniter(expr, datetime.now().astimezone())
         except Exception:
             warn(label, f"invalid cron expression: {expr}")
 
@@ -1675,6 +1751,7 @@ def doctor():
         _validate_config_file(KAGE_CONFIG_PATH, str(KAGE_CONFIG_PATH))
 
     try:
+        from .compiler import compiled_task_indicator
         from .scheduler import get_projects
 
         projects = get_projects()
@@ -1682,6 +1759,9 @@ def doctor():
         projects = []
         warn("projects discovery", str(e))
 
+    compiled_fresh = 0
+    compiled_stale: list[str] = []
+    compiled_none = 0
     for proj_dir in sorted(projects):
         ws_cfg = proj_dir / ".kage" / "config.toml"
         if ws_cfg.exists():
@@ -1694,6 +1774,31 @@ def doctor():
         merged_cfg = get_global_config(workspace_dir=proj_dir)
         for task_file in sorted(list(tasks_dir.glob("*.md"))):
             _validate_task_file(task_file, merged_cfg)
+            try:
+                from .parser import parse_task_file
+
+                parsed = parse_task_file(task_file)
+            except Exception:
+                parsed = []
+            for _section, task_def in parsed:
+                compiled = compiled_task_indicator(task_def, task_file)
+                if compiled["state"] == "fresh":
+                    compiled_fresh += 1
+                elif compiled["state"] == "stale":
+                    compiled_stale.append(f"{task_def.name}@{proj_dir.name}")
+                elif compiled["state"] == "none":
+                    compiled_none += 1
+
+    if compiled_stale:
+        warn(
+            "compiled locks",
+            f"{len(compiled_stale)} stale / {compiled_fresh} fresh / {compiled_none} missing ({', '.join(compiled_stale[:5])}{' ...' if len(compiled_stale) > 5 else ''})",
+        )
+    else:
+        ok(
+            "compiled locks",
+            f"0 stale / {compiled_fresh} fresh / {compiled_none} missing",
+        )
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
     table.add_column("", width=2)

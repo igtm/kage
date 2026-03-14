@@ -30,6 +30,8 @@ def migration_env(tmp_path: Path, mocker):
     mocker.patch("kage.migrations.runner.KAGE_DB_PATH", db_path)
     mocker.patch("kage.migrations.runner.KAGE_LOGS_DIR", logs_dir)
     mocker.patch("kage.migrations.runner.KAGE_GLOBAL_DIR", global_dir)
+    mocker.patch("kage.daemon.get_platform", return_value="linux")
+    mocker.patch("kage.daemon.subprocess.check_output", return_value="")
     db.init_db()
     return {"db_path": db_path, "logs_dir": logs_dir, "global_dir": global_dir}
 
@@ -108,3 +110,30 @@ def test_migrate_install_cli_reports_applied_migrations(migration_env):
     payload = json.loads(result.stdout)
     assert payload[0]["migration_id"] == "0001_backfill_legacy_run_logs"
     assert payload[0]["details"]["backfilled_runs"] == 1
+
+
+def test_run_install_migrations_updates_legacy_scheduler_command(migration_env, mocker):
+    class DummyProc:
+        def __init__(self):
+            self.returncode = 0
+            self.stdin = None
+            self.written = ""
+
+        def communicate(self, content):
+            self.written = content
+
+    proc = DummyProc()
+    mocker.patch("kage.daemon.get_platform", return_value="linux")
+    mocker.patch(
+        "kage.daemon.subprocess.check_output",
+        return_value="*/5 * * * * /usr/local/bin/kage run >> /tmp/kage.log 2>&1\n",
+    )
+    mocker.patch("kage.daemon.subprocess.Popen", return_value=proc)
+
+    results = run_install_migrations(from_version="0.5.0", to_version="0.5.1")
+
+    assert [result.migration_id for result in results] == [
+        "0002_switch_scheduler_command_to_cron_run"
+    ]
+    assert results[0].details == {"updated": True, "platform": "linux"}
+    assert "kage cron run" in proc.written
