@@ -26,7 +26,13 @@ from .db import (
 )
 from .parser import TaskDef
 from .ai.chat import clean_ai_reply, get_thinking_tag
-from .runs import ensure_run_log_files, get_run, infer_output_summary
+from .compiler import compiled_task_status
+from .runs import (
+    ensure_run_log_files,
+    get_run,
+    infer_output_summary,
+    write_run_metadata,
+)
 
 
 def _normalize_headless_args(cmd: list[str]) -> list[str]:
@@ -444,8 +450,27 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
         parser_type = "raw"
         p_args = ""
         cmd = []
+        engine_name = None
+        compiled_status = None
+        compiled_override_path = None
+        compiled_lock_error = None
+        prompt_execution = bool(task.prompt)
 
-        if task.prompt:
+        if task.prompt and not task.command and task_file is not None:
+            compiled_status = compiled_task_status(task, task_file)
+            if compiled_status and compiled_status["exists"]:
+                if compiled_status["is_fresh"]:
+                    compiled_override_path = compiled_status["path"]
+                else:
+                    compiled_lock_error = (
+                        f"Compiled lock is stale for task '{task.name}'. "
+                        f"Run `kage compile {task.name}` to refresh {compiled_status['path']}."
+                    )
+                prompt_execution = False
+
+        if compiled_override_path is not None:
+            cmd = ["bash", str(compiled_override_path)]
+        elif task.prompt:
             # タスク管理 (task.json) の読み込みと prompt_hash チェック
             task_plan = _load_task_json(memory_dir)
             current_hash = _compute_prompt_hash(task.prompt)
@@ -550,9 +575,43 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 str(project_dir),
                 task.name,
                 working_dir=str(execution_dir),
-                execution_kind="prompt" if task.prompt else "command",
-                provider_name=engine_name if task.prompt else None,
+                execution_kind=(
+                    "compiled"
+                    if compiled_status and compiled_status["exists"]
+                    else "prompt"
+                    if prompt_execution
+                    else "command"
+                ),
+                provider_name=engine_name if prompt_execution else None,
             )
+
+            if compiled_override_path is not None:
+                write_run_metadata(
+                    exec_id,
+                    {
+                        "compiled_task": {
+                            "source_task_file": str(task_file) if task_file else None,
+                            "script_path": str(compiled_override_path),
+                        }
+                    },
+                )
+            elif compiled_status and compiled_status["exists"]:
+                write_run_metadata(
+                    exec_id,
+                    {
+                        "compiled_task": {
+                            "source_task_file": str(task_file) if task_file else None,
+                            "script_path": str(compiled_status["path"]),
+                            "is_fresh": compiled_status["is_fresh"],
+                            "source_hash": compiled_status["source_hash"],
+                            "frontmatter_hash": compiled_status["frontmatter_hash"],
+                            "prompt_hash": compiled_status["prompt_hash"],
+                        }
+                    },
+                )
+
+            if compiled_lock_error:
+                raise RuntimeError(compiled_lock_error)
 
             print(f"Executing task '{task.name}' in {execution_dir}")
             env = os.environ.copy()
@@ -586,7 +645,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 return
 
             # autostop チェック: task.json の sub_tasks が全て done の場合
-            if task.prompt and task.mode == ExecutionMode.AUTOSTOP and task_file:
+            if prompt_execution and task.mode == ExecutionMode.AUTOSTOP and task_file:
                 should_stop = False
                 # task.json による判定
                 updated_plan = _load_task_json(memory_dir)
@@ -602,7 +661,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             if task.mode == ExecutionMode.ONCE and task_file:
                 _deactivate_task(task_file)
 
-            if task.prompt and parser_type == "jq" and p_args:
+            if prompt_execution and parser_type == "jq" and p_args:
                 try:
                     jq_result = subprocess.run(
                         ["jq", "-r", p_args],
@@ -620,7 +679,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
 
             status = "SUCCESS" if result.returncode == 0 else "FAILED"
             # Clean thinking tags from AI output before storing and notifying
-            if task.prompt:
+            if prompt_execution:
                 result.stdout = clean_ai_reply(result.stdout)
             summary = infer_output_summary(result.stdout, result.stderr)
             updated = update_execution(

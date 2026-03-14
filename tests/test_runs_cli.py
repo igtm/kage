@@ -1,12 +1,15 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
 from kage import db
+from kage.config import CommandDef, GlobalConfig, ProviderConfig
 from kage.main import app
+from kage.parser import TaskDef
 from kage.runs import get_run
 
 runner = CliRunner()
@@ -116,3 +119,119 @@ def test_runs_cli_filters_connector_poll_source(cli_env):
     assert result.exit_code == 0
     assert "connector:test_discord" in result.stdout
     assert "Nightly Research" not in result.stdout
+
+
+def test_top_level_run_requires_task_name():
+    result = runner.invoke(app, ["run"])
+
+    assert result.exit_code == 2
+
+
+def test_cron_run_executes_scheduler(mocker):
+    run_all = mocker.patch("kage.scheduler.run_all_scheduled_tasks")
+
+    result = runner.invoke(app, ["cron", "run"])
+
+    assert result.exit_code == 0
+    run_all.assert_called_once_with()
+
+
+def test_task_list_shows_compiled_statuses(mocker, tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.md"
+    shell_file = project_dir / ".kage" / "tasks" / "shell.md"
+    task_file.parent.mkdir(parents=True)
+
+    prompt_task = TaskDef(name="Nightly", cron="* * * * *", prompt="hello")
+    shell_task = TaskDef(name="Shell", cron="* * * * *", command="echo hi")
+
+    mocker.patch("kage.scheduler.get_projects", return_value=[project_dir])
+    mocker.patch(
+        "kage.parser.load_project_tasks",
+        return_value=[
+            (task_file, SimpleNamespace(task=prompt_task)),
+            (shell_file, SimpleNamespace(task=shell_task)),
+        ],
+    )
+    mocker.patch(
+        "kage.compiler.compiled_task_indicator",
+        side_effect=[
+            {"state": "stale", "label": "stale"},
+            {"state": "n/a", "label": "-"},
+        ],
+    )
+
+    result = runner.invoke(app, ["task", "list"])
+
+    assert result.exit_code == 0
+    assert "STALE" in result.stdout
+    assert "Nightly" in result.stdout
+    assert "Shell" in result.stdout
+
+
+def test_doctor_reports_stale_compiled_locks(mocker, tmp_path: Path):
+    global_dir = tmp_path / ".kage"
+    config_path = global_dir / "config.toml"
+    projects_list = global_dir / "projects.list"
+    db_path = global_dir / "kage.db"
+    logs_dir = global_dir / "logs"
+    state_path = global_dir / "migrations" / "install_state.json"
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.md"
+
+    global_dir.mkdir(parents=True)
+    logs_dir.mkdir(parents=True)
+    config_path.write_text("", encoding="utf-8")
+    projects_list.write_text(str(project_dir) + "\n", encoding="utf-8")
+    db_path.write_text("", encoding="utf-8")
+    task_file.parent.mkdir(parents=True)
+    task_file.write_text(
+        """---
+name: Nightly
+cron: "* * * * *"
+provider: codex
+---
+
+hello
+""",
+        encoding="utf-8",
+    )
+
+    cfg = GlobalConfig(
+        default_ai_engine="codex",
+        commands={"codex": CommandDef(template=["codex", "exec", "{prompt}"])},
+        providers={"codex": ProviderConfig(command="codex")},
+    )
+
+    mocker.patch("kage.config.KAGE_GLOBAL_DIR", global_dir)
+    mocker.patch("kage.config.KAGE_CONFIG_PATH", config_path)
+    mocker.patch("kage.config.KAGE_PROJECTS_LIST", projects_list)
+    mocker.patch("kage.config.KAGE_DB_PATH", db_path)
+    mocker.patch("kage.config.KAGE_LOGS_DIR", logs_dir)
+    mocker.patch(
+        "kage.config.get_global_config",
+        side_effect=lambda workspace_dir=None: cfg,
+    )
+    mocker.patch("kage.scheduler.get_projects", return_value=[project_dir])
+    mocker.patch(
+        "kage.migrations.runner.get_install_migration_state_path",
+        return_value=state_path,
+    )
+    mocker.patch("kage.migrations.runner.discover_install_migrations", return_value=[])
+    mocker.patch(
+        "kage.compiler.compiled_task_indicator",
+        return_value={
+            "state": "stale",
+            "label": "stale",
+            "path": str(task_file.with_suffix(".lock.sh")),
+            "exists": True,
+            "is_fresh": False,
+            "needs_compile": True,
+        },
+    )
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "compiled locks" in result.stdout
+    assert "Nightly@proj" in result.stdout

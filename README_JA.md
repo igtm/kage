@@ -28,6 +28,7 @@
 - **永続メモリシステム**: `.kage/memory/` に状態を保存し、実行を跨いだ文脈の維持が可能。
 - **超軽量な実行**: OS 標準のスケジューラーを活用。バックグラウンドでの無駄なリソース消費がありません。
 - **柔軟な実行形式**: AIプロンプト、シェルコマンド、カスタムスクリプトに対応。AI プロンプト（Markdown 本文）と直接コマンド実行（Front Matter 内の `command`）の両方をサポート。
+- **コンパイル済みタスク**: `kage compile <task>` で prompt task から同名の `.lock.sh` を生成でき、source hash が一致している間だけその lock script が優先実行されます。
 - **高度な制御 (Workflow)**:
     - **実行モード**: `continuous` (常時), `once` (一回), `autostop` (AIが完了判断時に停止)。
     - **多重起動制御**: `allow`, `forbid` (重複スキップ), `replace` (古い方を終了)。
@@ -94,7 +95,7 @@ kage --install-completion
 
 設定後はシェルを再読み込みしてください（`exec $SHELL -l`）。
 
-シェル補完では `kage logs <task>`、`kage task run <name>`、`kage runs show <exec_id>` のような位置引数に対して task 名や最近の run id も候補に出ます。
+シェル補完では `kage run <task>`、`kage compile <task>`、`kage logs <task>`、`kage task run <name>`、`kage runs show <exec_id>` のような位置引数に対して task 名や最近の run id も候補に出ます。
 `kage doctor` でも bash / zsh の completion script が入っているか確認できます。
 
 ## ユースケース
@@ -228,12 +229,14 @@ shell: "bash"
 |---------|-------------|
 | `kage onboard` | グローバルセットアップ |
 | `kage init` | 現在のディレクトリに kage を初期化 |
-| `kage run` | スケジュール済みタスクを手動トリガー |
+| `kage run <task>` | 特定 task を即時実行 |
+| `kage compile <task>` | prompt task から同名の `.lock.sh` override を生成 |
 | `kage runs` | 実行履歴を grep しやすい 1 行形式で表示 |
 | `kage runs show <exec_id>` | 実行メタデータ、状態、ログパスを表示 |
 | `kage runs stop <exec_id>` | 実行中の run を停止 |
 | `kage logs <task>` | task の最新 run の生ログを開く |
 | `kage logs --run <exec_id>` | 特定 run の生ログを開く |
+| `kage cron run` | scheduler ループを 1 回実行（cron / launchd 用） |
 | `kage cron install` | システムスケジューラーに登録 |
 | `kage cron status` | バックグラウンド実行状態の確認 |
 | `kage task list` | タスク一覧を表示 |
@@ -252,6 +255,8 @@ macOS では `cron` の代わりに `launchd` が使用されます。`config.to
 - `darwin_launchd_keep_alive`: `true` に設定すると、プロセスを常駐させます。
 
 `kage runs` は実行履歴ビュー、`kage logs` は run ごとの raw output viewer です。生ログ本体は `stdout.log`, `stderr.log`, `events.jsonl` として保持されます。
+
+prompt task と同名の compiled lock 例えば `.kage/tasks/nightly.lock.sh` が存在する場合、kage はその lock に保持された source hash が `.md` と一致している間だけ Markdown 本文の代わりにそれを実行します。prompt 本文や front matter を更新したら lock は stale 扱いになるので、`kage compile <task>` を再実行してください。`kage doctor`、`kage task list`、UI の task card でも fresh / stale / missing を確認できます。
 
 connector の `poll` 返信も同じ run 履歴に保存されます。`kage runs --source connector_poll` で絞り込み、`kage logs --run <exec_id>` で AI CLI の raw output を確認できます。
 

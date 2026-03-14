@@ -22,7 +22,9 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 
 - `kage onboard` — Setup global directories and `kage cron`.
 - `kage init` — Initialize in current directory.
-- `kage run` — Execute due tasks manually.
+- `kage run <task>` — Execute a specific task immediately.
+- `kage compile <task>` — Compile a prompt task into a sibling `.lock.sh` override.
+- `kage cron run` — Execute the scheduler loop once (used by cron/launchd).
 - `kage runs` — List execution runs in a 1-line, grep-friendly format.
 - `kage runs show <exec_id>` — Inspect run metadata and log paths.
 - `kage runs stop <exec_id>` — Stop a running execution.
@@ -37,7 +39,9 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage migrate install` — Run pending install-time migrations manually.
 - `kage ui` — Open web dashboard.
 
-Shell completion covers positional task/run arguments as well, so `kage logs <task>`, `kage task run <name>`, `kage task show <name>`, `kage runs show <exec_id>`, and `kage stop <exec_id>` can all suggest concrete values after `kage completion install bash|zsh`. `kage doctor` reports whether those completion scripts are installed.
+Shell completion covers positional task/run arguments as well, so `kage run <task>`, `kage compile <task>`, `kage logs <task>`, `kage task run <name>`, `kage task show <name>`, `kage runs show <exec_id>`, and `kage stop <exec_id>` can all suggest concrete values after `kage completion install bash|zsh`. `kage doctor` reports whether those completion scripts are installed.
+
+If a prompt task has a sibling compiled lock like `.kage/tasks/nightly.lock.sh`, kage executes that lock instead of the Markdown prompt body only while the stored source hashes still match the `.md` task file. If the prompt body or front matter changes, the lock becomes stale and must be regenerated with `kage compile <task>`. `kage doctor`, `kage task list`, and the UI all surface whether the lock is fresh, stale, or missing.
 
 Connector poll replies are recorded as normal runs. Use `kage runs --source connector_poll` to find them and `kage logs --run <exec_id>` to inspect raw AI CLI output.
 

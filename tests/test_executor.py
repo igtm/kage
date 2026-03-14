@@ -13,6 +13,7 @@ from kage.config import (
     render_command_template,
     set_config_value,
 )
+from kage.compiler import get_task_source_fingerprints
 from kage.executor import execute_task
 from kage.parser import TaskDef
 
@@ -140,6 +141,88 @@ def test_execute_ai_via_provider_injects_provider_model(
     full_prompt = cmd[-1]
     assert "Fix this" in full_prompt
     assert "## Task Instructions" in full_prompt
+
+
+def test_execute_prompt_task_prefers_compiled_script(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    popen = mocker.patch(
+        "kage.executor.subprocess.Popen", return_value=DummyProc(stdout="compiled ok")
+    )
+    start_execution = mocker.patch(
+        "kage.executor.start_execution", return_value="exec-1"
+    )
+
+    task_file = tmp_path / ".kage" / "tasks" / "nightly.md"
+    task_file.parent.mkdir(parents=True)
+    task_file.write_text(
+        """---
+name: ai_task
+cron: "* * * * *"
+---
+
+Fix this
+""",
+        encoding="utf-8",
+    )
+    fingerprints = get_task_source_fingerprints(task_file)
+    compiled_path = task_file.with_suffix(".lock.sh")
+    compiled_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "# kage-lock-version: 1",
+                f"# kage-source-hash: {fingerprints['source_hash']}",
+                f"# kage-frontmatter-hash: {fingerprints['frontmatter_hash']}",
+                f"# kage-prompt-hash: {fingerprints['prompt_hash']}",
+                "echo compiled",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    task = TaskDef(name="ai_task", cron="* * * * *", prompt="Fix this")
+    execute_task(tmp_path, task, task_file=task_file)
+
+    cmd = popen.call_args.args[0]
+    assert cmd == ["bash", str(compiled_path)]
+    assert start_execution.call_args.kwargs["execution_kind"] == "compiled"
+
+
+def test_execute_task_errors_when_compiled_lock_is_stale(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    popen = mocker.patch("kage.executor.subprocess.Popen")
+    update_execution = mocker.patch("kage.executor.update_execution")
+    start_execution = mocker.patch(
+        "kage.executor.start_execution", return_value="exec-compiled-stale"
+    )
+
+    task_file = tmp_path / ".kage" / "tasks" / "nightly.md"
+    task_file.parent.mkdir(parents=True)
+    task_file.write_text(
+        """---
+name: ai_task
+cron: "* * * * *"
+---
+
+Fix this
+""",
+        encoding="utf-8",
+    )
+    compiled_path = task_file.with_suffix(".lock.sh")
+    compiled_path.write_text(
+        "#!/usr/bin/env bash\n# kage-lock-version: 1\n# kage-prompt-hash: stale\n",
+        encoding="utf-8",
+    )
+
+    task = TaskDef(name="ai_task", cron="* * * * *", prompt="Fix this")
+    execute_task(tmp_path, task, task_file=task_file)
+
+    popen.assert_not_called()
+    assert start_execution.call_args.kwargs["execution_kind"] == "compiled"
+    assert "Compiled lock is stale" in update_execution.call_args.args[3]
 
 
 def test_execute_explicit_provider_uses_provider_specific_model(

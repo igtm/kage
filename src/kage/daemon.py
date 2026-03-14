@@ -3,6 +3,7 @@ import shutil
 import typer
 import sys
 import os
+import re
 from pathlib import Path
 
 
@@ -14,11 +15,84 @@ def get_kage_path():
     return shutil.which("kage") or "kage"
 
 
+SCHEDULER_COMMAND = ("cron", "run")
+LEGACY_SCHEDULER_COMMAND = ("run",)
+LEGACY_SCHEDULER_PATTERN = re.compile(
+    r"(?P<exe>(?:\"[^\"]*kage\"|'[^']*kage'|\S*kage))\s+run\b"
+)
+
+
+def _scheduler_command_for_path(kage_path: str) -> str:
+    return f"{kage_path} {' '.join(SCHEDULER_COMMAND)}"
+
+
+def _line_has_scheduler_entry(line: str) -> bool:
+    return "kage run" in line or "kage cron run" in line
+
+
+def _line_has_legacy_scheduler_entry(line: str) -> bool:
+    return "kage cron run" not in line and "kage run" in line
+
+
+def _read_linux_crontab() -> str:
+    try:
+        return subprocess.check_output(
+            ["crontab", "-l"], text=True, stderr=subprocess.DEVNULL
+        )
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def _write_linux_crontab(content: str) -> bool:
+    proc = subprocess.Popen(["crontab", "-"], stdin=subprocess.PIPE, text=True)
+    proc.communicate(content)
+    return proc.returncode == 0
+
+
+def _rewrite_scheduler_line(line: str) -> str:
+    if not _line_has_legacy_scheduler_entry(line):
+        return line
+    return LEGACY_SCHEDULER_PATTERN.sub(r"\g<exe> cron run", line, count=1)
+
+
+def _linux_scheduler_needs_migration() -> bool:
+    return any(
+        _line_has_legacy_scheduler_entry(line)
+        for line in _read_linux_crontab().splitlines()
+    )
+
+
+def migrate_scheduler_command_if_needed() -> dict:
+    platform = get_platform()
+    if platform.startswith("linux"):
+        current_cron = _read_linux_crontab()
+        if not current_cron:
+            return {"updated": False, "platform": "linux"}
+        lines = current_cron.splitlines()
+        if not any(_line_has_legacy_scheduler_entry(line) for line in lines):
+            return {"updated": False, "platform": "linux"}
+        new_cron = "\n".join(_rewrite_scheduler_line(line) for line in lines) + "\n"
+        if not _write_linux_crontab(new_cron):
+            raise RuntimeError("Failed to update crontab")
+        return {"updated": True, "platform": "linux"}
+
+    if platform == "darwin":
+        if not LAUNCHD_PLIST_PATH.exists():
+            return {"updated": False, "platform": "darwin"}
+        plist_content = LAUNCHD_PLIST_PATH.read_text(encoding="utf-8")
+        if "<string>cron</string>" in plist_content:
+            return {"updated": False, "platform": "darwin"}
+        _setup_macos_launchd()
+        return {"updated": True, "platform": "darwin"}
+
+    return {"updated": False, "platform": platform}
+
+
 # --- Linux (cron) Implementation ---
 
 
 def _setup_linux_cron():
-    """Add kage run to crontab with configurable interval."""
+    """Add kage cron run to crontab with configurable interval."""
     from .config import get_global_config
 
     cfg = get_global_config()
@@ -30,20 +104,33 @@ def _setup_linux_cron():
     else:
         cron_expr = f"*/{interval} * * * *"
 
-    try:
-        current_cron = subprocess.check_output(
-            ["crontab", "-l"], text=True, stderr=subprocess.DEVNULL
+    current_cron = _read_linux_crontab()
+    if current_cron and any(
+        _line_has_legacy_scheduler_entry(line) for line in current_cron.splitlines()
+    ):
+        new_cron = (
+            "\n".join(
+                _rewrite_scheduler_line(line) for line in current_cron.splitlines()
+            )
+            + "\n"
         )
-    except subprocess.CalledProcessError:
-        current_cron = ""
+        if _write_linux_crontab(new_cron):
+            typer.echo("Updated existing kage crontab entry to use 'kage cron run'.")
+        else:
+            typer.echo("Failed to update crontab.")
+        return
 
-    if "kage run" in current_cron:
+    if current_cron and any(
+        _line_has_scheduler_entry(line) for line in current_cron.splitlines()
+    ):
         typer.echo("Crontab already has a kage entry.")
         return
 
     kage_path = get_kage_path()
     log_file = Path.home() / ".kage" / "cron.log"
-    new_job = f"{cron_expr} {kage_path} run >> {log_file} 2>&1\n"
+    new_job = (
+        f"{cron_expr} {_scheduler_command_for_path(kage_path)} >> {log_file} 2>&1\n"
+    )
 
     new_cron = current_cron
     if current_cron and not current_cron.endswith("\n"):
@@ -51,9 +138,7 @@ def _setup_linux_cron():
     new_cron += new_job
 
     try:
-        proc = subprocess.Popen(["crontab", "-"], stdin=subprocess.PIPE, text=True)
-        proc.communicate(new_cron)
-        if proc.returncode == 0:
+        if _write_linux_crontab(new_cron):
             typer.echo(f"Successfully added kage to crontab (every {interval} min).")
         else:
             typer.echo("Failed to update crontab.")
@@ -62,16 +147,13 @@ def _setup_linux_cron():
 
 
 def _remove_linux_cron():
-    try:
-        current_cron = subprocess.check_output(
-            ["crontab", "-l"], text=True, stderr=subprocess.DEVNULL
-        )
-    except subprocess.CalledProcessError:
+    current_cron = _read_linux_crontab()
+    if not current_cron:
         typer.echo("No crontab found.")
         return
 
     lines = current_cron.splitlines()
-    new_lines = [line for line in lines if "kage run" not in line]
+    new_lines = [line for line in lines if not _line_has_scheduler_entry(line)]
 
     if len(lines) == len(new_lines):
         typer.echo("No kage entry found in crontab.")
@@ -83,8 +165,7 @@ def _remove_linux_cron():
         if not new_lines:
             subprocess.run(["crontab", "-r"])
         else:
-            proc = subprocess.Popen(["crontab", "-"], stdin=subprocess.PIPE, text=True)
-            proc.communicate(new_cron)
+            _write_linux_crontab(new_cron)
         typer.echo("Successfully removed kage from crontab.")
     except Exception as e:
         typer.echo(f"Failed to update crontab: {e}")
@@ -92,11 +173,8 @@ def _remove_linux_cron():
 
 def _stop_linux_cron():
     """Disable kage entry by commenting it out."""
-    try:
-        current_cron = subprocess.check_output(
-            ["crontab", "-l"], text=True, stderr=subprocess.DEVNULL
-        )
-    except subprocess.CalledProcessError:
+    current_cron = _read_linux_crontab()
+    if not current_cron:
         typer.echo("No crontab found.")
         return
 
@@ -104,7 +182,7 @@ def _stop_linux_cron():
     new_lines = []
     found = False
     for line in lines:
-        if "kage run" in line and not line.strip().startswith("#"):
+        if _line_has_scheduler_entry(line) and not line.strip().startswith("#"):
             new_lines.append(f"# {line}")
             found = True
         else:
@@ -115,18 +193,14 @@ def _stop_linux_cron():
         return
 
     new_cron = "\n".join(new_lines) + "\n"
-    proc = subprocess.Popen(["crontab", "-"], stdin=subprocess.PIPE, text=True)
-    proc.communicate(new_cron)
+    _write_linux_crontab(new_cron)
     typer.echo("kage background tasks stopped (commented out in crontab).")
 
 
 def _start_linux_cron():
     """Enable kage entry by uncommenting it."""
-    try:
-        current_cron = subprocess.check_output(
-            ["crontab", "-l"], text=True, stderr=subprocess.DEVNULL
-        )
-    except subprocess.CalledProcessError:
+    current_cron = _read_linux_crontab()
+    if not current_cron:
         typer.echo("No crontab found.")
         return
 
@@ -134,22 +208,21 @@ def _start_linux_cron():
     new_lines = []
     found = False
     for line in lines:
-        if "kage run" in line and line.strip().startswith("#"):
+        if _line_has_scheduler_entry(line) and line.strip().startswith("#"):
             new_lines.append(line.replace("#", "", 1).strip())
             found = True
         else:
             new_lines.append(line)
 
     if not found:
-        if any("kage run" in line for line in lines):
+        if any(_line_has_scheduler_entry(line) for line in lines):
             typer.echo("kage is already started.")
         else:
             typer.echo("kage is not installed in crontab. Use install first.")
         return
 
     new_cron = "\n".join(new_lines) + "\n"
-    proc = subprocess.Popen(["crontab", "-"], stdin=subprocess.PIPE, text=True)
-    proc.communicate(new_cron)
+    _write_linux_crontab(new_cron)
     typer.echo("kage background tasks started (uncommented in crontab).")
 
 
@@ -225,6 +298,7 @@ def _setup_macos_launchd():
     <key>ProgramArguments</key>
     <array>
         <string>{kage_path}</string>
+        <string>cron</string>
         <string>run</string>
     </array>
     <key>StartInterval</key>
@@ -380,12 +454,12 @@ def status():
             typer.echo("[NOT INSTALLED] No launchd agent found.")
     else:
         try:
-            current_cron = subprocess.check_output(
-                ["crontab", "-l"], text=True, stderr=subprocess.DEVNULL
-            )
-            if "kage run" in current_cron:
+            current_cron = _read_linux_crontab()
+            if any(
+                _line_has_scheduler_entry(line) for line in current_cron.splitlines()
+            ):
                 if any(
-                    line.strip().startswith("#") and "kage run" in line
+                    line.strip().startswith("#") and _line_has_scheduler_entry(line)
                     for line in current_cron.splitlines()
                 ):
                     typer.echo(
