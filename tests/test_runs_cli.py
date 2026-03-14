@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from kage import db
+from kage.compiler import get_task_source_fingerprints
 from kage.config import CommandDef, GlobalConfig, ProviderConfig
 from kage.main import app
 from kage.parser import TaskDef
@@ -375,3 +376,41 @@ hello
     assert result.exit_code == 0
     assert "compiled locks" in result.stdout
     assert "Nightly@proj" in result.stdout
+
+
+def test_task_show_includes_prompt_hash(mocker, tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.md"
+    task_file.parent.mkdir(parents=True)
+    task_file.write_text(
+        """---
+name: Nightly
+cron: "* * * * *"
+---
+
+Create a report
+""",
+        encoding="utf-8",
+    )
+    task = TaskDef(name="Nightly", cron="* * * * *", prompt="Create a report")
+    prompt_hash = get_task_source_fingerprints(task_file)["prompt_hash"]
+    cfg = GlobalConfig(
+        default_ai_engine="gemini",
+        commands={"gemini": CommandDef(template=["gemini", "--prompt", "{prompt}"])},
+        providers={"gemini": ProviderConfig(command="gemini")},
+    )
+
+    mocker.patch(
+        "kage.main._resolve_named_task",
+        return_value=(project_dir, task_file, task),
+    )
+    mocker.patch(
+        "kage.config.get_global_config",
+        side_effect=lambda workspace_dir=None: cfg,
+    )
+
+    result = runner.invoke(app, ["task", "show", "Nightly"])
+
+    assert result.exit_code == 0
+    assert "Prompt Hash" in result.stdout
+    assert prompt_hash in result.stdout

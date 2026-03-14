@@ -29,10 +29,6 @@ def prompt_hash(prompt: str) -> str:
     return hashlib.sha256(prompt.strip().encode("utf-8")).hexdigest()
 
 
-def _sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
 def _split_task_source(text: str) -> tuple[str, str]:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -54,10 +50,8 @@ def _split_task_source(text: str) -> tuple[str, str]:
 
 def get_task_source_fingerprints(task_file: Path) -> dict[str, str]:
     source_text = task_file.read_text(encoding="utf-8")
-    frontmatter_text, prompt_text = _split_task_source(source_text)
+    _frontmatter_text, prompt_text = _split_task_source(source_text)
     return {
-        "source_hash": _sha256_text(source_text),
-        "frontmatter_hash": _sha256_text(frontmatter_text),
         "prompt_hash": prompt_hash(prompt_text),
     }
 
@@ -95,18 +89,10 @@ def compiled_task_status(task: TaskDef, task_file: Path | None) -> dict | None:
     matches_prompt = (
         exists and metadata.get("prompt_hash") == fingerprints["prompt_hash"]
     )
-    matches_frontmatter = (
-        exists and metadata.get("frontmatter_hash") == fingerprints["frontmatter_hash"]
-    )
-    matches_source = (
-        exists and metadata.get("source_hash") == fingerprints["source_hash"]
-    )
     is_fresh = (
         exists
         and metadata.get("lock_version") == COMPILED_LOCK_VERSION
         and matches_prompt
-        and matches_frontmatter
-        and matches_source
     )
     return {
         "path": path,
@@ -114,8 +100,6 @@ def compiled_task_status(task: TaskDef, task_file: Path | None) -> dict | None:
         "metadata": metadata,
         **fingerprints,
         "matches_prompt": matches_prompt,
-        "matches_frontmatter": matches_frontmatter,
-        "matches_source": matches_source,
         "is_fresh": is_fresh,
         "needs_compile": not exists or not is_fresh,
     }
@@ -289,8 +273,6 @@ def compile_prompt_task(project_dir: Path, task: TaskDef, task_file: Path) -> Pa
         f"# kage-lock-version: {COMPILED_LOCK_VERSION}",
         f"# kage-source-task: {task.name}",
         f"# kage-source-file: {task_file}",
-        f"# kage-source-hash: {fingerprints['source_hash']}",
-        f"# kage-frontmatter-hash: {fingerprints['frontmatter_hash']}",
         f"# kage-prompt-hash: {fingerprints['prompt_hash']}",
         f"# kage-provider: {engine_name}",
         f"# kage-compiled-at: {datetime.now().astimezone().isoformat()}",
