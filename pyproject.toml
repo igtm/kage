@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.131.0",
     "pydantic>=2.12.5",
     "rich>=14.2.0",
+    "textual>=3.5.0",
     "tomlkit>=0.14.0",
     "typer>=0.24.1",
     "tzdata>=2025.3",

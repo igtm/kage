@@ -508,9 +508,14 @@ def load_all_log_text(
     lines: int | None = None,
     since: str | None = None,
     project_filter: str | None = None,
+    task_name: str | None = None,
 ) -> str:
     events: list[dict] = []
-    for run in list_runs(limit=None, project_filter=project_filter):
+    for run in list_runs(
+        limit=None,
+        project_filter=project_filter,
+        task_name=task_name,
+    ):
         events.extend(collect_run_events(run, stream=stream, since=since))
     return render_combined_events(events, stream=stream, lines=lines)
 

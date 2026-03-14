@@ -248,6 +248,7 @@ Cleanup old logs every midnight.
 | `kage doctor` | Diagnose configuration health |
 | `kage skill` | Display agent skill guidelines |
 | `kage ui` | Open the web dashboard |
+| `kage tui` | Open the terminal dashboard with runs, tasks, connectors, and config tabs |
 
 ### macOS launchd Specific Settings
 On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its behavior in `config.toml`:
@@ -264,6 +265,8 @@ If a prompt task has a sibling compiled lock such as `.kage/tasks/nightly.lock.s
 Connector polling replies are recorded in the same run history. Use `kage runs --source connector_poll` to isolate them, then inspect the raw AI CLI output with `kage logs --run <exec_id>`.
 
 Install-time migrations are discovered automatically from `src/kage/migrations/install/`. New migration modules added there are picked up by both `kage migrate install` and `install.sh`.
+
+`kage tui` provides a terminal dashboard powered by Textual. It has four tabs: Logs, Tasks, Connector, and Settings. The Logs tab filters runs and rendered logs from a task/run sidebar, the Tasks tab shows task details, the Connector tab shows connector history, and the Settings tab shows the global config snapshot.
 
 ## Configuration
 

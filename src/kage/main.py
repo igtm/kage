@@ -1274,6 +1274,14 @@ def ui(
 
 
 @app.command()
+def tui():
+    """Launch the terminal UI dashboard."""
+    from .tui import start_tui
+
+    start_tui()
+
+
+@app.command()
 def config(
     key: str = typer.Argument(
         ..., help="Setting key (e.g., 'default_ai_engine' or 'providers.codex.model')"
@@ -1385,6 +1393,7 @@ def config_show(
 @app.command()
 def doctor():
     """Run setup diagnostics and show potential issues."""
+    import importlib.util
     import os
     from datetime import datetime
     from pathlib import Path
@@ -1449,6 +1458,11 @@ def doctor():
         "kage completion install bash または zsh を実行してください"
         if is_ja
         else "Run 'kage completion install bash' or 'kage completion install zsh'"
+    )
+    t_tui_hint = (
+        "'kage tui' を使うには textual 依存が必要です"
+        if is_ja
+        else "Install the 'textual' dependency to use 'kage tui'"
     )
 
     console = Console()
@@ -1843,7 +1857,13 @@ def doctor():
     else:
         warn("shell completion", t_completion_hint)
 
-    # 3.7. Install migrations
+    # 3.7. TUI backend
+    if importlib.util.find_spec("textual"):
+        ok("tui backend", "textual")
+    else:
+        warn("tui backend", t_tui_hint)
+
+    # 3.8. Install migrations
     try:
         from .migrations.runner import (
             InstallMigrationContext,
