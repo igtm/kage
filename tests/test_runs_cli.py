@@ -80,6 +80,7 @@ def test_runs_cli_lists_table_with_relative_time(cli_env):
     assert "SUCCESS" in result.stdout
     assert "4h ago" in result.stdout
     assert "30m 0s" in result.stdout
+    assert "┏" in result.stdout
     assert exec_id[:8] not in result.stdout
 
 

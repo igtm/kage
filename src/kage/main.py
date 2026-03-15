@@ -246,7 +246,6 @@ def _print_runs(
         )
         return
 
-    from rich import box
     from rich.console import Console
     from rich.table import Table
     from .runs import format_local_timestamp, format_relative_timestamp
@@ -260,8 +259,7 @@ def _print_runs(
     console = Console()
     table = Table(
         show_header=True,
-        header_style="bold",
-        box=box.SIMPLE_HEAD,
+        header_style="bold magenta",
         padding=(0, 1),
     )
     table.add_column("日時" if is_ja else "When", style="dim", no_wrap=True)
