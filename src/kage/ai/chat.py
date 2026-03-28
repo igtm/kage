@@ -1,6 +1,7 @@
 import subprocess
 import os
 import shutil
+import re
 from pathlib import Path
 from ..config import get_global_config, render_command_template
 from ..runs import infer_output_summary
@@ -8,16 +9,134 @@ from ..runs import infer_output_summary
 # Provider name → thinking tag mapping
 # Different AI models are trained with different internal reasoning tags
 PROVIDER_THINKING_TAGS: dict[str, str] = {
-    "gemini": "thought",
+    "gemini": "think",
     "claude": "antml:thinking",
     "codex": "thinking",
 }
 DEFAULT_THINKING_TAG = "think"
+_QUICK_TAG_RE = re.compile(
+    r"<\s*\/?\s*(?:think(?:ing)?|thought|antthinking|antml:thinking|final)\b",
+    re.IGNORECASE,
+)
+_MALFORMED_OPEN_TAG_RE = re.compile(
+    r"<\s*(?:think(?:ing)?|thought|antthinking|antml:thinking|final)\b",
+    re.IGNORECASE,
+)
+_FINAL_TAG_RE = re.compile(r"<\s*(/?)\s*final\b[^<>]*>", re.IGNORECASE)
+_THINKING_TAG_RE = re.compile(
+    r"<\s*(\/?)\s*(?:think(?:ing)?|thought|antthinking|antml:thinking)\b[^<>]*>",
+    re.IGNORECASE,
+)
 
 
 def get_thinking_tag(provider_name: str) -> str:
     """Return the thinking tag for a given provider name."""
     return PROVIDER_THINKING_TAGS.get(provider_name, DEFAULT_THINKING_TAG)
+
+
+def _find_code_regions(text: str) -> list[tuple[int, int]]:
+    regions: list[tuple[int, int]] = []
+
+    for match in re.finditer(
+        r"(^|\n)(```|~~~)[^\n]*\n[\s\S]*?(?:\n\2(?:\n|$)|$)", text
+    ):
+        prefix = len(match.group(1))
+        start = match.start() + prefix
+        regions.append((start, match.end()))
+
+    for match in re.finditer(r"`+[^`]+`+", text):
+        start = match.start()
+        end = match.end()
+        inside_fenced = any(
+            region_start <= start and end <= region_end
+            for region_start, region_end in regions
+        )
+        if not inside_fenced:
+            regions.append((start, end))
+
+    regions.sort()
+    return regions
+
+
+def _is_inside_code(pos: int, regions: list[tuple[int, int]]) -> bool:
+    return any(start <= pos < end for start, end in regions)
+
+
+def _strip_thinking_blocks(text: str) -> str:
+    code_regions = _find_code_regions(text)
+    result_parts: list[str] = []
+    last_index = 0
+    in_thinking = False
+
+    for match in _THINKING_TAG_RE.finditer(text):
+        index = match.start()
+        if _is_inside_code(index, code_regions):
+            continue
+
+        is_close = match.group(1) == "/"
+        if not in_thinking:
+            result_parts.append(text[last_index:index])
+            if not is_close:
+                in_thinking = True
+        elif is_close:
+            in_thinking = False
+
+        last_index = match.end()
+
+    if not in_thinking:
+        result_parts.append(text[last_index:])
+
+    return "".join(result_parts)
+
+
+def _extract_or_strip_final_blocks(text: str) -> str:
+    code_regions = _find_code_regions(text)
+    saw_open_final = False
+    for match in _FINAL_TAG_RE.finditer(text):
+        if match.group(1) != "/" and not _is_inside_code(match.start(), code_regions):
+            saw_open_final = True
+            break
+
+    result_parts: list[str] = []
+    last_index = 0
+    in_final = False
+
+    for match in _FINAL_TAG_RE.finditer(text):
+        index = match.start()
+        if _is_inside_code(index, code_regions):
+            continue
+
+        is_close = match.group(1) == "/"
+        if saw_open_final:
+            if in_final:
+                result_parts.append(text[last_index:index])
+                if is_close:
+                    in_final = False
+            elif not is_close:
+                in_final = True
+        else:
+            result_parts.append(text[last_index:index])
+
+        last_index = match.end()
+
+    if saw_open_final:
+        if in_final:
+            result_parts.append(text[last_index:])
+    else:
+        result_parts.append(text[last_index:])
+
+    return "".join(result_parts)
+
+
+def _strip_trailing_malformed_open_tag(text: str) -> str:
+    code_regions = _find_code_regions(text)
+    for match in _MALFORMED_OPEN_TAG_RE.finditer(text):
+        index = match.start()
+        if _is_inside_code(index, code_regions):
+            continue
+        if ">" not in text[index:]:
+            return text[:index]
+    return text
 
 
 DEFAULT_SYSTEM_PROMPT = """
@@ -26,9 +145,9 @@ Your role is to support the user in their daily tasks, acting like a proactive s
 Since you operate directly on the host machine, you have powerful access to the file system, databases, and local tools.
 
 [CRITICAL: THINKING PROCESS ISOLATION]
-- Before providing your final response, you MUST wrap ALL internal reasoning, plans, or "chain of thought" inside `<{thinking_tag}>` and `</{thinking_tag}>` tags (ensure you include the complete start tag, including the `>` at the end).
-- Everything OUTSIDE these tags will be treated as the final output visible to the user.
-- If you fail to use these tags, your internal reflections will leak and confuse the user.
+- Before providing your final response, you MUST wrap ALL internal reasoning, plans, or "chain of thought" inside `<{thinking_tag}>` and `</{thinking_tag}>` tags.
+- Format every reply as `<{thinking_tag}>...</{thinking_tag}>` followed by `<final>...</final>`, with no other text outside those tags.
+- Only the content inside `<final>` is visible to the user. If you fail to isolate reasoning this way, your internal reflections will leak and confuse the user.
 
 [CRITICAL SECURITY RULE]
 You MUST NOT answer questions or provide information related to:
@@ -45,15 +164,14 @@ def clean_ai_reply(text: str) -> str:
     Handles: <think>, <thinking>, <thought>, <antthinking>, <antml:thinking>, <final>
     Also handles unclosed tags gracefully.
     """
-    import re
+    if not text or not _QUICK_TAG_RE.search(text):
+        return text.strip()
 
-    # Tags that various AI models may use for internal reasoning
-    tags = r"(?:think|thinking|thought|antthinking|antml:thinking|final)"
-    # Remove closed tag pairs (handling missing '>' in the start tag if the AI hallucinates valid XML but without the closing bracket of the start tag)
-    text = re.sub(rf"<{tags}(?:>|\b|\s).*?</{tags}>", "", text, flags=re.DOTALL)
-    # Remove unclosed tags at the end
-    text = re.sub(rf"<{tags}(?:>|\b|\s).*", "", text, flags=re.DOTALL)
-    return text.strip()
+    cleaned = _strip_thinking_blocks(text)
+    cleaned = _extract_or_strip_final_blocks(cleaned)
+    cleaned = _strip_trailing_malformed_open_tag(cleaned)
+    cleaned_result = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned_result.strip()
 
 
 def _resolve_chat_working_dir(config, working_dir: str | None) -> Path:

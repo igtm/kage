@@ -3,7 +3,12 @@ from datetime import datetime
 import pytest
 from unittest.mock import patch, MagicMock
 from kage import db
-from kage.ai.chat import generate_chat_reply, generate_logged_chat_reply
+from kage.ai.chat import (
+    clean_ai_reply,
+    generate_chat_reply,
+    generate_logged_chat_reply,
+    get_thinking_tag,
+)
 from kage.config import GlobalConfig, ProviderConfig, CommandDef
 from kage.runs import get_run, load_run_metadata
 
@@ -45,6 +50,57 @@ def test_generate_chat_reply_no_engine(mock_get_config):
     mock_get_config.return_value = config
     with pytest.raises(ValueError, match="default_ai_engine is not set"):
         generate_chat_reply("hi")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("<thought>secret</thought>\nhello", "hello"),
+        (
+            "Use `<thinking>` literally.\n<thought>secret</thought>\nhello",
+            "Use `<thinking>` literally.\n\nhello",
+        ),
+        (
+            "```xml\n<thought>example</thought>\n```\n<thought>secret</thought>\nhello",
+            "```xml\n<thought>example</thought>\n```\n\nhello",
+        ),
+        ("<final>hello</final>", "hello"),
+        ("prefix<final>hello</final>suffix", "hello"),
+        ("Before <think>hidden", "Before"),
+        ("hello\n<think still thinking", "hello"),
+        ("hello\n<final\nworld", "hello"),
+        ("First\n\n<think>hidden</think>\n\nSecond", "First\n\nSecond"),
+    ],
+)
+def test_clean_ai_reply_handles_reasoning_tags_without_breaking_code(text, expected):
+    assert clean_ai_reply(text) == expected
+
+
+def test_get_thinking_tag_uses_think_for_gemini():
+    assert get_thinking_tag("gemini") == "think"
+
+
+@patch("kage.ai.chat.get_global_config")
+@patch("kage.ai.chat.subprocess.run")
+def test_generate_chat_reply_uses_gemini_reasoning_and_final_tags(
+    mock_run, mock_get_config
+):
+    config = GlobalConfig()
+    config.default_ai_engine = "gemini"
+    config.providers["gemini"] = ProviderConfig(command="gemini_cmd")
+    config.commands["gemini_cmd"] = CommandDef(
+        template=["gemini", "--prompt", "{prompt}"]
+    )
+    mock_get_config.return_value = config
+
+    mock_res = MagicMock(stdout="ok", stderr="", returncode=0)
+    mock_run.return_value = mock_res
+
+    generate_chat_reply("hi")
+
+    prompt_arg = mock_run.call_args[0][0][-1]
+    assert "<think>" in prompt_arg
+    assert "<final>" in prompt_arg
 
 
 @pytest.fixture
