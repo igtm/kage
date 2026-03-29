@@ -12,9 +12,9 @@ from typing import Optional
 
 from .artifacts import (
     build_connector_delivery_prompt,
-    collect_artifacts_from_dir,
-    ensure_run_artifact_dir,
+    ensure_workspace_artifact_staging_dir,
     inject_connector_delivery_env,
+    persist_artifacts_from_staging,
     write_artifact_metadata,
 )
 from .connector_payload import ConnectorAttachment, ConnectorMessage
@@ -503,7 +503,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
     execution_dir = _resolve_task_working_dir(project_dir, task, task_file)
 
     exec_id: str | None = None
-    artifact_dir: Path | None = None
+    artifact_staging_dir: Path | None = None
     attachments: list[ConnectorAttachment] = []
 
     # ロックファイル作成
@@ -678,18 +678,25 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 env["PATH"] = global_config.env_path
 
             if task.notify_connectors:
-                artifact_dir = ensure_run_artifact_dir(exec_id)
-                inject_connector_delivery_env(env, artifact_dir, connector_targets)
-                write_artifact_metadata(exec_id, artifact_dir, [])
+                artifact_staging_dir = ensure_workspace_artifact_staging_dir(
+                    execution_dir,
+                    exec_id,
+                )
+                inject_connector_delivery_env(
+                    env,
+                    artifact_staging_dir,
+                    connector_targets,
+                )
+                write_artifact_metadata(exec_id, None, artifact_staging_dir, [])
 
             if compiled_override_path is not None:
                 cmd = ["bash", str(compiled_override_path)]
             elif task.prompt:
                 full_prompt = base_prompt or ""
-                if artifact_dir is not None:
+                if artifact_staging_dir is not None:
                     full_prompt += build_connector_delivery_prompt(
                         connector_targets,
-                        artifact_dir,
+                        artifact_staging_dir,
                     )
 
                 if resolved_template:
@@ -724,9 +731,17 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                     timeout=timeout,
                 )
             except subprocess.TimeoutExpired:
-                if artifact_dir is not None:
-                    attachments = collect_artifacts_from_dir(artifact_dir)
-                    write_artifact_metadata(exec_id, artifact_dir, attachments)
+                if artifact_staging_dir is not None:
+                    persisted_dir, attachments = persist_artifacts_from_staging(
+                        exec_id,
+                        artifact_staging_dir,
+                    )
+                    write_artifact_metadata(
+                        exec_id,
+                        persisted_dir,
+                        artifact_staging_dir,
+                        attachments,
+                    )
                 # タイムアウト時はプロセスグループごと終了させる
                 raise
             result = subprocess.CompletedProcess(
@@ -736,9 +751,17 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 result_data["stderr"],
             )
 
-            if artifact_dir is not None:
-                attachments = collect_artifacts_from_dir(artifact_dir)
-                write_artifact_metadata(exec_id, artifact_dir, attachments)
+            if artifact_staging_dir is not None:
+                persisted_dir, attachments = persist_artifacts_from_staging(
+                    exec_id,
+                    artifact_staging_dir,
+                )
+                write_artifact_metadata(
+                    exec_id,
+                    persisted_dir,
+                    artifact_staging_dir,
+                    attachments,
+                )
 
             if get_execution_status(exec_id) == "STOPPED":
                 return
@@ -803,9 +826,17 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 )
         except subprocess.TimeoutExpired:
             stderr = f"Task timed out after {task.timeout_minutes} minutes"
-            if exec_id and artifact_dir is not None and not attachments:
-                attachments = collect_artifacts_from_dir(artifact_dir)
-                write_artifact_metadata(exec_id, artifact_dir, attachments)
+            if exec_id and artifact_staging_dir is not None and not attachments:
+                persisted_dir, attachments = persist_artifacts_from_staging(
+                    exec_id,
+                    artifact_staging_dir,
+                )
+                write_artifact_metadata(
+                    exec_id,
+                    persisted_dir,
+                    artifact_staging_dir,
+                    attachments,
+                )
             updated = update_execution(
                 exec_id,
                 "TIMEOUT",
@@ -824,9 +855,17 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                     attachments=attachments,
                 )
         except Exception as e:
-            if exec_id and artifact_dir is not None and not attachments:
-                attachments = collect_artifacts_from_dir(artifact_dir)
-                write_artifact_metadata(exec_id, artifact_dir, attachments)
+            if exec_id and artifact_staging_dir is not None and not attachments:
+                persisted_dir, attachments = persist_artifacts_from_staging(
+                    exec_id,
+                    artifact_staging_dir,
+                )
+                write_artifact_metadata(
+                    exec_id,
+                    persisted_dir,
+                    artifact_staging_dir,
+                    attachments,
+                )
             updated = update_execution(
                 exec_id,
                 "ERROR",

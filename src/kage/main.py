@@ -1462,9 +1462,9 @@ def doctor():
     )
     t_connector_artifacts = "connector artifacts" if not is_ja else "connector 添付"
     t_connector_artifacts_detail = (
-        "Connector-aware runs export KAGE_ARTIFACT_DIR. Discord uploads files from it; Slack/Telegram currently send text only and record skipped attachments."
+        "Connector-aware runs export KAGE_ARTIFACT_DIR as a workspace-local staging directory. kage copies files from it into the run logs before Discord uploads them; Slack/Telegram currently send text only and record skipped attachments."
         if not is_ja
-        else "connector を使う run では KAGE_ARTIFACT_DIR を export します。Discord はその中の file を upload し、Slack / Telegram は text のみ送って未送信添付を記録します。"
+        else "connector を使う run では workspace 内 staging directory として KAGE_ARTIFACT_DIR を export します。kage がその file を run log へ copy したうえで Discord は upload し、Slack / Telegram は text のみ送って未送信添付を記録します。"
     )
     t_connector_artifacts_detail_empty = (
         "KAGE_ARTIFACT_DIR is created only for runs that send connector messages."
@@ -2160,7 +2160,7 @@ system_prompt = "Optional additional instructions for this connector"
 ```
 
 > **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
-> **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` (for example `~/.kage/logs/<run_id>/artifacts`). Write top-level files there to have Discord upload them with the text reply or task notification.
+> **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Write top-level files there to have kage copy them into the run log artifacts and Discord upload them with the text reply or task notification.
 """
         console.print(
             Panel(Markdown(text), title="Discord Setup", border_style="magenta")

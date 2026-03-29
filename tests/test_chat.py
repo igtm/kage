@@ -156,13 +156,23 @@ def test_generate_logged_chat_reply_creates_run_and_metadata(
 
     result = generate_logged_chat_reply(
         "hi",
+        working_dir=str(logged_chat_env["logs_dir"].parent),
         run_name="connector:test",
         metadata={"connector": {"name": "test_connector", "type": "discord"}},
     )
 
     assert result["stdout"] == "hello human"
     assert [attachment.name for attachment in result["attachments"]] == ["reply.txt"]
-    assert seen_env["KAGE_ARTIFACT_DIR"].endswith("/artifacts")
+    assert seen_env["KAGE_ARTIFACT_DIR"] == str(
+        logged_chat_env["logs_dir"].parent
+        / ".kage"
+        / "tmp"
+        / "connector-artifacts"
+        / result["run_id"]
+    )
+    assert result["attachments"][0].path == (
+        logged_chat_env["logs_dir"] / result["run_id"] / "artifacts" / "reply.txt"
+    )
     assert '"type": "discord"' in seen_env["KAGE_CONNECTOR_TARGETS_JSON"]
     run = get_run(result["run_id"])
     assert run is not None
@@ -178,3 +188,7 @@ def test_generate_logged_chat_reply_creates_run_and_metadata(
     assert "KAGE_ARTIFACT_DIR" in metadata["prompt"]
     assert "KAGE_CONNECTOR_TARGETS_JSON" in metadata["prompt"]
     assert metadata["artifacts"]["files"][0]["name"] == "reply.txt"
+    assert metadata["artifacts"]["staging_dir"] == seen_env["KAGE_ARTIFACT_DIR"]
+    assert metadata["artifacts"]["dir"] == str(
+        logged_chat_env["logs_dir"] / result["run_id"] / "artifacts"
+    )
