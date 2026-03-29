@@ -5,9 +5,9 @@ import re
 from pathlib import Path
 from ..artifacts import (
     build_connector_delivery_prompt,
+    collect_artifacts_from_dir,
     ensure_workspace_artifact_staging_dir,
     inject_connector_delivery_env,
-    persist_artifacts_from_staging,
     write_artifact_metadata,
 )
 from ..config import get_global_config, render_command_template
@@ -315,7 +315,7 @@ def generate_logged_chat_reply(
         provider_name=config.default_ai_engine,
     )
     artifact_staging_dir = ensure_workspace_artifact_staging_dir(cwd_path, exec_id)
-    write_artifact_metadata(exec_id, None, artifact_staging_dir, [])
+    write_artifact_metadata(exec_id, artifact_staging_dir, [])
 
     try:
         invocation = _build_chat_invocation(
@@ -358,16 +358,10 @@ def generate_logged_chat_reply(
             env=invocation["env"],
             exec_id=exec_id,
         )
-        persisted_dir, attachments = persist_artifacts_from_staging(
-            exec_id,
+        attachments = collect_artifacts_from_dir(
             artifact_staging_dir,
         )
-        write_artifact_metadata(
-            exec_id,
-            persisted_dir,
-            artifact_staging_dir,
-            attachments,
-        )
+        write_artifact_metadata(exec_id, artifact_staging_dir, attachments)
         clean_stdout = clean_ai_reply(result["stdout"])
         status = "SUCCESS" if result["returncode"] == 0 else "FAILED"
         update_execution(
@@ -400,16 +394,10 @@ def generate_logged_chat_reply(
         }
     except Exception as exc:
         err = str(exc)
-        persisted_dir, attachments = persist_artifacts_from_staging(
-            exec_id,
+        attachments = collect_artifacts_from_dir(
             artifact_staging_dir,
         )
-        write_artifact_metadata(
-            exec_id,
-            persisted_dir,
-            artifact_staging_dir,
-            attachments,
-        )
+        write_artifact_metadata(exec_id, artifact_staging_dir, attachments)
         write_run_metadata(exec_id, base_metadata)
         update_execution(
             exec_id,

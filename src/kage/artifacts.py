@@ -1,19 +1,12 @@
 import json
-import shutil
 from pathlib import Path
 
 from .connector_payload import ConnectorAttachment
-from .runs import get_run_artifact_dir, write_run_metadata
+from .runs import write_run_metadata
 
 ARTIFACT_ENV_VAR = "KAGE_ARTIFACT_DIR"
 CONNECTOR_TARGETS_ENV_VAR = "KAGE_CONNECTOR_TARGETS_JSON"
 ARTIFACT_STAGING_DIRNAME = "connector-artifacts"
-
-
-def ensure_run_artifact_dir(exec_id: str) -> Path:
-    artifact_dir = get_run_artifact_dir(exec_id)
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    return artifact_dir
 
 
 def ensure_workspace_artifact_staging_dir(base_dir: Path, exec_id: str) -> Path:
@@ -62,8 +55,8 @@ def build_connector_delivery_prompt(
         "listed connector type(s).\n"
         "If you need to send files back through connector messages, write them as "
         f"top-level regular files to `{artifact_dir}`. This is a workspace-local "
-        "staging directory for this run, and kage will copy those files into the "
-        "run log artifacts directory after execution. The same directory is "
+        "staging directory for this run, and kage will upload files from there "
+        "after execution. The same directory is "
         f"available in `{ARTIFACT_ENV_VAR}`, and the connector target list is "
         f"available in `{CONNECTOR_TARGETS_ENV_VAR}`. Keep the human-readable "
         "response in stdout."
@@ -99,34 +92,13 @@ def collect_artifacts_from_dir(
     return attachments
 
 
-def persist_artifacts_from_staging(
-    exec_id: str,
-    staging_dir: Path | None,
-) -> tuple[Path, list[ConnectorAttachment]]:
-    run_artifact_dir = ensure_run_artifact_dir(exec_id)
-    attachments: list[ConnectorAttachment] = []
-    if staging_dir is None:
-        return run_artifact_dir, attachments
-
-    for attachment in collect_artifacts_from_dir(staging_dir):
-        destination = run_artifact_dir / attachment.name
-        try:
-            shutil.copy2(attachment.path, destination)
-            attachments.append(ConnectorAttachment.from_path(destination))
-        except OSError:
-            continue
-    return run_artifact_dir, attachments
-
-
 def write_artifact_metadata(
     exec_id: str,
     artifact_dir: Path | None,
-    staging_dir: Path | None,
     attachments: list[ConnectorAttachment],
 ) -> None:
     payload = {
         "dir": str(artifact_dir) if artifact_dir else None,
-        "staging_dir": str(staging_dir) if staging_dir else None,
         "files": [attachment.to_metadata() for attachment in attachments],
         "count": len(attachments),
     }
