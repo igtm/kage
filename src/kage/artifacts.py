@@ -58,7 +58,14 @@ def build_connector_delivery_prompt(
         "staging directory for this run, and kage will upload files from there "
         "after execution. The same directory is "
         f"available in `{ARTIFACT_ENV_VAR}`, and the connector target list is "
-        f"available in `{CONNECTOR_TARGETS_ENV_VAR}`. Keep the human-readable "
+        f"available in `{CONNECTOR_TARGETS_ENV_VAR}`. Kage uploads every top-level "
+        "regular file left there when the run ends, so leave only the files you "
+        "actually want delivered. Delete or move intermediate and source files "
+        "such as Markdown, Marp, HTML, downloaded images, and temporary assets "
+        "before finishing unless the user explicitly asked for those files. If "
+        "you render a final PNG or PDF from external images, first save the "
+        "needed images as local files and reference them with relative paths "
+        "during rendering instead of remote URLs. Keep the human-readable "
         "response in stdout."
     )
 
