@@ -188,5 +188,8 @@ def test_generate_logged_chat_reply_creates_run_and_metadata(
     assert "Format links, markdown" in metadata["prompt"]
     assert "KAGE_ARTIFACT_DIR" in metadata["prompt"]
     assert "KAGE_CONNECTOR_TARGETS_JSON" in metadata["prompt"]
+    assert "Kage uploads every top-level regular file left there" in metadata["prompt"]
+    assert "Delete or move intermediate and source files" in metadata["prompt"]
+    assert "reference them with relative paths" in metadata["prompt"]
     assert metadata["artifacts"]["files"][0]["name"] == "reply.txt"
     assert metadata["artifacts"]["dir"] == seen_env["KAGE_ARTIFACT_DIR"]

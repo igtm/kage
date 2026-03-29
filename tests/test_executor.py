@@ -283,6 +283,9 @@ def test_execute_ai_task_includes_artifact_guidance_when_connectors_enabled(
     assert "Format links, markdown" in full_prompt
     assert "KAGE_ARTIFACT_DIR" in full_prompt
     assert "KAGE_CONNECTOR_TARGETS_JSON" in full_prompt
+    assert "Kage uploads every top-level regular file left there" in full_prompt
+    assert "Delete or move intermediate and source files" in full_prompt
+    assert "reference them with relative paths" in full_prompt
     assert ".kage/tmp/connector-artifacts/exec-1" in full_prompt
 
 
