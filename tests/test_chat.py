@@ -170,8 +170,9 @@ def test_generate_logged_chat_reply_creates_run_and_metadata(
         / "connector-artifacts"
         / result["run_id"]
     )
-    assert result["attachments"][0].path == (
-        logged_chat_env["logs_dir"] / result["run_id"] / "artifacts" / "reply.txt"
+    assert (
+        result["attachments"][0].path
+        == Path(seen_env["KAGE_ARTIFACT_DIR"]) / "reply.txt"
     )
     assert '"type": "discord"' in seen_env["KAGE_CONNECTOR_TARGETS_JSON"]
     run = get_run(result["run_id"])
@@ -188,7 +189,4 @@ def test_generate_logged_chat_reply_creates_run_and_metadata(
     assert "KAGE_ARTIFACT_DIR" in metadata["prompt"]
     assert "KAGE_CONNECTOR_TARGETS_JSON" in metadata["prompt"]
     assert metadata["artifacts"]["files"][0]["name"] == "reply.txt"
-    assert metadata["artifacts"]["staging_dir"] == seen_env["KAGE_ARTIFACT_DIR"]
-    assert metadata["artifacts"]["dir"] == str(
-        logged_chat_env["logs_dir"] / result["run_id"] / "artifacts"
-    )
+    assert metadata["artifacts"]["dir"] == seen_env["KAGE_ARTIFACT_DIR"]

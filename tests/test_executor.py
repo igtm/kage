@@ -169,16 +169,10 @@ def test_execute_task_injects_artifact_dir_for_connector_notifications(
     assert '"type": "discord"' in seen_env["KAGE_CONNECTOR_TARGETS_JSON"]
     attachments = notify.call_args.kwargs["attachments"]
     assert [attachment.name for attachment in attachments] == ["report.txt"]
-    assert (
-        attachments[0].path
-        == tmp_path / ".logs" / "exec-1" / "artifacts" / "report.txt"
-    )
+    assert attachments[0].path == Path(seen_env["KAGE_ARTIFACT_DIR"]) / "report.txt"
     assert notify.call_args.kwargs["run_id"] == "exec-1"
     metadata = load_run_metadata("exec-1")
-    assert metadata["artifacts"]["staging_dir"] == seen_env["KAGE_ARTIFACT_DIR"]
-    assert metadata["artifacts"]["dir"] == str(
-        tmp_path / ".logs" / "exec-1" / "artifacts"
-    )
+    assert metadata["artifacts"]["dir"] == seen_env["KAGE_ARTIFACT_DIR"]
 
 
 def test_execute_task_scopes_artifact_staging_to_execution_dir(
