@@ -3,6 +3,21 @@ import json
 import time
 from pathlib import Path
 
+from ..connector_payload import (
+    ConnectorAttachment,
+    ConnectorDelivery,
+    ConnectorMessage,
+    normalize_connector_message,
+)
+
+__all__ = [
+    "BaseConnector",
+    "ConnectorAttachment",
+    "ConnectorDelivery",
+    "ConnectorMessage",
+    "normalize_connector_message",
+]
+
 
 class BaseConnector(ABC):
     def __init__(self, name: str, config):
@@ -40,6 +55,41 @@ class BaseConnector(ABC):
     def _build_run_name(self) -> str:
         return f"connector:{self.name}"
 
+    def _write_delivery_metadata(
+        self,
+        run_id: str | None,
+        delivery: ConnectorDelivery,
+    ) -> None:
+        if not run_id:
+            return
+
+        from ..runs import load_run_metadata, write_run_metadata
+
+        metadata = load_run_metadata(run_id)
+
+        connector_delivery = metadata.get("connector_delivery")
+        if not isinstance(connector_delivery, dict):
+            connector_delivery = {}
+        connector_delivery[self.name] = delivery.to_metadata()
+
+        artifacts = metadata.get("artifacts")
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+        artifact_delivery = artifacts.get("delivery")
+        if not isinstance(artifact_delivery, dict):
+            artifact_delivery = {}
+        artifact_delivery[self.name] = delivery.to_metadata()
+        artifacts["delivery"] = artifact_delivery
+
+        write_run_metadata(
+            run_id,
+            {
+                "connector_delivery": connector_delivery,
+                "artifacts": artifacts,
+            },
+            merge=True,
+        )
+
     @abstractmethod
     def poll_and_reply(self):
         """
@@ -49,7 +99,7 @@ class BaseConnector(ABC):
         pass
 
     @abstractmethod
-    def send_message(self, text: str):
+    def send_message(self, payload: str | ConnectorMessage):
         """
         Send a notification message to the external chat service.
         """

@@ -39,6 +39,8 @@
 - **多層的な設定**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > デフォルト。
 - **Webダッシュボード**: 実行履歴、タスク管理、AIチャットを一箇所で提供。
 
+connector を使う run では run log 配下に `KAGE_ARTIFACT_DIR` が作られます。task や connector reply がそこへ top-level file を書くと、Discord では本文と一緒に upload されます。Slack / Telegram は当面 text のみ送信し、未送信の添付は run metadata に記録されます。
+
 デフォルト同梱の AI provider は `codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider` です。
 
 詳細な技術解説は [技術構成ドキュメント](ARCHITECTURE_JA.md) を参照してください。

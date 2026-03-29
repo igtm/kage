@@ -1,4 +1,5 @@
 import io
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -87,6 +88,7 @@ def executor_config():
                 model_flag="--model",
             ),
         },
+        connectors={"discord": {"type": "discord"}},
     )
 
 
@@ -123,6 +125,46 @@ def test_execute_shell_command_with_custom_shell(
     assert cmd[1:] == ["-c", "echo hello"]
 
 
+def test_execute_task_injects_artifact_dir_for_connector_notifications(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    seen_env: dict[str, str] = {}
+    notify = mocker.patch("kage.executor._notify_connectors")
+
+    def fake_run_logged_command(*, cmd, cwd, env, exec_id, timeout=None):
+        del cmd, cwd, exec_id, timeout
+        seen_env.update(env)
+        artifact_dir = Path(env["KAGE_ARTIFACT_DIR"])
+        (artifact_dir / "report.txt").write_text("artifact payload", encoding="utf-8")
+        return {
+            "stdout": "shell ok",
+            "stderr": "",
+            "returncode": 0,
+            "stdout_bytes": 8,
+            "stderr_bytes": 0,
+            "last_output_at": datetime.now().astimezone().isoformat(),
+            "pid": 4242,
+        }
+
+    mocker.patch(
+        "kage.executor.run_logged_command", side_effect=fake_run_logged_command
+    )
+
+    task = TaskDef(
+        name="shell",
+        cron="* * * * *",
+        command="echo hello",
+        notify_connectors=["discord"],
+    )
+    execute_task(tmp_path, task)
+
+    assert seen_env["KAGE_ARTIFACT_DIR"].endswith("/artifacts")
+    assert '"type": "discord"' in seen_env["KAGE_CONNECTOR_TARGETS_JSON"]
+    attachments = notify.call_args.kwargs["attachments"]
+    assert [attachment.name for attachment in attachments] == ["report.txt"]
+    assert notify.call_args.kwargs["run_id"] == "exec-1"
+
+
 def test_execute_ai_via_provider_injects_provider_model(
     tmp_path: Path, mock_executor_env, mocker
 ):
@@ -141,6 +183,45 @@ def test_execute_ai_via_provider_injects_provider_model(
     full_prompt = cmd[-1]
     assert "Fix this" in full_prompt
     assert "## Task Instructions" in full_prompt
+
+
+def test_execute_ai_task_includes_artifact_guidance_when_connectors_enabled(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    captured_cmd: list[str] = []
+
+    def fake_run_logged_command(*, cmd, cwd, env, exec_id, timeout=None):
+        del cwd, exec_id, timeout, env
+        captured_cmd[:] = cmd
+        return {
+            "stdout": "ai response",
+            "stderr": "",
+            "returncode": 0,
+            "stdout_bytes": 11,
+            "stderr_bytes": 0,
+            "last_output_at": datetime.now().astimezone().isoformat(),
+            "pid": 4242,
+        }
+
+    mocker.patch(
+        "kage.executor.run_logged_command", side_effect=fake_run_logged_command
+    )
+
+    task = TaskDef(
+        name="ai_task",
+        cron="* * * * *",
+        prompt="Fix this",
+        notify_connectors=["discord"],
+    )
+    execute_task(tmp_path, task)
+
+    full_prompt = captured_cmd[-1]
+    assert "Fix this" in full_prompt
+    assert "discord" in full_prompt
+    assert "Format links, markdown" in full_prompt
+    assert "KAGE_ARTIFACT_DIR" in full_prompt
+    assert "KAGE_CONNECTOR_TARGETS_JSON" in full_prompt
+    assert "/artifacts" in full_prompt
 
 
 def test_execute_prompt_task_prefers_compiled_script(

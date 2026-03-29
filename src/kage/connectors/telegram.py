@@ -3,6 +3,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from ..ai.chat import clean_ai_reply, generate_logged_chat_reply
+from ..connector_payload import ConnectorDelivery, normalize_connector_message
 from ..runs import write_run_metadata
 from .base import BaseConnector
 
@@ -175,40 +176,63 @@ class TelegramConnector(BaseConnector):
                 err_text = reply_data.get("stderr") or "unknown error"
                 reply_text = f"Error generating reply: {err_text}"
             final_reply_text = clean_ai_reply(reply_text)
+            attachments = list(reply_data.get("attachments", []))
             self._log_history("User", content, run_id=run_id)
-            last_reply_id = self._post_reply(final_reply_text, run_id=run_id)
+            delivery = self._post_reply(final_reply_text, run_id=run_id)
+            if attachments:
+                delivery.skipped_attachments.extend(attachments)
+                delivery.errors.append(
+                    "Telegram connector does not support attachment uploads yet."
+                )
+            self._write_delivery_metadata(run_id, delivery)
             if run_id:
                 write_run_metadata(
                     run_id,
                     {
                         "connector": {
                             **connector_meta["connector"],
-                            "posted_reply_id": last_reply_id,
+                            "posted_reply_id": delivery.posted_message_id,
                             "posted_reply_text": final_reply_text,
+                            "uploaded_attachment_names": [
+                                item.name for item in delivery.uploaded_attachments
+                            ],
+                            "skipped_attachment_names": [
+                                item.name for item in delivery.skipped_attachments
+                            ],
+                            "attachment_errors": list(delivery.errors),
                         }
                     },
                 )
 
-    def send_message(self, text: str):
+    def send_message(self, payload):
         if not self.config.bot_token or not self.config.chat_id:
             return
-        self._post_reply(clean_ai_reply(text))
+        message = normalize_connector_message(payload)
+        delivery = self._post_reply(clean_ai_reply(message.text), run_id=message.run_id)
+        if message.attachments:
+            delivery.skipped_attachments.extend(message.attachments)
+            delivery.errors.append(
+                "Telegram connector does not support attachment uploads yet."
+            )
+        self._write_delivery_metadata(message.run_id, delivery)
 
-    def _post_reply(self, text, run_id: str | None = None) -> str | None:
-        """Post a reply, splitting if needed. Returns the last posted message ID."""
+    def _post_reply(self, text: str, run_id: str | None = None) -> ConnectorDelivery:
+        """Post a reply, splitting if needed. Returns delivery details."""
         if not text:
-            return None
+            return ConnectorDelivery()
 
         self._log_history("Assistant", text, run_id=run_id)
 
         # Split into chunks respecting Telegram's 4096 char limit
         chunks = self._split_message(text, max_len=4000)
-        last_id = None
+        delivery = ConnectorDelivery()
         for chunk in chunks:
             msg_id = self._send_chunk(chunk)
             if msg_id:
-                last_id = msg_id
-        return last_id
+                delivery.posted_message_id = msg_id
+            else:
+                delivery.errors.append("Failed to send a Telegram message chunk.")
+        return delivery
 
     @staticmethod
     def _split_message(text: str, max_len: int = 4000) -> list[str]:
