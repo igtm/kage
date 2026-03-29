@@ -3,6 +3,7 @@ from __future__ import annotations
 import locale
 from datetime import datetime
 import os
+import re
 from typing import Any
 
 from textual.app import App, ComposeResult
@@ -204,6 +205,7 @@ class KageTuiApp(App[None]):
         Binding("2", "show_tab('tasks')", "Tasks"),
         Binding("3", "show_tab('connectors')", "Connector"),
         Binding("4", "show_tab('settings')", "Settings"),
+        Binding("t", "toggle_task", "Toggle"),
     ]
 
     def __init__(self) -> None:
@@ -284,7 +286,7 @@ class KageTuiApp(App[None]):
         )
         tasks_table = self.query_one("#tasks-table", DataTable)
         tasks_table.cursor_type = "row"
-        tasks_table.add_columns("Task")
+        tasks_table.add_columns("⏻", "Task")
         connectors_table = self.query_one("#connectors-table", DataTable)
         connectors_table.cursor_type = "row"
         connectors_table.add_columns("Name", "Type")
@@ -294,6 +296,38 @@ class KageTuiApp(App[None]):
 
     def action_show_tab(self, tab_id: str) -> None:
         self.query_one(TabbedContent).active = tab_id
+
+    def action_toggle_task(self) -> None:
+        """Toggle the active state of the currently selected task."""
+        tabbed = self.query_one(TabbedContent)
+        active_tab = tabbed.active
+        if active_tab == "tasks":
+            key = self.selected_task_detail_key
+        elif active_tab == "logs":
+            key = self.selected_logs_task_key
+            if key == ALL_TASKS_KEY:
+                return
+        else:
+            return
+        if not key:
+            return
+        task = self.task_by_key.get(key)
+        if not task:
+            return
+        from pathlib import Path
+
+        task_file = Path(task["file"])
+        if not task_file.exists():
+            return
+        content = task_file.read_text(encoding="utf-8")
+        current_active = task["active"]
+        new_val = "false" if current_active else "true"
+        if "active:" in content:
+            content = re.sub(r"active:\s*(true|false)", f"active: {new_val}", content)
+        else:
+            content = re.sub(r"(cron:.*?\n)", rf"\1active: {new_val}\n", content)
+        task_file.write_text(content, encoding="utf-8")
+        self._reload()
 
     def _reload(self) -> None:
         config_payload = get_config_api()
@@ -423,7 +457,8 @@ class KageTuiApp(App[None]):
         table = self.query_one("#tasks-table", DataTable)
         table.clear(columns=False)
         for task in self.tasks:
-            table.add_row(_task_label(task), key=_task_key(task))
+            indicator = "●" if task["active"] else "○"
+            table.add_row(indicator, _task_label(task), key=_task_key(task))
         self._move_cursor(
             table,
             0
