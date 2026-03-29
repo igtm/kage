@@ -1,10 +1,16 @@
 import json
-import urllib.request
-import urllib.parse
+import mimetypes
 import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from ..ai.chat import clean_ai_reply, generate_logged_chat_reply
-from ..connector_payload import ConnectorDelivery, normalize_connector_message
+from ..connector_payload import (
+    ConnectorAttachment,
+    ConnectorDelivery,
+    ConnectorMessage,
+    normalize_connector_message,
+)
 from ..runs import write_run_metadata
 from .base import BaseConnector
 
@@ -174,14 +180,14 @@ class SlackConnector(BaseConnector):
                 err_text = reply_data.get("stderr") or "unknown error"
                 reply_text = f"Error generating reply: {err_text}"
             final_reply_text = clean_ai_reply(reply_text)
-            attachments = list(reply_data.get("attachments", []))
             self._log_history("User", content, run_id=run_id)
-            delivery = self._post_reply(final_reply_text, run_id=run_id)
-            if attachments:
-                delivery.skipped_attachments.extend(attachments)
-                delivery.errors.append(
-                    "Slack connector does not support attachment uploads yet."
+            delivery = self._post_reply(
+                ConnectorMessage(
+                    text=final_reply_text,
+                    attachments=list(reply_data.get("attachments", [])),
+                    run_id=run_id,
                 )
+            )
             self._write_delivery_metadata(run_id, delivery)
             if run_id:
                 write_run_metadata(
@@ -210,30 +216,45 @@ class SlackConnector(BaseConnector):
         if not self.config.bot_token or not self.config.channel_id:
             return
         message = normalize_connector_message(payload)
-        delivery = self._post_reply(clean_ai_reply(message.text), run_id=message.run_id)
-        if message.attachments:
-            delivery.skipped_attachments.extend(message.attachments)
-            delivery.errors.append(
-                "Slack connector does not support attachment uploads yet."
+        delivery = self._post_reply(
+            ConnectorMessage(
+                text=clean_ai_reply(message.text),
+                attachments=list(message.attachments),
+                run_id=message.run_id,
             )
+        )
         self._write_delivery_metadata(message.run_id, delivery)
 
-    def _post_reply(self, text: str, run_id: str | None = None) -> ConnectorDelivery:
+    def _post_reply(self, message: str | ConnectorMessage) -> ConnectorDelivery:
         """Post a reply, splitting if needed. Returns delivery details."""
-        if not text:
+        payload = normalize_connector_message(message)
+        text = payload.text
+        attachments = list(payload.attachments)
+        if not text and not attachments:
             return ConnectorDelivery()
 
-        self._log_history("Assistant", text, run_id=run_id)
+        if text:
+            self._log_history("Assistant", text, run_id=payload.run_id)
 
-        # Split into chunks respecting Slack's limit
-        chunks = self._split_message(text, max_len=3000)
         delivery = ConnectorDelivery()
+        chunks = self._split_message(text, max_len=3000) if text else []
+
         for chunk in chunks:
-            ts = self._send_chunk(chunk)
+            ts = self._send_text_chunk(chunk)
             if ts:
                 delivery.posted_message_id = ts
-            else:
-                delivery.errors.append("Failed to send a Slack message chunk.")
+                continue
+            delivery.errors.append("Failed to send a Slack message chunk.")
+
+        for attachment in attachments:
+            ts, error = self._send_attachment(attachment)
+            if error is None:
+                if ts:
+                    delivery.posted_message_id = ts
+                delivery.uploaded_attachments.append(attachment)
+                continue
+            delivery.skipped_attachments.append(attachment)
+            delivery.errors.append(error)
         return delivery
 
     @staticmethod
@@ -258,7 +279,7 @@ class SlackConnector(BaseConnector):
 
         return chunks
 
-    def _send_chunk(self, text: str) -> str | None:
+    def _send_text_chunk(self, text: str) -> str | None:
         """Send a single message chunk to Slack. Returns the posted message ts."""
         url = "https://slack.com/api/chat.postMessage"
         payload = {"channel": self.config.channel_id, "text": text}
@@ -282,4 +303,114 @@ class SlackConnector(BaseConnector):
                     return res_data.get("ts")
         except Exception:
             pass
+        return None
+
+    def _send_attachment(
+        self,
+        attachment: ConnectorAttachment,
+    ) -> tuple[str | None, str | None]:
+        try:
+            body = attachment.path.read_bytes()
+        except OSError as exc:
+            return None, str(exc)
+
+        upload_meta = self._call_api(
+            "https://slack.com/api/files.getUploadURLExternal",
+            {
+                "filename": attachment.name,
+                "length": str(len(body)),
+            },
+        )
+        if not upload_meta.get("ok"):
+            return None, str(upload_meta.get("error") or "files.getUploadURLExternal")
+
+        upload_url = upload_meta.get("upload_url")
+        file_id = upload_meta.get("file_id")
+        if not upload_url or not file_id:
+            return None, "Slack upload URL response was missing upload_url or file_id."
+
+        mime_type = (
+            mimetypes.guess_type(attachment.name)[0] or "application/octet-stream"
+        )
+        upload_req = urllib.request.Request(
+            str(upload_url),
+            data=body,
+            headers={
+                "Content-Type": mime_type,
+                "Content-Length": str(len(body)),
+                "User-Agent": "kage-connector",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(upload_req):
+                pass
+        except Exception as exc:
+            return None, str(exc)
+
+        complete = self._call_api(
+            "https://slack.com/api/files.completeUploadExternal",
+            {
+                "files": json.dumps([{"id": file_id, "title": attachment.name}]),
+                "channel_id": str(self.config.channel_id),
+            },
+        )
+        if not complete.get("ok"):
+            return None, str(complete.get("error") or "files.completeUploadExternal")
+
+        file_items = complete.get("files")
+        if isinstance(file_items, list) and file_items:
+            share_ts = self._find_share_ts(file_items[0])
+            if share_ts:
+                return share_ts, None
+            file_id = file_items[0].get("id")
+            if isinstance(file_id, str):
+                share_ts = self._lookup_share_ts(file_id)
+                if share_ts:
+                    return share_ts, None
+        return None, None
+
+    def _call_api(self, url: str, payload: dict[str, str]) -> dict:
+        data = urllib.parse.urlencode(payload).encode()
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self.config.bot_token}",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "kage-connector",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode())
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _lookup_share_ts(self, file_id: str) -> str | None:
+        file_info = self._call_api(
+            "https://slack.com/api/files.info",
+            {"file": file_id},
+        )
+        if not file_info.get("ok"):
+            return None
+        return self._find_share_ts(file_info.get("file"))
+
+    @staticmethod
+    def _find_share_ts(value) -> str | None:
+        if isinstance(value, dict):
+            ts = value.get("ts")
+            if isinstance(ts, str):
+                return ts
+            for nested in value.values():
+                found = SlackConnector._find_share_ts(nested)
+                if found:
+                    return found
+            return None
+        if isinstance(value, list):
+            for nested in value:
+                found = SlackConnector._find_share_ts(nested)
+                if found:
+                    return found
         return None

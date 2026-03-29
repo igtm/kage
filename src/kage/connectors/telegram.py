@@ -1,9 +1,16 @@
 import json
-import urllib.request
+import mimetypes
 import urllib.error
+import urllib.request
 from datetime import datetime, timezone
+from uuid import uuid4
 from ..ai.chat import clean_ai_reply, generate_logged_chat_reply
-from ..connector_payload import ConnectorDelivery, normalize_connector_message
+from ..connector_payload import (
+    ConnectorAttachment,
+    ConnectorDelivery,
+    ConnectorMessage,
+    normalize_connector_message,
+)
 from ..runs import write_run_metadata
 from .base import BaseConnector
 
@@ -176,14 +183,14 @@ class TelegramConnector(BaseConnector):
                 err_text = reply_data.get("stderr") or "unknown error"
                 reply_text = f"Error generating reply: {err_text}"
             final_reply_text = clean_ai_reply(reply_text)
-            attachments = list(reply_data.get("attachments", []))
             self._log_history("User", content, run_id=run_id)
-            delivery = self._post_reply(final_reply_text, run_id=run_id)
-            if attachments:
-                delivery.skipped_attachments.extend(attachments)
-                delivery.errors.append(
-                    "Telegram connector does not support attachment uploads yet."
+            delivery = self._post_reply(
+                ConnectorMessage(
+                    text=final_reply_text,
+                    attachments=list(reply_data.get("attachments", [])),
+                    run_id=run_id,
                 )
+            )
             self._write_delivery_metadata(run_id, delivery)
             if run_id:
                 write_run_metadata(
@@ -208,30 +215,49 @@ class TelegramConnector(BaseConnector):
         if not self.config.bot_token or not self.config.chat_id:
             return
         message = normalize_connector_message(payload)
-        delivery = self._post_reply(clean_ai_reply(message.text), run_id=message.run_id)
-        if message.attachments:
-            delivery.skipped_attachments.extend(message.attachments)
-            delivery.errors.append(
-                "Telegram connector does not support attachment uploads yet."
+        delivery = self._post_reply(
+            ConnectorMessage(
+                text=clean_ai_reply(message.text),
+                attachments=list(message.attachments),
+                run_id=message.run_id,
             )
+        )
         self._write_delivery_metadata(message.run_id, delivery)
 
-    def _post_reply(self, text: str, run_id: str | None = None) -> ConnectorDelivery:
+    def _post_reply(self, message: str | ConnectorMessage) -> ConnectorDelivery:
         """Post a reply, splitting if needed. Returns delivery details."""
-        if not text:
+        payload = normalize_connector_message(message)
+        text = payload.text
+        attachments = list(payload.attachments)
+        if not text and not attachments:
             return ConnectorDelivery()
 
-        self._log_history("Assistant", text, run_id=run_id)
+        if text:
+            self._log_history("Assistant", text, run_id=payload.run_id)
 
-        # Split into chunks respecting Telegram's 4096 char limit
-        chunks = self._split_message(text, max_len=4000)
         delivery = ConnectorDelivery()
+        chunks = self._split_message(text, max_len=4000) if text else []
+
         for chunk in chunks:
-            msg_id = self._send_chunk(chunk)
+            msg_id = self._send_text_chunk(chunk)
             if msg_id:
                 delivery.posted_message_id = msg_id
+                continue
+            delivery.errors.append("Failed to send a Telegram message chunk.")
+
+        for attachment in attachments:
+            msg_id, error = self._send_attachment(attachment)
+            if msg_id:
+                delivery.posted_message_id = msg_id
+                delivery.uploaded_attachments.append(attachment)
+                continue
+            delivery.skipped_attachments.append(attachment)
+            if error:
+                delivery.errors.append(error)
             else:
-                delivery.errors.append("Failed to send a Telegram message chunk.")
+                delivery.errors.append(
+                    f"Failed to upload Telegram attachment: {attachment.name}"
+                )
         return delivery
 
     @staticmethod
@@ -256,7 +282,7 @@ class TelegramConnector(BaseConnector):
 
         return chunks
 
-    def _send_chunk(self, text: str) -> str | None:
+    def _send_text_chunk(self, text: str) -> str | None:
         """Send a single message chunk to Telegram. Returns the posted message ID."""
         url = f"{self.api_base}/sendMessage"
         payload = {"chat_id": self.config.chat_id, "text": text}
@@ -280,3 +306,89 @@ class TelegramConnector(BaseConnector):
         except Exception:
             pass
         return None
+
+    def _send_attachment(
+        self,
+        attachment: ConnectorAttachment,
+    ) -> tuple[str | None, str | None]:
+        as_photo = self._should_send_as_photo(attachment)
+        method = "sendPhoto" if as_photo else "sendDocument"
+        field_name = "photo" if as_photo else "document"
+        boundary = f"kage-{uuid4().hex}"
+        try:
+            data = self._build_multipart_body(
+                {"chat_id": str(self.config.chat_id)},
+                field_name,
+                attachment,
+                boundary,
+            )
+        except OSError as exc:
+            return None, str(exc)
+
+        req = urllib.request.Request(
+            f"{self.api_base}/{method}",
+            data=data,
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "User-Agent": "kage-connector",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req) as response:
+                res_data = json.loads(response.read().decode())
+                if res_data.get("ok"):
+                    return str(res_data.get("result", {}).get("message_id")), None
+                return None, str(res_data.get("description") or method)
+        except Exception as exc:
+            return None, str(exc)
+
+    @staticmethod
+    def _should_send_as_photo(attachment: ConnectorAttachment) -> bool:
+        mime_type = mimetypes.guess_type(attachment.name)[0]
+        return (
+            mime_type in {"image/jpeg", "image/png"}
+            and attachment.size_bytes <= 10 * 1024 * 1024
+        )
+
+    @staticmethod
+    def _build_multipart_body(
+        fields: dict[str, str],
+        file_field: str,
+        attachment: ConnectorAttachment,
+        boundary: str,
+    ) -> bytes:
+        chunks: list[bytes] = []
+        boundary_bytes = boundary.encode("utf-8")
+
+        for name, value in fields.items():
+            chunks.extend(
+                [
+                    b"--" + boundary_bytes + b"\r\n",
+                    (f'Content-Disposition: form-data; name="{name}"\r\n\r\n').encode(
+                        "utf-8"
+                    ),
+                    str(value).encode("utf-8"),
+                    b"\r\n",
+                ]
+            )
+
+        mime_type = (
+            mimetypes.guess_type(attachment.name)[0] or "application/octet-stream"
+        )
+        filename = attachment.name.replace('"', "_")
+        chunks.extend(
+            [
+                b"--" + boundary_bytes + b"\r\n",
+                (
+                    f'Content-Disposition: form-data; name="{file_field}"; '
+                    f'filename="{filename}"\r\n'
+                ).encode("utf-8"),
+                f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"),
+                attachment.path.read_bytes(),
+                b"\r\n",
+                b"--" + boundary_bytes + b"--\r\n",
+            ]
+        )
+        return b"".join(chunks)

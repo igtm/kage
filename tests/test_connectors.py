@@ -5,7 +5,6 @@ from kage.connectors.slack import SlackConnector
 from kage.connectors.telegram import TelegramConnector
 from kage.connectors.base import (
     ConnectorAttachment,
-    ConnectorDelivery,
     ConnectorMessage,
 )
 from kage.config import (
@@ -314,65 +313,287 @@ def test_telegram_connector_ignores_bot_messages(mock_urlopen, tmp_path):
     assert state["last_update_id"] == "200"
 
 
-def test_slack_send_message_skips_attachments_with_metadata(tmp_path, mocker):
+@patch("kage.connectors.slack.urllib.request.urlopen")
+def test_slack_send_message_uploads_attachments(mock_urlopen, tmp_path):
     config = SlackConnectorConfig(bot_token="token", channel_id="C123")
     connector = SlackConnector("test_slack", config)
+    connector.history_file = tmp_path / "slack_history.jsonl"
 
     attachment_path = tmp_path / "report.txt"
     attachment_path.write_text("artifact payload", encoding="utf-8")
     attachment = ConnectorAttachment.from_path(attachment_path)
 
-    mock_post_reply = mocker.patch.object(
-        connector,
-        "_post_reply",
-        return_value=ConnectorDelivery(posted_message_id="ts-1"),
-    )
-    mock_write_delivery = mocker.patch.object(connector, "_write_delivery_metadata")
-
-    connector.send_message(
-        ConnectorMessage(
-            text="artifact ready",
-            attachments=[attachment],
-            run_id="run-slack-1",
-        )
+    text_response = MagicMock()
+    text_response.__enter__.return_value = text_response
+    text_response.read.return_value = json.dumps({"ok": True, "ts": "171.01"}).encode(
+        "utf-8"
     )
 
-    mock_post_reply.assert_called_once_with("artifact ready", run_id="run-slack-1")
-    delivery = mock_write_delivery.call_args.args[1]
-    assert delivery.posted_message_id == "ts-1"
+    upload_meta_response = MagicMock()
+    upload_meta_response.__enter__.return_value = upload_meta_response
+    upload_meta_response.read.return_value = json.dumps(
+        {
+            "ok": True,
+            "upload_url": "https://files.slack.test/upload",
+            "file_id": "F123",
+        }
+    ).encode("utf-8")
+
+    upload_binary_response = MagicMock()
+    upload_binary_response.__enter__.return_value = upload_binary_response
+    upload_binary_response.read.return_value = b"OK - 16"
+
+    complete_response = MagicMock()
+    complete_response.__enter__.return_value = complete_response
+    complete_response.read.return_value = json.dumps(
+        {
+            "ok": True,
+            "files": [
+                {
+                    "shares": {
+                        "public": {"C123": [{"ts": "171.02"}]},
+                    }
+                }
+            ],
+        }
+    ).encode("utf-8")
+
+    mock_urlopen.side_effect = [
+        text_response,
+        upload_meta_response,
+        upload_binary_response,
+        complete_response,
+    ]
+
+    delivery = connector._post_reply(
+        ConnectorMessage(text="artifact ready", attachments=[attachment])
+    )
+
+    assert delivery.posted_message_id == "171.02"
+    assert [item.name for item in delivery.uploaded_attachments] == ["report.txt"]
+    assert [item.name for item in delivery.skipped_attachments] == []
+    assert delivery.errors == []
+    assert mock_urlopen.call_args_list[0].args[0].full_url.endswith("/chat.postMessage")
+    assert (
+        mock_urlopen.call_args_list[1]
+        .args[0]
+        .full_url.endswith("/files.getUploadURLExternal")
+    )
+    assert (
+        mock_urlopen.call_args_list[2].args[0].full_url
+        == "https://files.slack.test/upload"
+    )
+    assert (
+        mock_urlopen.call_args_list[3]
+        .args[0]
+        .full_url.endswith("/files.completeUploadExternal")
+    )
+
+
+@patch("kage.connectors.slack.urllib.request.urlopen")
+def test_slack_send_message_uploads_attachments_without_share_ts(
+    mock_urlopen, tmp_path
+):
+    config = SlackConnectorConfig(bot_token="token", channel_id="C123")
+    connector = SlackConnector("test_slack", config)
+    connector.history_file = tmp_path / "slack_history.jsonl"
+
+    attachment_path = tmp_path / "report.txt"
+    attachment_path.write_text("artifact payload", encoding="utf-8")
+    attachment = ConnectorAttachment.from_path(attachment_path)
+
+    upload_meta_response = MagicMock()
+    upload_meta_response.__enter__.return_value = upload_meta_response
+    upload_meta_response.read.return_value = json.dumps(
+        {
+            "ok": True,
+            "upload_url": "https://files.slack.test/upload",
+            "file_id": "F123",
+        }
+    ).encode("utf-8")
+
+    upload_binary_response = MagicMock()
+    upload_binary_response.__enter__.return_value = upload_binary_response
+    upload_binary_response.read.return_value = b"OK - 16"
+
+    complete_response = MagicMock()
+    complete_response.__enter__.return_value = complete_response
+    complete_response.read.return_value = json.dumps(
+        {
+            "ok": True,
+            "files": [{"id": "F123", "title": "report.txt"}],
+        }
+    ).encode("utf-8")
+
+    info_response = MagicMock()
+    info_response.__enter__.return_value = info_response
+    info_response.read.return_value = json.dumps(
+        {
+            "ok": True,
+            "file": {
+                "id": "F123",
+                "shares": {"public": {"C123": [{"ts": "171.03"}]}},
+            },
+        }
+    ).encode("utf-8")
+
+    mock_urlopen.side_effect = [
+        upload_meta_response,
+        upload_binary_response,
+        complete_response,
+        info_response,
+    ]
+
+    delivery = connector._post_reply(ConnectorMessage(attachments=[attachment]))
+
+    assert delivery.posted_message_id == "171.03"
+    assert [item.name for item in delivery.uploaded_attachments] == ["report.txt"]
+    assert [item.name for item in delivery.skipped_attachments] == []
+    assert delivery.errors == []
+    assert mock_urlopen.call_args_list[3].args[0].full_url.endswith("/files.info")
+
+
+@patch("kage.connectors.slack.urllib.request.urlopen")
+def test_slack_send_message_skips_failed_attachments_with_metadata(
+    mock_urlopen, tmp_path
+):
+    config = SlackConnectorConfig(bot_token="token", channel_id="C123")
+    connector = SlackConnector("test_slack", config)
+    connector.history_file = tmp_path / "slack_history.jsonl"
+
+    attachment_path = tmp_path / "report.txt"
+    attachment_path.write_text("artifact payload", encoding="utf-8")
+    attachment = ConnectorAttachment.from_path(attachment_path)
+
+    text_response = MagicMock()
+    text_response.__enter__.return_value = text_response
+    text_response.read.return_value = json.dumps({"ok": True, "ts": "171.01"}).encode(
+        "utf-8"
+    )
+
+    upload_meta_response = MagicMock()
+    upload_meta_response.__enter__.return_value = upload_meta_response
+    upload_meta_response.read.return_value = json.dumps(
+        {"ok": False, "error": "missing_scope"}
+    ).encode("utf-8")
+
+    mock_urlopen.side_effect = [text_response, upload_meta_response]
+
+    delivery = connector._post_reply(
+        ConnectorMessage(text="artifact ready", attachments=[attachment])
+    )
+
+    assert delivery.posted_message_id == "171.01"
+    assert [item.name for item in delivery.uploaded_attachments] == []
     assert [item.name for item in delivery.skipped_attachments] == ["report.txt"]
-    assert any(
-        "does not support attachment uploads yet" in err for err in delivery.errors
-    )
+    assert any("missing_scope" in err for err in delivery.errors)
 
 
-def test_telegram_send_message_skips_attachments_with_metadata(tmp_path, mocker):
+@patch("kage.connectors.telegram.urllib.request.urlopen")
+def test_telegram_send_message_uploads_photo_attachments(mock_urlopen, tmp_path):
     config = TelegramConnectorConfig(bot_token="123456:ABC", chat_id="789")
     connector = TelegramConnector("test_telegram", config)
+    connector.history_file = tmp_path / "telegram_history.jsonl"
+
+    attachment_path = tmp_path / "photo.png"
+    attachment_path.write_bytes(b"\x89PNG\r\n\x1a\nartifact payload")
+    attachment = ConnectorAttachment.from_path(attachment_path)
+
+    text_response = MagicMock()
+    text_response.__enter__.return_value = text_response
+    text_response.read.return_value = json.dumps(
+        {"ok": True, "result": {"message_id": 21}}
+    ).encode("utf-8")
+
+    photo_response = MagicMock()
+    photo_response.__enter__.return_value = photo_response
+    photo_response.read.return_value = json.dumps(
+        {"ok": True, "result": {"message_id": 22}}
+    ).encode("utf-8")
+
+    mock_urlopen.side_effect = [text_response, photo_response]
+
+    delivery = connector._post_reply(
+        ConnectorMessage(text="artifact ready", attachments=[attachment])
+    )
+
+    assert delivery.posted_message_id == "22"
+    assert [item.name for item in delivery.uploaded_attachments] == ["photo.png"]
+    assert [item.name for item in delivery.skipped_attachments] == []
+    assert delivery.errors == []
+    assert mock_urlopen.call_args_list[0].args[0].full_url.endswith("/sendMessage")
+    photo_request = mock_urlopen.call_args_list[1].args[0]
+    assert photo_request.full_url.endswith("/sendPhoto")
+    assert photo_request.headers["Content-type"].startswith(
+        "multipart/form-data; boundary="
+    )
+    assert b'filename="photo.png"' in photo_request.data
+    assert b"artifact payload" in photo_request.data
+
+
+@patch("kage.connectors.telegram.urllib.request.urlopen")
+def test_telegram_send_message_skips_failed_document_attachments_with_metadata(
+    mock_urlopen, tmp_path
+):
+    config = TelegramConnectorConfig(bot_token="123456:ABC", chat_id="789")
+    connector = TelegramConnector("test_telegram", config)
+    connector.history_file = tmp_path / "telegram_history.jsonl"
 
     attachment_path = tmp_path / "report.txt"
     attachment_path.write_text("artifact payload", encoding="utf-8")
     attachment = ConnectorAttachment.from_path(attachment_path)
 
-    mock_post_reply = mocker.patch.object(
-        connector,
-        "_post_reply",
-        return_value=ConnectorDelivery(posted_message_id="message-1"),
-    )
-    mock_write_delivery = mocker.patch.object(connector, "_write_delivery_metadata")
+    text_response = MagicMock()
+    text_response.__enter__.return_value = text_response
+    text_response.read.return_value = json.dumps(
+        {"ok": True, "result": {"message_id": 31}}
+    ).encode("utf-8")
 
-    connector.send_message(
-        ConnectorMessage(
-            text="artifact ready",
-            attachments=[attachment],
-            run_id="run-telegram-2",
-        )
+    document_response = MagicMock()
+    document_response.__enter__.return_value = document_response
+    document_response.read.return_value = json.dumps(
+        {"ok": False, "description": "Bad Request: upload failed"}
+    ).encode("utf-8")
+
+    mock_urlopen.side_effect = [text_response, document_response]
+
+    delivery = connector._post_reply(
+        ConnectorMessage(text="artifact ready", attachments=[attachment])
     )
 
-    mock_post_reply.assert_called_once_with("artifact ready", run_id="run-telegram-2")
-    delivery = mock_write_delivery.call_args.args[1]
-    assert delivery.posted_message_id == "message-1"
+    assert delivery.posted_message_id == "31"
+    assert [item.name for item in delivery.uploaded_attachments] == []
     assert [item.name for item in delivery.skipped_attachments] == ["report.txt"]
-    assert any(
-        "does not support attachment uploads yet" in err for err in delivery.errors
+    assert any("upload failed" in err for err in delivery.errors)
+    assert mock_urlopen.call_args_list[1].args[0].full_url.endswith("/sendDocument")
+
+
+@patch("kage.connectors.telegram.urllib.request.urlopen")
+def test_telegram_send_message_uploads_large_png_as_document(mock_urlopen, tmp_path):
+    config = TelegramConnectorConfig(bot_token="123456:ABC", chat_id="789")
+    connector = TelegramConnector("test_telegram", config)
+    connector.history_file = tmp_path / "telegram_history.jsonl"
+
+    attachment_path = tmp_path / "large-photo.png"
+    attachment_path.write_bytes(b"\x89PNG\r\n\x1a\nartifact payload")
+    attachment = ConnectorAttachment(
+        path=attachment_path,
+        name="large-photo.png",
+        size_bytes=11 * 1024 * 1024,
     )
+
+    document_response = MagicMock()
+    document_response.__enter__.return_value = document_response
+    document_response.read.return_value = json.dumps(
+        {"ok": True, "result": {"message_id": 41}}
+    ).encode("utf-8")
+
+    mock_urlopen.return_value = document_response
+
+    delivery = connector._post_reply(ConnectorMessage(attachments=[attachment]))
+
+    assert delivery.posted_message_id == "41"
+    assert [item.name for item in delivery.uploaded_attachments] == ["large-photo.png"]
+    assert [item.name for item in delivery.skipped_attachments] == []
+    assert delivery.errors == []
+    assert mock_urlopen.call_args.args[0].full_url.endswith("/sendDocument")

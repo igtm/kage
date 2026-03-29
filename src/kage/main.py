@@ -1462,9 +1462,9 @@ def doctor():
     )
     t_connector_artifacts = "connector artifacts" if not is_ja else "connector 添付"
     t_connector_artifacts_detail = (
-        "Connector-aware runs export KAGE_ARTIFACT_DIR as a workspace-local staging directory. Discord uploads every top-level file left there, so keep only intended final deliverables there and delete source or intermediate files before the run ends unless they were explicitly requested. Slack/Telegram currently send text only and record skipped attachments."
+        "Connector-aware runs export KAGE_ARTIFACT_DIR as a workspace-local staging directory. Discord, Slack, and Telegram upload every top-level file left there, so keep only intended final deliverables there and delete source or intermediate files before the run ends unless they were explicitly requested."
         if not is_ja
-        else "connector を使う run では workspace 内 staging directory として KAGE_ARTIFACT_DIR を export します。Discord は最後に残っている top-level file をすべて upload するので、そこには意図した最終成果物だけを残し、source や中間 file は明示的に求められた場合以外は終了前に削除してください。Slack / Telegram は text のみ送って未送信添付を記録します。"
+        else "connector を使う run では workspace 内 staging directory として KAGE_ARTIFACT_DIR を export します。Discord / Slack / Telegram は最後に残っている top-level file をすべて upload するので、そこには意図した最終成果物だけを残し、source や中間 file は明示的に求められた場合以外は終了前に削除してください。"
     )
     t_connector_artifacts_detail_empty = (
         "KAGE_ARTIFACT_DIR is created only for runs that send connector messages."
@@ -2160,7 +2160,7 @@ system_prompt = "Optional additional instructions for this connector"
 ```
 
 > **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
-> **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Discord uploads every top-level file left there with the text reply or task notification, so leave only the intended final deliverables there and delete source Markdown/Marp/HTML, downloaded images, and other intermediate assets unless the user explicitly asked for them.
+> **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Discord, Slack, and Telegram upload every top-level file left there with the text reply or task notification, so leave only the intended final deliverables there and delete source Markdown/Marp/HTML, downloaded images, and other intermediate assets unless the user explicitly asked for them.
 """
         console.print(
             Panel(Markdown(text), title="Discord Setup", border_style="magenta")
@@ -2174,7 +2174,9 @@ system_prompt = "Optional additional instructions for this connector"
    - Go to **"OAuth & Permissions"**.
    - Scroll to **"Bot Token Scopes"** and add:
      - `channels:history`
+     - `files:read`
      - `chat:write`
+     - `files:write`
      - `groups:history` (if using private channels)
 3. **Install**:
    - Scroll up and click **"Install to Workspace"**.
@@ -2195,6 +2197,7 @@ system_prompt = "Optional additional instructions for this connector"
 ```
 
 > **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
+> **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Slack uploads every top-level file left there with the text reply or task notification, so leave only the intended final deliverables there and delete source Markdown/Marp/HTML, downloaded images, and other intermediate assets unless the user explicitly asked for them.
 """
         console.print(Panel(Markdown(text), title="Slack Setup", border_style="blue"))
     elif ctype == "telegram":
@@ -2220,6 +2223,7 @@ system_prompt = "Optional additional instructions for this connector"
 ```
 
 > **⚠️ Security**: `poll = true` allows anyone in the chat to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
+> **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Telegram uploads every top-level file left there with the text reply or task notification, so leave only the intended final deliverables there and delete source Markdown/Marp/HTML, downloaded images, and other intermediate assets unless the user explicitly asked for them.
 """
         console.print(
             Panel(Markdown(text), title="Telegram Setup", border_style="cyan")
