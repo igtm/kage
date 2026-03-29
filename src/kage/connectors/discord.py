@@ -1,8 +1,16 @@
 import json
+import mimetypes
 import urllib.request
 import urllib.error
+from uuid import uuid4
 from datetime import datetime, timezone
 from ..ai.chat import clean_ai_reply, generate_logged_chat_reply
+from ..connector_payload import (
+    ConnectorAttachment,
+    ConnectorDelivery,
+    ConnectorMessage,
+    normalize_connector_message,
+)
 from ..runs import write_run_metadata
 from .base import BaseConnector
 
@@ -166,45 +174,102 @@ class DiscordConnector(BaseConnector):
                 err_text = reply_data.get("stderr") or "unknown error"
                 reply_text = f"Error generating reply: {err_text}"
             final_reply_text = clean_ai_reply(reply_text)
+            attachments = list(reply_data.get("attachments", []))
             self._log_history("User", content, run_id=run_id)
-            last_reply_id = self._post_reply(final_reply_text, run_id=run_id)
+            delivery = self._post_reply(
+                ConnectorMessage(
+                    text=final_reply_text,
+                    attachments=attachments,
+                    run_id=run_id,
+                )
+            )
+            self._write_delivery_metadata(run_id, delivery)
             if run_id:
                 write_run_metadata(
                     run_id,
                     {
                         "connector": {
                             **connector_meta["connector"],
-                            "posted_reply_id": last_reply_id,
+                            "posted_reply_id": delivery.posted_message_id,
                             "posted_reply_text": final_reply_text,
+                            "uploaded_attachment_names": [
+                                item.name for item in delivery.uploaded_attachments
+                            ],
+                            "skipped_attachment_names": [
+                                item.name for item in delivery.skipped_attachments
+                            ],
+                            "attachment_errors": list(delivery.errors),
                         }
                     },
                 )
 
             # Advance past bot's own reply to prevent self-reply on next poll
-            if last_reply_id:
-                state["last_message_id"] = last_reply_id
+            if delivery.posted_message_id:
+                state["last_message_id"] = delivery.posted_message_id
                 self._save_state(state)
 
-    def send_message(self, text: str):
+    def send_message(self, payload):
         if not self.config.bot_token or not self.config.channel_id:
             return
-        self._post_reply(clean_ai_reply(text))
+        message = normalize_connector_message(payload)
+        delivery = self._post_reply(
+            ConnectorMessage(
+                text=clean_ai_reply(message.text),
+                attachments=list(message.attachments),
+                run_id=message.run_id,
+            )
+        )
+        self._write_delivery_metadata(message.run_id, delivery)
 
-    def _post_reply(self, text, run_id: str | None = None) -> str | None:
-        """Post a reply, splitting if needed. Returns the last posted message ID."""
-        if not text:
-            return None
+    def _post_reply(self, message: str | ConnectorMessage) -> ConnectorDelivery:
+        """Post a reply, splitting if needed. Returns delivery details."""
+        payload = normalize_connector_message(message)
+        text = payload.text
+        attachments = list(payload.attachments)
+        if not text and not attachments:
+            return ConnectorDelivery()
 
-        self._log_history("Assistant", text, run_id=run_id)
+        if text:
+            self._log_history("Assistant", text, run_id=payload.run_id)
 
-        # Split into chunks respecting Discord's 2000 char limit
-        chunks = self._split_message(text, max_len=1950)
-        last_id = None
-        for chunk in chunks:
-            msg_id = self._send_chunk(chunk)
+        chunks = self._split_message(text, max_len=1950) if text else []
+        attachment_batches = self._chunk_attachments(attachments)
+        operations: list[tuple[str, list[ConnectorAttachment]]] = []
+
+        if chunks:
+            operations.append(
+                (chunks[0], attachment_batches[0] if attachment_batches else [])
+            )
+            operations.extend((chunk, []) for chunk in chunks[1:])
+            if attachment_batches:
+                operations.extend(("", batch) for batch in attachment_batches[1:])
+        elif attachment_batches:
+            operations.extend(("", batch) for batch in attachment_batches)
+
+        delivery = ConnectorDelivery()
+        for chunk_text, batch in operations:
+            msg_id, error = self._send_chunk(chunk_text or None, batch)
             if msg_id:
-                last_id = msg_id
-        return last_id
+                delivery.posted_message_id = msg_id
+                delivery.uploaded_attachments.extend(batch)
+                continue
+
+            if batch:
+                delivery.skipped_attachments.extend(batch)
+                if error:
+                    delivery.errors.append(error)
+                if chunk_text:
+                    fallback_id, fallback_error = self._send_chunk(chunk_text, [])
+                    if fallback_id:
+                        delivery.posted_message_id = fallback_id
+                    elif fallback_error:
+                        delivery.errors.append(fallback_error)
+                continue
+
+            if error:
+                delivery.errors.append(error)
+
+        return delivery
 
     @staticmethod
     def _split_message(text: str, max_len: int = 1950) -> list[str]:
@@ -231,26 +296,97 @@ class DiscordConnector(BaseConnector):
 
         return chunks
 
-    def _send_chunk(self, text: str) -> str | None:
-        """Send a single message chunk to Discord. Returns the posted message ID."""
-        url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages"
-        payload = {"content": text}
+    @staticmethod
+    def _chunk_attachments(
+        attachments: list[ConnectorAttachment], batch_size: int = 10
+    ) -> list[list[ConnectorAttachment]]:
+        if not attachments:
+            return []
+        return [
+            attachments[index : index + batch_size]
+            for index in range(0, len(attachments), batch_size)
+        ]
 
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={
-                "Authorization": f"Bot {self.config.bot_token}",
-                "Content-Type": "application/json",
-                "User-Agent": "kage-connector",
-            },
-            method="POST",
+    @staticmethod
+    def _build_multipart_body(
+        payload: dict,
+        attachments: list[ConnectorAttachment],
+        boundary: str,
+    ) -> bytes:
+        chunks: list[bytes] = []
+        boundary_bytes = boundary.encode("utf-8")
+
+        chunks.extend(
+            [
+                b"--" + boundary_bytes + b"\r\n",
+                b'Content-Disposition: form-data; name="payload_json"\r\n',
+                b"Content-Type: application/json\r\n\r\n",
+                json.dumps(payload).encode("utf-8"),
+                b"\r\n",
+            ]
         )
+
+        for index, attachment in enumerate(attachments):
+            mime_type = (
+                mimetypes.guess_type(attachment.name)[0] or "application/octet-stream"
+            )
+            filename = attachment.name.replace('"', "_")
+            chunks.extend(
+                [
+                    b"--" + boundary_bytes + b"\r\n",
+                    (
+                        f'Content-Disposition: form-data; name="files[{index}]"; '
+                        f'filename="{filename}"\r\n'
+                    ).encode("utf-8"),
+                    f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"),
+                    attachment.path.read_bytes(),
+                    b"\r\n",
+                ]
+            )
+
+        chunks.append(b"--" + boundary_bytes + b"--\r\n")
+        return b"".join(chunks)
+
+    def _send_chunk(
+        self,
+        text: str | None,
+        attachments: list[ConnectorAttachment] | None = None,
+    ) -> tuple[str | None, str | None]:
+        """Send a single Discord message chunk and return (message_id, error)."""
+        url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages"
+        batch = list(attachments or [])
+        headers = {
+            "Authorization": f"Bot {self.config.bot_token}",
+            "User-Agent": "kage-connector",
+        }
+
+        if batch:
+            payload = {
+                "attachments": [
+                    {"id": index, "filename": attachment.name}
+                    for index, attachment in enumerate(batch)
+                ]
+            }
+            if text:
+                payload["content"] = text
+            boundary = f"kage-{uuid4().hex}"
+            try:
+                data = self._build_multipart_body(payload, batch, boundary)
+            except OSError as exc:
+                return None, str(exc)
+            headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        else:
+            payload = {}
+            if text:
+                payload["content"] = text
+            data = json.dumps(payload).encode()
+            headers["Content-Type"] = "application/json"
+
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
 
         try:
             with urllib.request.urlopen(req) as response:
                 res_data = json.loads(response.read().decode())
-                return res_data.get("id")
-        except Exception:
-            return None
+                return res_data.get("id"), None
+        except Exception as exc:
+            return None, str(exc)

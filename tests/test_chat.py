@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -131,9 +132,15 @@ def test_generate_logged_chat_reply_creates_run_and_metadata(
     mocker.patch(
         "kage.executor.prepare_command_for_execution", side_effect=lambda cmd, env: cmd
     )
-    mocker.patch(
-        "kage.executor.run_logged_command",
-        return_value={
+    seen_env: dict[str, str] = {}
+
+    def fake_run_logged_command(*, cmd, cwd, env, exec_id):
+        del cmd, cwd
+        seen_env.update(env)
+        artifact_dir = Path(env["KAGE_ARTIFACT_DIR"])
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "reply.txt").write_text("artifact payload", encoding="utf-8")
+        return {
             "stdout": "<thinking>secret</thinking>\nhello human",
             "stderr": "",
             "returncode": 0,
@@ -141,7 +148,10 @@ def test_generate_logged_chat_reply_creates_run_and_metadata(
             "stderr_bytes": 0,
             "last_output_at": datetime.now().astimezone().isoformat(),
             "pid": 4242,
-        },
+        }
+
+    mocker.patch(
+        "kage.executor.run_logged_command", side_effect=fake_run_logged_command
     )
 
     result = generate_logged_chat_reply(
@@ -151,6 +161,9 @@ def test_generate_logged_chat_reply_creates_run_and_metadata(
     )
 
     assert result["stdout"] == "hello human"
+    assert [attachment.name for attachment in result["attachments"]] == ["reply.txt"]
+    assert seen_env["KAGE_ARTIFACT_DIR"].endswith("/artifacts")
+    assert '"type": "discord"' in seen_env["KAGE_CONNECTOR_TARGETS_JSON"]
     run = get_run(result["run_id"])
     assert run is not None
     assert run.execution_kind == "connector_poll"
@@ -159,3 +172,9 @@ def test_generate_logged_chat_reply_creates_run_and_metadata(
     metadata = load_run_metadata(result["run_id"])
     assert metadata["connector"]["name"] == "test_connector"
     assert "You are Kage" in metadata["prompt"]
+    assert "test_connector" in metadata["prompt"]
+    assert "discord" in metadata["prompt"]
+    assert "Format links, markdown" in metadata["prompt"]
+    assert "KAGE_ARTIFACT_DIR" in metadata["prompt"]
+    assert "KAGE_CONNECTOR_TARGETS_JSON" in metadata["prompt"]
+    assert metadata["artifacts"]["files"][0]["name"] == "reply.txt"

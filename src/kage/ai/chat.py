@@ -3,7 +3,15 @@ import os
 import shutil
 import re
 from pathlib import Path
+from ..artifacts import (
+    build_connector_delivery_prompt,
+    collect_artifacts_from_dir,
+    ensure_run_artifact_dir,
+    inject_connector_delivery_env,
+    write_artifact_metadata,
+)
 from ..config import get_global_config, render_command_template
+from ..connector_payload import ConnectorAttachment
 from ..runs import infer_output_summary
 
 # Provider name → thinking tag mapping
@@ -187,6 +195,8 @@ def _build_chat_invocation(
     message: str,
     system_prompt: str | None = None,
     working_dir: str | None = None,
+    artifact_dir: Path | None = None,
+    connector_targets: list[tuple[str, str]] | None = None,
 ):
     config = get_global_config()
     engine_name = config.default_ai_engine
@@ -209,6 +219,10 @@ def _build_chat_invocation(
     ]
     if system_prompt:
         parts.append(f"[Additional Instructions]\n{system_prompt.strip()}")
+    if artifact_dir is not None:
+        parts.append(
+            build_connector_delivery_prompt(connector_targets, artifact_dir).strip()
+        )
     parts.append(f"[User Message]\n{message}")
     system_context = "\n\n".join(parts)
 
@@ -217,6 +231,8 @@ def _build_chat_invocation(
     env = os.environ.copy()
     if config.env_path:
         env["PATH"] = config.env_path
+    if artifact_dir is not None:
+        inject_connector_delivery_env(env, artifact_dir, connector_targets)
 
     if cmd and cmd[0]:
         exe_path = shutil.which(cmd[0], path=env.get("PATH"))
@@ -279,21 +295,37 @@ def generate_logged_chat_reply(
     cwd_path = _resolve_chat_working_dir(config, working_dir)
     effective_project_path = project_path or str(cwd_path)
     base_metadata = dict(metadata or {})
+    connector_meta = base_metadata.get("connector")
+    connector_targets = None
+    if isinstance(connector_meta, dict):
+        connector_targets = [
+            (
+                str(connector_meta.get("name", "connector")),
+                str(connector_meta.get("type", "unknown")),
+            )
+        ]
+    artifact_dir: Path | None = None
+    attachments: list[ConnectorAttachment] = []
+
+    exec_id = start_execution(
+        effective_project_path,
+        run_name,
+        working_dir=str(cwd_path),
+        execution_kind=execution_kind,
+        provider_name=config.default_ai_engine,
+    )
+    artifact_dir = ensure_run_artifact_dir(exec_id)
+    write_artifact_metadata(exec_id, artifact_dir, [])
 
     try:
         invocation = _build_chat_invocation(
             message=message,
             system_prompt=system_prompt,
             working_dir=str(cwd_path),
+            artifact_dir=artifact_dir,
+            connector_targets=connector_targets,
         )
     except Exception as exc:
-        exec_id = start_execution(
-            effective_project_path,
-            run_name,
-            working_dir=str(cwd_path),
-            execution_kind=execution_kind,
-            provider_name=None,
-        )
         err = str(exc)
         write_run_metadata(exec_id, base_metadata)
         update_execution(
@@ -312,14 +344,6 @@ def generate_logged_chat_reply(
             "run_id": exec_id,
         }
 
-    exec_id = start_execution(
-        effective_project_path,
-        run_name,
-        working_dir=str(cwd_path),
-        execution_kind=execution_kind,
-        provider_name=invocation["provider_name"],
-    )
-
     try:
         write_run_metadata(
             exec_id,
@@ -334,6 +358,8 @@ def generate_logged_chat_reply(
             env=invocation["env"],
             exec_id=exec_id,
         )
+        attachments = collect_artifacts_from_dir(artifact_dir)
+        write_artifact_metadata(exec_id, artifact_dir, attachments)
         clean_stdout = clean_ai_reply(result["stdout"])
         status = "SUCCESS" if result["returncode"] == 0 else "FAILED"
         update_execution(
@@ -362,9 +388,12 @@ def generate_logged_chat_reply(
             "raw_stderr": result["stderr"],
             "returncode": result["returncode"],
             "run_id": exec_id,
+            "attachments": attachments,
         }
     except Exception as exc:
         err = str(exc)
+        attachments = collect_artifacts_from_dir(artifact_dir)
+        write_artifact_metadata(exec_id, artifact_dir, attachments)
         write_run_metadata(exec_id, base_metadata)
         update_execution(
             exec_id,
@@ -380,6 +409,7 @@ def generate_logged_chat_reply(
             "raw_stderr": err,
             "returncode": 1,
             "run_id": exec_id,
+            "attachments": attachments,
         }
     finally:
         try:

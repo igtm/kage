@@ -91,6 +91,8 @@ working_dir: ../../workspace
 
 Connectors integrate with external chat services. Sending (task notifications via `notify_connectors`) is **always enabled** as long as credentials are configured. Polling (bi-directional chat) is controlled by the `poll` flag.
 
+Connector-aware runs export `KAGE_ARTIFACT_DIR` inside the run log directory. If a task or connector reply writes top-level files there, Discord uploads them with the text reply. Slack and Telegram currently send text only and record skipped attachments in run metadata.
+
 ```toml
 [connectors.my_discord]
 type = "discord"

@@ -76,6 +76,7 @@ def get_run_log_paths(exec_id: str) -> dict[str, Path]:
         "stderr_path": log_dir / "stderr.log",
         "events_path": log_dir / "events.jsonl",
         "meta_path": log_dir / "meta.json",
+        "artifact_dir": log_dir / "artifacts",
     }
 
 
@@ -85,6 +86,10 @@ def ensure_run_log_files(exec_id: str) -> dict[str, Path]:
     for key in ("stdout_path", "stderr_path", "events_path"):
         paths[key].touch(exist_ok=True)
     return paths
+
+
+def get_run_artifact_dir(exec_id: str) -> Path:
+    return get_run_log_paths(exec_id)["artifact_dir"]
 
 
 def load_run_metadata(run_or_id: RunRecord | str) -> dict:

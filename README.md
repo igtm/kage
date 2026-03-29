@@ -39,6 +39,8 @@ English | [日本語](./README_JA.md)
 - **Thinking Process Isolation**: AI workers automatically wrap reasoning in `<think>` tags. Notifications, summaries, and cleaned outputs hide them, while `kage logs` keeps the raw stream available for debugging.
 - **Web Dashboard**: Execution history, task management, and AI chat — all in one place.
 
+Connector-aware runs export `KAGE_ARTIFACT_DIR` inside the run log directory. If a task or connector reply writes top-level files there, Discord uploads them alongside the text output. Slack and Telegram currently fall back to text and record skipped attachments in run metadata.
+
 Default built-in AI providers: `codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`.
 
 Check out the [Technical Architecture](ARCHITECTURE.md) for more details.

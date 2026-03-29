@@ -71,7 +71,7 @@ def test_runs_cli_lists_table_with_relative_time(cli_env):
         output_summary="visible output",
     )
 
-    result = runner.invoke(app, ["runs"], env={"COLUMNS": "160"})
+    result = runner.invoke(app, ["runs"], env={"COLUMNS": "160", "LANG": "C.UTF-8"})
 
     assert result.exit_code == 0
     assert "When" in result.stdout

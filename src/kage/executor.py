@@ -10,6 +10,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from .artifacts import (
+    build_connector_delivery_prompt,
+    collect_artifacts_from_dir,
+    ensure_run_artifact_dir,
+    inject_connector_delivery_env,
+    write_artifact_metadata,
+)
+from .connector_payload import ConnectorAttachment, ConnectorMessage
 from .config import (
     KAGE_GLOBAL_DIR,
     build_model_args,
@@ -220,12 +228,14 @@ def _check_running(lock_path: Path) -> Optional[int]:
         return None
 
 
-def _notify_connectors(task: TaskDef, status: str, stdout: str, stderr: str):
-    if not task.notify_connectors:
-        return
-
-    from .connectors.runner import get_connector
-
+def _build_connector_notification_message(
+    task: TaskDef,
+    status: str,
+    stdout: str,
+    attachments: list[ConnectorAttachment] | None = None,
+    *,
+    run_id: str | None = None,
+) -> ConnectorMessage:
     msg = f"**[{task.name}]** Execution completed with status: `{status}`"
 
     if stdout:
@@ -233,10 +243,53 @@ def _notify_connectors(task: TaskDef, status: str, stdout: str, stderr: str):
         if len(stdout) > 2000:
             msg += "\n...(truncated)"
 
+    return ConnectorMessage(
+        text=msg,
+        attachments=list(attachments or []),
+        run_id=run_id,
+    )
+
+
+def _resolve_task_connector_targets(
+    task: TaskDef,
+    global_config,
+) -> list[tuple[str, str]]:
+    targets: list[tuple[str, str]] = []
+    for connector_name in task.notify_connectors or []:
+        raw_config = global_config.connectors.get(connector_name, {})
+        connector_type = raw_config.get("type", "unknown")
+        if hasattr(connector_type, "unwrap"):
+            connector_type = connector_type.unwrap()
+        targets.append((str(connector_name), str(connector_type)))
+    return targets
+
+
+def _notify_connectors(
+    task: TaskDef,
+    status: str,
+    stdout: str,
+    stderr: str,
+    *,
+    run_id: str | None = None,
+    attachments: list[ConnectorAttachment] | None = None,
+):
+    del stderr
+    if not task.notify_connectors:
+        return
+
+    from .connectors.runner import get_connector
+
+    payload = _build_connector_notification_message(
+        task,
+        status,
+        stdout,
+        attachments,
+        run_id=run_id,
+    )
     for c_name in task.notify_connectors:
         connector = get_connector(c_name)
         if connector:
-            connector.send_message(msg)
+            connector.send_message(payload)
 
 
 def _pump_stream(
@@ -452,6 +505,8 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
     execution_dir = _resolve_task_working_dir(project_dir, task, task_file)
 
     exec_id: str | None = None
+    artifact_dir: Path | None = None
+    attachments: list[ConnectorAttachment] = []
 
     # ロックファイル作成
     try:
@@ -470,6 +525,11 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
         p_args = ""
         cmd = []
         engine_name = None
+        shell_cmd = task.shell or "sh"
+        connector_targets = _resolve_task_connector_targets(task, global_config)
+        resolved_template = None
+        extra_args: list[str] = []
+        base_prompt = None
         compiled_status = None
         compiled_override_path = None
         compiled_lock_error = None
@@ -540,12 +600,13 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             formatted_system_prompt = system_prompt.replace(
                 "{thinking_tag}", thinking_tag
             )
-            full_prompt = f"{formatted_system_prompt}{task_plan_context}{memory_section}\n\n## Task Instructions\n{task.prompt}"
+            base_prompt = (
+                f"{formatted_system_prompt}{task_plan_context}{memory_section}"
+                f"\n\n## Task Instructions\n{task.prompt}"
+            )
 
             provider = global_config.providers.get(engine_name)
-            extra_args = task.ai.args if task.ai and task.ai.args else []
-
-            resolved_template = None
+            extra_args = list(task.ai.args) if task.ai and task.ai.args else []
             if task.command_template:
                 resolved_template = task.command_template
             elif provider:
@@ -556,25 +617,8 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             parser_type = task.parser or (provider.parser if provider else "raw")
             p_args = task.parser_args or (provider.parser_args if provider else "")
 
-            if resolved_template:
-                cmd = render_command_template(
-                    resolved_template,
-                    full_prompt,
-                    provider=provider,
-                    extra_args=extra_args,
-                    auto_inject_model=not bool(task.command_template),
-                )
-            else:
-                cmd = [
-                    engine_name,
-                    *build_model_args(provider),
-                    full_prompt,
-                    *extra_args,
-                ]
-
         elif task.command:
-            shell_cmd = task.shell or "sh"
-            cmd = [shell_cmd, "-c", task.command]
+            pass
         else:
             log_execution(
                 str(project_dir),
@@ -635,6 +679,39 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             if global_config.env_path:
                 env["PATH"] = global_config.env_path
 
+            if task.notify_connectors:
+                artifact_dir = ensure_run_artifact_dir(exec_id)
+                inject_connector_delivery_env(env, artifact_dir, connector_targets)
+                write_artifact_metadata(exec_id, artifact_dir, [])
+
+            if compiled_override_path is not None:
+                cmd = ["bash", str(compiled_override_path)]
+            elif task.prompt:
+                full_prompt = base_prompt or ""
+                if artifact_dir is not None:
+                    full_prompt += build_connector_delivery_prompt(
+                        connector_targets,
+                        artifact_dir,
+                    )
+
+                if resolved_template:
+                    cmd = render_command_template(
+                        resolved_template,
+                        full_prompt,
+                        provider=provider,
+                        extra_args=extra_args,
+                        auto_inject_model=not bool(task.command_template),
+                    )
+                else:
+                    cmd = [
+                        engine_name,
+                        *build_model_args(provider),
+                        full_prompt,
+                        *extra_args,
+                    ]
+            elif task.command:
+                cmd = [shell_cmd, "-c", task.command]
+
             cmd = prepare_command_for_execution(cmd, env)
 
             # タイムアウト設定 (デフォルトなし)
@@ -649,6 +726,9 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                     timeout=timeout,
                 )
             except subprocess.TimeoutExpired:
+                if artifact_dir is not None:
+                    attachments = collect_artifacts_from_dir(artifact_dir)
+                    write_artifact_metadata(exec_id, artifact_dir, attachments)
                 # タイムアウト時はプロセスグループごと終了させる
                 raise
             result = subprocess.CompletedProcess(
@@ -657,6 +737,10 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 result_data["stdout"],
                 result_data["stderr"],
             )
+
+            if artifact_dir is not None:
+                attachments = collect_artifacts_from_dir(artifact_dir)
+                write_artifact_metadata(exec_id, artifact_dir, attachments)
 
             if get_execution_status(exec_id) == "STOPPED":
                 return
@@ -711,9 +795,19 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 last_output_at=result_data["last_output_at"],
             )
             if updated:
-                _notify_connectors(task, status, result.stdout, result.stderr)
+                _notify_connectors(
+                    task,
+                    status,
+                    result.stdout,
+                    result.stderr,
+                    run_id=exec_id,
+                    attachments=attachments,
+                )
         except subprocess.TimeoutExpired:
             stderr = f"Task timed out after {task.timeout_minutes} minutes"
+            if exec_id and artifact_dir is not None and not attachments:
+                attachments = collect_artifacts_from_dir(artifact_dir)
+                write_artifact_metadata(exec_id, artifact_dir, attachments)
             updated = update_execution(
                 exec_id,
                 "TIMEOUT",
@@ -723,8 +817,18 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 output_summary=infer_output_summary("", stderr),
             )
             if updated:
-                _notify_connectors(task, "TIMEOUT", "", stderr)
+                _notify_connectors(
+                    task,
+                    "TIMEOUT",
+                    "",
+                    stderr,
+                    run_id=exec_id,
+                    attachments=attachments,
+                )
         except Exception as e:
+            if exec_id and artifact_dir is not None and not attachments:
+                attachments = collect_artifacts_from_dir(artifact_dir)
+                write_artifact_metadata(exec_id, artifact_dir, attachments)
             updated = update_execution(
                 exec_id,
                 "ERROR",
@@ -733,7 +837,14 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 output_summary=infer_output_summary("", str(e)),
             )
             if updated:
-                _notify_connectors(task, "ERROR", "", str(e))
+                _notify_connectors(
+                    task,
+                    "ERROR",
+                    "",
+                    str(e),
+                    run_id=exec_id,
+                    attachments=attachments,
+                )
     finally:
         if lock_path.exists():
             lock_path.unlink()

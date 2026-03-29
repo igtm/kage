@@ -23,7 +23,7 @@ project_app = typer.Typer(help="Manage registered projects")
 app.add_typer(project_app, name="project")
 
 connector_app = typer.Typer(
-    help="Manage chat connectors (Discord, Slack, Telegram, etc.)"
+    help="Manage chat connectors (Discord, Slack, Telegram, etc.), including Discord artifact uploads"
 )
 app.add_typer(connector_app, name="connector")
 
@@ -953,17 +953,12 @@ def cron_run():
 
 
 def _is_ja() -> bool:
-    import locale
     import os
 
-    if os.environ.get("LANG", "").startswith("ja"):
-        return True
-    try:
-        loc, _ = locale.getlocale()
-        if loc and loc.startswith("ja"):
+    for key in ("LC_ALL", "LANG", "LANGUAGE"):
+        value = os.environ.get(key, "")
+        if value.startswith("ja"):
             return True
-    except Exception:
-        pass
     return False
 
 
@@ -1465,6 +1460,17 @@ def doctor():
         if is_ja
         else "Install the 'textual' dependency to use 'kage tui'"
     )
+    t_connector_artifacts = "connector artifacts" if not is_ja else "connector 添付"
+    t_connector_artifacts_detail = (
+        "Connector-aware runs export KAGE_ARTIFACT_DIR. Discord uploads files from it; Slack/Telegram currently send text only and record skipped attachments."
+        if not is_ja
+        else "connector を使う run では KAGE_ARTIFACT_DIR を export します。Discord はその中の file を upload し、Slack / Telegram は text のみ送って未送信添付を記録します。"
+    )
+    t_connector_artifacts_detail_empty = (
+        "KAGE_ARTIFACT_DIR is created only for runs that send connector messages."
+        if not is_ja
+        else "KAGE_ARTIFACT_DIR は connector へ送信する run でのみ作られます。"
+    )
 
     console = Console()
     console.print(f"\n[bold cyan]kage doctor[/bold cyan] — {t_title}\n")
@@ -1947,6 +1953,17 @@ def doctor():
         else:
             warn(f"providers.{cfg.default_ai_engine} {t_prov_undef}", t_prov_hint)
 
+    if cfg.connectors:
+        ok(
+            t_connector_artifacts,
+            t_connector_artifacts_detail,
+        )
+    else:
+        ok(
+            t_connector_artifacts,
+            t_connector_artifacts_detail_empty,
+        )
+
     # 7. Validate config files and task files
     if KAGE_CONFIG_PATH.exists():
         _validate_config_file(KAGE_CONFIG_PATH, str(KAGE_CONFIG_PATH))
@@ -2143,6 +2160,7 @@ system_prompt = "Optional additional instructions for this connector"
 ```
 
 > **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
+> **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` (for example `~/.kage/logs/<run_id>/artifacts`). Write top-level files there to have Discord upload them with the text reply or task notification.
 """
         console.print(
             Panel(Markdown(text), title="Discord Setup", border_style="magenta")

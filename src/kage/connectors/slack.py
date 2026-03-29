@@ -4,6 +4,7 @@ import urllib.parse
 import urllib.error
 from datetime import datetime, timezone
 from ..ai.chat import clean_ai_reply, generate_logged_chat_reply
+from ..connector_payload import ConnectorDelivery, normalize_connector_message
 from ..runs import write_run_metadata
 from .base import BaseConnector
 
@@ -173,45 +174,67 @@ class SlackConnector(BaseConnector):
                 err_text = reply_data.get("stderr") or "unknown error"
                 reply_text = f"Error generating reply: {err_text}"
             final_reply_text = clean_ai_reply(reply_text)
+            attachments = list(reply_data.get("attachments", []))
             self._log_history("User", content, run_id=run_id)
-            last_reply_ts = self._post_reply(final_reply_text, run_id=run_id)
+            delivery = self._post_reply(final_reply_text, run_id=run_id)
+            if attachments:
+                delivery.skipped_attachments.extend(attachments)
+                delivery.errors.append(
+                    "Slack connector does not support attachment uploads yet."
+                )
+            self._write_delivery_metadata(run_id, delivery)
             if run_id:
                 write_run_metadata(
                     run_id,
                     {
                         "connector": {
                             **connector_meta["connector"],
-                            "posted_reply_id": last_reply_ts,
+                            "posted_reply_id": delivery.posted_message_id,
                             "posted_reply_text": final_reply_text,
+                            "uploaded_attachment_names": [
+                                item.name for item in delivery.uploaded_attachments
+                            ],
+                            "skipped_attachment_names": [
+                                item.name for item in delivery.skipped_attachments
+                            ],
+                            "attachment_errors": list(delivery.errors),
                         }
                     },
                 )
 
-            if last_reply_ts:
-                state["last_ts"] = last_reply_ts
+            if delivery.posted_message_id:
+                state["last_ts"] = delivery.posted_message_id
                 self._save_state(state)
 
-    def send_message(self, text: str):
+    def send_message(self, payload):
         if not self.config.bot_token or not self.config.channel_id:
             return
-        # Even for automated notifications, we clean if someone accidentally used tags
-        self._post_reply(clean_ai_reply(text))
+        message = normalize_connector_message(payload)
+        delivery = self._post_reply(clean_ai_reply(message.text), run_id=message.run_id)
+        if message.attachments:
+            delivery.skipped_attachments.extend(message.attachments)
+            delivery.errors.append(
+                "Slack connector does not support attachment uploads yet."
+            )
+        self._write_delivery_metadata(message.run_id, delivery)
 
-    def _post_reply(self, text, run_id: str | None = None) -> str | None:
-        """Post a reply, splitting if needed. Returns the last posted message ts."""
+    def _post_reply(self, text: str, run_id: str | None = None) -> ConnectorDelivery:
+        """Post a reply, splitting if needed. Returns delivery details."""
         if not text:
-            return None
+            return ConnectorDelivery()
 
         self._log_history("Assistant", text, run_id=run_id)
 
         # Split into chunks respecting Slack's limit
         chunks = self._split_message(text, max_len=3000)
-        last_ts = None
+        delivery = ConnectorDelivery()
         for chunk in chunks:
             ts = self._send_chunk(chunk)
             if ts:
-                last_ts = ts
-        return last_ts
+                delivery.posted_message_id = ts
+            else:
+                delivery.errors.append("Failed to send a Slack message chunk.")
+        return delivery
 
     @staticmethod
     def _split_message(text: str, max_len: int = 3000) -> list[str]:
