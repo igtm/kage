@@ -457,7 +457,7 @@ class KageTuiApp(App[None]):
         table = self.query_one("#tasks-table", DataTable)
         table.clear(columns=False)
         for task in self.tasks:
-            indicator = "●" if task["active"] else "○"
+            indicator = "●" if task["active"] else "─"
             table.add_row(indicator, _task_label(task), key=_task_key(task))
         self._move_cursor(
             table,
