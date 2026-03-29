@@ -239,9 +239,7 @@ def _build_connector_notification_message(
     msg = f"**[{task.name}]** Execution completed with status: `{status}`"
 
     if stdout:
-        msg += f"\n{stdout[:2000]}"
-        if len(stdout) > 2000:
-            msg += "\n...(truncated)"
+        msg += f"\n{stdout}"
 
     return ConnectorMessage(
         text=msg,

@@ -15,7 +15,11 @@ from kage.config import (
     set_config_value,
 )
 from kage.compiler import get_task_source_fingerprints
-from kage.executor import _normalize_headless_args, execute_task
+from kage.executor import (
+    _build_connector_notification_message,
+    _normalize_headless_args,
+    execute_task,
+)
 from kage.parser import TaskDef
 
 
@@ -163,6 +167,16 @@ def test_execute_task_injects_artifact_dir_for_connector_notifications(
     attachments = notify.call_args.kwargs["attachments"]
     assert [attachment.name for attachment in attachments] == ["report.txt"]
     assert notify.call_args.kwargs["run_id"] == "exec-1"
+
+
+def test_build_connector_notification_message_keeps_full_stdout():
+    task = TaskDef(name="notify", cron="* * * * *", command="echo hi")
+    long_stdout = "x" * 2500
+
+    payload = _build_connector_notification_message(task, "SUCCESS", long_stdout)
+
+    assert payload.text.endswith(long_stdout)
+    assert "...(truncated)" not in payload.text
 
 
 def test_execute_ai_via_provider_injects_provider_model(
