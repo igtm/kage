@@ -15,6 +15,7 @@ from kage.config import (
     set_config_value,
 )
 from kage.compiler import get_task_source_fingerprints
+from kage.runs import load_run_metadata
 from kage.executor import (
     _build_connector_notification_message,
     _normalize_headless_args,
@@ -162,11 +163,64 @@ def test_execute_task_injects_artifact_dir_for_connector_notifications(
     )
     execute_task(tmp_path, task)
 
-    assert seen_env["KAGE_ARTIFACT_DIR"].endswith("/artifacts")
+    assert seen_env["KAGE_ARTIFACT_DIR"] == str(
+        tmp_path / ".kage" / "tmp" / "connector-artifacts" / "exec-1"
+    )
     assert '"type": "discord"' in seen_env["KAGE_CONNECTOR_TARGETS_JSON"]
     attachments = notify.call_args.kwargs["attachments"]
     assert [attachment.name for attachment in attachments] == ["report.txt"]
+    assert (
+        attachments[0].path
+        == tmp_path / ".logs" / "exec-1" / "artifacts" / "report.txt"
+    )
     assert notify.call_args.kwargs["run_id"] == "exec-1"
+    metadata = load_run_metadata("exec-1")
+    assert metadata["artifacts"]["staging_dir"] == seen_env["KAGE_ARTIFACT_DIR"]
+    assert metadata["artifacts"]["dir"] == str(
+        tmp_path / ".logs" / "exec-1" / "artifacts"
+    )
+
+
+def test_execute_task_scopes_artifact_staging_to_execution_dir(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    seen_env: dict[str, str] = {}
+
+    def fake_run_logged_command(*, cmd, cwd, env, exec_id, timeout=None):
+        del cmd, cwd, exec_id, timeout
+        seen_env.update(env)
+        return {
+            "stdout": "shell ok",
+            "stderr": "",
+            "returncode": 0,
+            "stdout_bytes": 8,
+            "stderr_bytes": 0,
+            "last_output_at": datetime.now().astimezone().isoformat(),
+            "pid": 4242,
+        }
+
+    mocker.patch(
+        "kage.executor.run_logged_command", side_effect=fake_run_logged_command
+    )
+
+    task = TaskDef(
+        name="shell",
+        cron="* * * * *",
+        command="echo hello",
+        notify_connectors=["discord"],
+        working_dir="nested/work",
+    )
+    execute_task(tmp_path, task)
+
+    assert seen_env["KAGE_ARTIFACT_DIR"] == str(
+        tmp_path
+        / "nested"
+        / "work"
+        / ".kage"
+        / "tmp"
+        / "connector-artifacts"
+        / "exec-1"
+    )
 
 
 def test_build_connector_notification_message_keeps_full_stdout():
@@ -235,7 +289,7 @@ def test_execute_ai_task_includes_artifact_guidance_when_connectors_enabled(
     assert "Format links, markdown" in full_prompt
     assert "KAGE_ARTIFACT_DIR" in full_prompt
     assert "KAGE_CONNECTOR_TARGETS_JSON" in full_prompt
-    assert "/artifacts" in full_prompt
+    assert ".kage/tmp/connector-artifacts/exec-1" in full_prompt
 
 
 def test_execute_prompt_task_prefers_compiled_script(
