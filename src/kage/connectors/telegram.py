@@ -3,8 +3,10 @@ import mimetypes
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 from ..ai.chat import clean_ai_reply, generate_logged_chat_reply
+from ..artifacts import IncomingAttachmentPreparation
 from ..connector_payload import (
     ConnectorAttachment,
     ConnectorDelivery,
@@ -19,6 +21,128 @@ class TelegramConnector(BaseConnector):
     def __init__(self, name: str, config):
         super().__init__(name, config)
         self.api_base = f"https://api.telegram.org/bot{self.config.bot_token}"
+
+    @staticmethod
+    def _get_message_text(message: dict) -> str:
+        return (message.get("text") or message.get("caption") or "").strip()
+
+    @staticmethod
+    def _select_largest_photo(message: dict) -> dict | None:
+        photos = message.get("photo") or []
+        if not isinstance(photos, list) or not photos:
+            return None
+        return max(
+            (item for item in photos if isinstance(item, dict)),
+            key=lambda item: (
+                int(item.get("file_size", 0)),
+                int(item.get("width", 0)) * int(item.get("height", 0)),
+            ),
+            default=None,
+        )
+
+    def _get_attachment_names(self, message: dict) -> list[str]:
+        names: list[str] = []
+        document = message.get("document")
+        if isinstance(document, dict):
+            names.append(str(document.get("file_name") or "telegram-document"))
+        largest_photo = self._select_largest_photo(message)
+        if largest_photo is not None:
+            names.append("telegram-photo.jpg")
+        return names
+
+    def _get_file_info(self, file_id: str) -> dict:
+        req = urllib.request.Request(
+            f"{self.api_base}/getFile?file_id={file_id}",
+            headers={"User-Agent": "kage-connector"},
+        )
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode())
+
+    def _prepare_telegram_file(
+        self,
+        artifact_dir: Path,
+        *,
+        file_id: str,
+        filename: str | None,
+        fallback_stem: str,
+    ) -> ConnectorAttachment:
+        file_info = self._get_file_info(file_id)
+        if not file_info.get("ok"):
+            raise RuntimeError(str(file_info.get("description") or "Telegram getFile"))
+        result = file_info.get("result") or {}
+        file_path = result.get("file_path")
+        if not file_path:
+            raise RuntimeError("Telegram getFile response was missing file_path.")
+        resolved_name = filename
+        if not resolved_name:
+            suffix = Path(str(file_path)).suffix
+            resolved_name = f"{fallback_stem}{suffix}" if suffix else fallback_stem
+        return self._download_to_incoming_attachment(
+            artifact_dir,
+            f"https://api.telegram.org/file/bot{self.config.bot_token}/{file_path}",
+            resolved_name,
+            fallback_stem=fallback_stem,
+        )
+
+    def _prepare_incoming_attachments(
+        self,
+        artifact_dir: Path,
+        message: dict,
+        *,
+        has_text: bool,
+    ) -> IncomingAttachmentPreparation:
+        preparation = IncomingAttachmentPreparation()
+
+        document = message.get("document")
+        if isinstance(document, dict):
+            file_id = document.get("file_id")
+            if file_id:
+                try:
+                    preparation.attachments.append(
+                        self._prepare_telegram_file(
+                            artifact_dir,
+                            file_id=str(file_id),
+                            filename=(
+                                str(document.get("file_name"))
+                                if document.get("file_name")
+                                else None
+                            ),
+                            fallback_stem="telegram-document",
+                        )
+                    )
+                except Exception as exc:
+                    preparation.errors.append(
+                        f"{document.get('file_name') or 'telegram-document'}: {exc}"
+                    )
+            else:
+                preparation.errors.append(
+                    "telegram-document: Telegram document file_id was missing."
+                )
+
+        largest_photo = self._select_largest_photo(message)
+        if largest_photo is not None:
+            photo_file_id = largest_photo.get("file_id")
+            if photo_file_id:
+                try:
+                    preparation.attachments.append(
+                        self._prepare_telegram_file(
+                            artifact_dir,
+                            file_id=str(photo_file_id),
+                            filename=None,
+                            fallback_stem="telegram-photo",
+                        )
+                    )
+                except Exception as exc:
+                    preparation.errors.append(f"telegram-photo: {exc}")
+            else:
+                preparation.errors.append(
+                    "telegram-photo: Telegram photo file_id was missing."
+                )
+
+        if not has_text and not preparation.attachments:
+            preparation.skip_execution = True
+            preparation.skip_reason = self._incoming_attachment_failure_reply()
+        return preparation
 
     def _get_bot_identity(self):
         """Fetch bot's own user id and username using getMe."""
@@ -102,7 +226,7 @@ class TelegramConnector(BaseConnector):
         for msg in chat_messages:
             from_user = msg.get("from", {})
             is_bot = from_user.get("is_bot", False)
-            content_text = msg.get("text", "").strip()
+            content_text = self._get_message_text(msg)
             if content_text:
                 if is_bot and bot_user_id and str(from_user.get("id")) == bot_user_id:
                     role = "Assistant"
@@ -133,8 +257,10 @@ class TelegramConnector(BaseConnector):
                 if author_id != str(self.config.user_id):
                     continue
 
-            content = msg.get("text", "").strip()
-            if not content:
+            content = self._get_message_text(msg)
+            if not content and not (
+                isinstance(msg.get("document"), dict) or self._select_largest_photo(msg)
+            ):
                 continue
 
             # Filtering by message age
@@ -151,8 +277,13 @@ class TelegramConnector(BaseConnector):
 
         # Process the single target message (if any)
         if target_msg:
-            content = target_msg.get("text", "").strip()
-            prompt_with_history = f"{identity_context}[Recent Chat History]\n{history_context}\n\n[Current Instruction]\n{content}"
+            content = self._get_message_text(target_msg)
+            attachment_names = self._get_attachment_names(target_msg)
+            prompt_with_history = (
+                f"{identity_context}[Recent Chat History]\n{history_context}\n\n"
+                "[Current Instruction]\n"
+                f"{content or self._build_attachment_only_instruction()}"
+            )
             from_user = target_msg.get("from", {})
             connector_meta = {
                 "connector": {
@@ -167,6 +298,8 @@ class TelegramConnector(BaseConnector):
                         or from_user.get("username", "")
                     ),
                     "input_message": content,
+                    "input_attachment_names": attachment_names,
+                    "input_attachment_count": len(attachment_names),
                     "history_snapshot": history_context,
                 }
             }
@@ -176,14 +309,27 @@ class TelegramConnector(BaseConnector):
                 working_dir=self.config.working_dir,
                 run_name=self._build_run_name(),
                 metadata=connector_meta,
+                incoming_attachment_preparer=lambda artifact_dir: (
+                    self._prepare_incoming_attachments(
+                        artifact_dir,
+                        target_msg,
+                        has_text=bool(content),
+                    )
+                ),
             )
             run_id = reply_data.get("run_id")
             reply_text = reply_data.get("stdout", "")
-            if reply_data.get("returncode") != 0 and not reply_text:
+            if reply_data.get("skipped_execution"):
+                reply_text = reply_data.get("stderr", "")
+            elif reply_data.get("returncode") != 0 and not reply_text:
                 err_text = reply_data.get("stderr") or "unknown error"
                 reply_text = f"Error generating reply: {err_text}"
             final_reply_text = clean_ai_reply(reply_text)
-            self._log_history("User", content, run_id=run_id)
+            self._log_history(
+                "User",
+                self._build_history_entry(content, attachment_names),
+                run_id=run_id,
+            )
             delivery = self._post_reply(
                 ConnectorMessage(
                     text=final_reply_text,

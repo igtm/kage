@@ -39,7 +39,7 @@
 - **多層的な設定**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > デフォルト。
 - **Webダッシュボード**: 実行履歴、タスク管理、AIチャットを一箇所で提供。
 
-connector を使う run では workspace 内の staging directory として `KAGE_ARTIFACT_DIR`（例: `.kage/tmp/connector-artifacts/<run_id>`）が作られます。Discord / Slack / Telegram はその directory に最後に残っている top-level file を本文と一緒にすべて upload するので、そこには PNG / PDF など意図した最終成果物だけを残し、不要な Markdown / Marp / HTML、ダウンロード画像、中間 asset は終了前に削除してください。
+connector を使う run では workspace 内の staging directory として `KAGE_ARTIFACT_DIR`（例: `.kage/tmp/connector-artifacts/<run_id>`）が作られます。受信した connector 添付は同じ run の `KAGE_ARTIFACT_DIR/incoming` に保存され、その場所が prompt に追記されるので provider 側が必要に応じて読む前提です。Discord / Slack / Telegram は `KAGE_ARTIFACT_DIR` 直下に最後に残っている top-level file を本文と一緒にすべて upload するので、そこには PNG / PDF など意図した最終成果物だけを残し、不要な Markdown / Marp / HTML、ダウンロード画像、中間 asset は終了前に削除してください。
 
 デフォルト同梱の AI provider は `codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider` です。
 

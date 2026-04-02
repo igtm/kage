@@ -10,6 +10,10 @@ from kage.ai.chat import (
     generate_logged_chat_reply,
     get_thinking_tag,
 )
+from kage.artifacts import (
+    IncomingAttachmentPreparation,
+    write_incoming_attachment_bytes,
+)
 from kage.config import GlobalConfig, ProviderConfig, CommandDef
 from kage.runs import get_run, load_run_metadata
 
@@ -193,3 +197,106 @@ def test_generate_logged_chat_reply_creates_run_and_metadata(
     assert "reference them with relative paths" in metadata["prompt"]
     assert metadata["artifacts"]["files"][0]["name"] == "reply.txt"
     assert metadata["artifacts"]["dir"] == seen_env["KAGE_ARTIFACT_DIR"]
+
+
+@patch("kage.ai.chat.get_global_config")
+def test_generate_logged_chat_reply_includes_incoming_attachment_prompt_and_metadata(
+    mock_get_config, logged_chat_env, mocker
+):
+    config = GlobalConfig()
+    config.default_ai_engine = "dummy"
+    config.providers["dummy"] = ProviderConfig(command="dummy_cmd")
+    config.commands["dummy_cmd"] = CommandDef(template=["dummy", "chat", "{prompt}"])
+    mock_get_config.return_value = config
+
+    mocker.patch(
+        "kage.executor.prepare_command_for_execution", side_effect=lambda cmd, env: cmd
+    )
+    captured_cmd: list[str] = []
+
+    def fake_run_logged_command(*, cmd, cwd, env, exec_id):
+        del cwd, exec_id, env
+        captured_cmd[:] = cmd
+        return {
+            "stdout": "hello human",
+            "stderr": "",
+            "returncode": 0,
+            "stdout_bytes": 11,
+            "stderr_bytes": 0,
+            "last_output_at": datetime.now().astimezone().isoformat(),
+            "pid": 4242,
+        }
+
+    mocker.patch(
+        "kage.executor.run_logged_command", side_effect=fake_run_logged_command
+    )
+
+    def incoming_preparer(artifact_dir: Path) -> IncomingAttachmentPreparation:
+        attachment = write_incoming_attachment_bytes(
+            artifact_dir,
+            "notes.txt",
+            b"incoming payload",
+        )
+        return IncomingAttachmentPreparation(
+            attachments=[attachment],
+            errors=["preview image failed to download"],
+        )
+
+    result = generate_logged_chat_reply(
+        "hi",
+        working_dir=str(logged_chat_env["logs_dir"].parent),
+        run_name="connector:test",
+        metadata={"connector": {"name": "test_connector", "type": "discord"}},
+        incoming_attachment_preparer=incoming_preparer,
+    )
+
+    prompt_arg = captured_cmd[-1]
+    assert "## Connector Incoming Attachments" in prompt_arg
+    assert "notes.txt" in prompt_arg
+    assert "preview image failed to download" in prompt_arg
+    assert "connector-artifacts" in prompt_arg
+    assert [item.name for item in result["incoming_attachments"]] == ["notes.txt"]
+    metadata = load_run_metadata(result["run_id"])
+    assert metadata["artifacts"]["incoming"]["count"] == 1
+    assert metadata["artifacts"]["incoming"]["files"][0]["name"] == "notes.txt"
+    assert metadata["artifacts"]["incoming"]["dir"].endswith("/incoming")
+    assert metadata["artifacts"]["incoming"]["errors"] == [
+        "preview image failed to download"
+    ]
+
+
+@patch("kage.ai.chat.get_global_config")
+def test_generate_logged_chat_reply_can_skip_provider_before_execution(
+    mock_get_config, logged_chat_env, mocker
+):
+    config = GlobalConfig()
+    config.default_ai_engine = "dummy"
+    config.providers["dummy"] = ProviderConfig(command="dummy_cmd")
+    config.commands["dummy_cmd"] = CommandDef(template=["dummy", "chat", "{prompt}"])
+    mock_get_config.return_value = config
+
+    run_logged_command = mocker.patch("kage.executor.run_logged_command")
+
+    result = generate_logged_chat_reply(
+        "hi",
+        working_dir=str(logged_chat_env["logs_dir"].parent),
+        run_name="connector:test",
+        metadata={"connector": {"name": "test_connector", "type": "discord"}},
+        incoming_attachment_preparer=lambda artifact_dir: IncomingAttachmentPreparation(
+            errors=["download failed"],
+            skip_execution=True,
+            skip_reason="incoming download failed",
+        ),
+    )
+
+    assert result["returncode"] == 1
+    assert result["skipped_execution"] is True
+    assert result["stderr"] == "incoming download failed"
+    run_logged_command.assert_not_called()
+    run = get_run(result["run_id"])
+    assert run is not None
+    assert run.status == "ERROR"
+    metadata = load_run_metadata(result["run_id"])
+    assert metadata["connector"]["name"] == "test_connector"
+    assert metadata["artifacts"]["incoming"]["count"] == 0
+    assert metadata["artifacts"]["incoming"]["errors"] == ["download failed"]

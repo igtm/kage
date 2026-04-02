@@ -39,7 +39,7 @@ English | [日本語](./README_JA.md)
 - **Thinking Process Isolation**: AI workers automatically wrap reasoning in `<think>` tags. Notifications, summaries, and cleaned outputs hide them, while `kage logs` keeps the raw stream available for debugging.
 - **Web Dashboard**: Execution history, task management, and AI chat — all in one place.
 
-Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Discord, Slack, and Telegram upload every top-level file left there alongside the text output, so tasks should keep only the intended final deliverables in that directory and delete unwanted Markdown/Marp/HTML, downloaded images, and other intermediate assets before finishing.
+Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that same run and called out in the prompt so the provider can decide whether to inspect them. Discord, Slack, and Telegram still upload every top-level file left in `KAGE_ARTIFACT_DIR` alongside the text output, so tasks should keep only the intended final deliverables there and delete unwanted Markdown/Marp/HTML, downloaded images, and other intermediate assets before finishing.
 
 Default built-in AI providers: `codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`.
 

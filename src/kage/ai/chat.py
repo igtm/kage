@@ -3,12 +3,16 @@ import os
 import shutil
 import re
 from pathlib import Path
+from typing import Callable
 from ..artifacts import (
+    IncomingAttachmentPreparation,
     build_connector_delivery_prompt,
+    build_connector_incoming_prompt,
     collect_artifacts_from_dir,
     ensure_workspace_artifact_staging_dir,
     inject_connector_delivery_env,
     write_artifact_metadata,
+    write_incoming_artifact_metadata,
 )
 from ..config import get_global_config, render_command_template
 from ..connector_payload import ConnectorAttachment
@@ -22,6 +26,7 @@ PROVIDER_THINKING_TAGS: dict[str, str] = {
     "codex": "thinking",
 }
 DEFAULT_THINKING_TAG = "think"
+IncomingAttachmentPreparer = Callable[[Path], IncomingAttachmentPreparation]
 _QUICK_TAG_RE = re.compile(
     r"<\s*\/?\s*(?:think(?:ing)?|thought|antthinking|antml:thinking|final)\b",
     re.IGNORECASE,
@@ -197,6 +202,7 @@ def _build_chat_invocation(
     working_dir: str | None = None,
     artifact_dir: Path | None = None,
     connector_targets: list[tuple[str, str]] | None = None,
+    extra_sections: list[str] | None = None,
 ):
     config = get_global_config()
     engine_name = config.default_ai_engine
@@ -223,6 +229,10 @@ def _build_chat_invocation(
         parts.append(
             build_connector_delivery_prompt(connector_targets, artifact_dir).strip()
         )
+    for section in extra_sections or []:
+        section_text = section.strip()
+        if section_text:
+            parts.append(section_text)
     parts.append(f"[User Message]\n{message}")
     system_context = "\n\n".join(parts)
 
@@ -286,6 +296,7 @@ def generate_logged_chat_reply(
     execution_kind: str = "connector_poll",
     metadata: dict | None = None,
     project_path: str | None = None,
+    incoming_attachment_preparer: IncomingAttachmentPreparer | None = None,
 ) -> dict:
     from ..db import set_execution_pid, start_execution, update_execution
     from ..executor import prepare_command_for_execution, run_logged_command
@@ -306,6 +317,7 @@ def generate_logged_chat_reply(
         ]
     artifact_staging_dir: Path | None = None
     attachments: list[ConnectorAttachment] = []
+    incoming_preparation = IncomingAttachmentPreparation()
 
     exec_id = start_execution(
         effective_project_path,
@@ -316,6 +328,45 @@ def generate_logged_chat_reply(
     )
     artifact_staging_dir = ensure_workspace_artifact_staging_dir(cwd_path, exec_id)
     write_artifact_metadata(exec_id, artifact_staging_dir, [])
+    if incoming_attachment_preparer is not None:
+        try:
+            incoming_preparation = (
+                incoming_attachment_preparer(artifact_staging_dir)
+                or IncomingAttachmentPreparation()
+            )
+        except Exception as exc:
+            incoming_preparation = IncomingAttachmentPreparation(errors=[str(exc)])
+        write_incoming_artifact_metadata(
+            exec_id,
+            artifact_staging_dir,
+            incoming_preparation.attachments,
+            incoming_preparation.errors,
+        )
+        if incoming_preparation.skip_execution:
+            err = (
+                incoming_preparation.skip_reason
+                or "Skipped before invoking the provider."
+            )
+            write_run_metadata(exec_id, base_metadata)
+            update_execution(
+                exec_id,
+                "ERROR",
+                "",
+                err,
+                output_summary=infer_output_summary("", err),
+            )
+            return {
+                "stdout": "",
+                "stderr": err,
+                "raw_stdout": "",
+                "raw_stderr": err,
+                "returncode": 1,
+                "run_id": exec_id,
+                "attachments": [],
+                "incoming_attachments": incoming_preparation.attachments,
+                "incoming_errors": incoming_preparation.errors,
+                "skipped_execution": True,
+            }
 
     try:
         invocation = _build_chat_invocation(
@@ -324,6 +375,13 @@ def generate_logged_chat_reply(
             working_dir=str(cwd_path),
             artifact_dir=artifact_staging_dir,
             connector_targets=connector_targets,
+            extra_sections=[
+                build_connector_incoming_prompt(
+                    artifact_staging_dir,
+                    incoming_preparation.attachments,
+                    incoming_preparation.errors,
+                )
+            ],
         )
     except Exception as exc:
         err = str(exc)
@@ -342,6 +400,8 @@ def generate_logged_chat_reply(
             "raw_stderr": err,
             "returncode": 1,
             "run_id": exec_id,
+            "incoming_attachments": incoming_preparation.attachments,
+            "incoming_errors": incoming_preparation.errors,
         }
 
     try:
@@ -391,6 +451,8 @@ def generate_logged_chat_reply(
             "returncode": result["returncode"],
             "run_id": exec_id,
             "attachments": attachments,
+            "incoming_attachments": incoming_preparation.attachments,
+            "incoming_errors": incoming_preparation.errors,
         }
     except Exception as exc:
         err = str(exc)
@@ -414,6 +476,8 @@ def generate_logged_chat_reply(
             "returncode": 1,
             "run_id": exec_id,
             "attachments": attachments,
+            "incoming_attachments": incoming_preparation.attachments,
+            "incoming_errors": incoming_preparation.errors,
         }
     finally:
         try:

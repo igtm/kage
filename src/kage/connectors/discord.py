@@ -2,9 +2,11 @@ import json
 import mimetypes
 import urllib.request
 import urllib.error
+from pathlib import Path
 from uuid import uuid4
 from datetime import datetime, timezone
 from ..ai.chat import clean_ai_reply, generate_logged_chat_reply
+from ..artifacts import IncomingAttachmentPreparation
 from ..connector_payload import (
     ConnectorAttachment,
     ConnectorDelivery,
@@ -18,6 +20,48 @@ from .base import BaseConnector
 class DiscordConnector(BaseConnector):
     def __init__(self, name: str, config):
         super().__init__(name, config)
+
+    @staticmethod
+    def _get_attachment_names(message: dict) -> list[str]:
+        names: list[str] = []
+        for index, attachment in enumerate(message.get("attachments") or [], start=1):
+            raw_name = attachment.get("filename")
+            names.append(str(raw_name or f"discord-attachment-{index}"))
+        return names
+
+    def _prepare_incoming_attachments(
+        self,
+        artifact_dir: Path,
+        message: dict,
+        *,
+        has_text: bool,
+    ) -> IncomingAttachmentPreparation:
+        preparation = IncomingAttachmentPreparation()
+        for index, attachment in enumerate(message.get("attachments") or [], start=1):
+            url = attachment.get("url") or attachment.get("proxy_url")
+            filename = attachment.get("filename")
+            fallback_stem = f"discord-attachment-{index}"
+            if not url:
+                preparation.errors.append(
+                    f"{filename or fallback_stem}: Discord attachment URL was missing."
+                )
+                continue
+            try:
+                preparation.attachments.append(
+                    self._download_to_incoming_attachment(
+                        artifact_dir,
+                        str(url),
+                        str(filename) if filename else None,
+                        fallback_stem=fallback_stem,
+                    )
+                )
+            except Exception as exc:
+                preparation.errors.append(f"{filename or fallback_stem}: {exc}")
+
+        if not has_text and not preparation.attachments:
+            preparation.skip_execution = True
+            preparation.skip_reason = self._incoming_attachment_failure_reply()
+        return preparation
 
     def _get_bot_identity(self):
         """Fetch bot's own user id and username using /users/@me."""
@@ -122,7 +166,7 @@ class DiscordConnector(BaseConnector):
                     continue
 
             content = msg.get("content", "").strip()
-            if not content:
+            if not content and not (msg.get("attachments") or []):
                 continue
 
             # Filtering by message age
@@ -145,7 +189,12 @@ class DiscordConnector(BaseConnector):
         # Process the single target message (if any)
         if target_msg:
             content = target_msg.get("content", "").strip()
-            prompt_with_history = f"{identity_context}[Recent Chat History]\n{history_context}\n\n[Current Instruction]\n{content}"
+            attachment_names = self._get_attachment_names(target_msg)
+            prompt_with_history = (
+                f"{identity_context}[Recent Chat History]\n{history_context}\n\n"
+                "[Current Instruction]\n"
+                f"{content or self._build_attachment_only_instruction()}"
+            )
             connector_meta = {
                 "connector": {
                     "name": self.name,
@@ -158,6 +207,8 @@ class DiscordConnector(BaseConnector):
                         "username", ""
                     ),
                     "input_message": content,
+                    "input_attachment_names": attachment_names,
+                    "input_attachment_count": len(attachment_names),
                     "history_snapshot": history_context,
                 }
             }
@@ -167,15 +218,28 @@ class DiscordConnector(BaseConnector):
                 working_dir=self.config.working_dir,
                 run_name=self._build_run_name(),
                 metadata=connector_meta,
+                incoming_attachment_preparer=lambda artifact_dir: (
+                    self._prepare_incoming_attachments(
+                        artifact_dir,
+                        target_msg,
+                        has_text=bool(content),
+                    )
+                ),
             )
             run_id = reply_data.get("run_id")
             reply_text = reply_data.get("stdout", "")
-            if reply_data.get("returncode") != 0 and not reply_text:
+            if reply_data.get("skipped_execution"):
+                reply_text = reply_data.get("stderr", "")
+            elif reply_data.get("returncode") != 0 and not reply_text:
                 err_text = reply_data.get("stderr") or "unknown error"
                 reply_text = f"Error generating reply: {err_text}"
             final_reply_text = clean_ai_reply(reply_text)
             attachments = list(reply_data.get("attachments", []))
-            self._log_history("User", content, run_id=run_id)
+            self._log_history(
+                "User",
+                self._build_history_entry(content, attachment_names),
+                run_id=run_id,
+            )
             delivery = self._post_reply(
                 ConnectorMessage(
                     text=final_reply_text,

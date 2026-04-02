@@ -4,7 +4,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 from ..ai.chat import clean_ai_reply, generate_logged_chat_reply
+from ..artifacts import IncomingAttachmentPreparation
 from ..connector_payload import (
     ConnectorAttachment,
     ConnectorDelivery,
@@ -18,6 +20,52 @@ from .base import BaseConnector
 class SlackConnector(BaseConnector):
     def __init__(self, name: str, config):
         super().__init__(name, config)
+
+    @staticmethod
+    def _get_attachment_names(message: dict) -> list[str]:
+        names: list[str] = []
+        for index, file_info in enumerate(message.get("files") or [], start=1):
+            raw_name = file_info.get("name") or file_info.get("title")
+            names.append(str(raw_name or f"slack-file-{index}"))
+        return names
+
+    def _prepare_incoming_attachments(
+        self,
+        artifact_dir: Path,
+        message: dict,
+        *,
+        has_text: bool,
+    ) -> IncomingAttachmentPreparation:
+        preparation = IncomingAttachmentPreparation()
+        auth_headers = {"Authorization": f"Bearer {self.config.bot_token}"}
+        for index, file_info in enumerate(message.get("files") or [], start=1):
+            filename = file_info.get("name") or file_info.get("title")
+            download_url = file_info.get("url_private_download") or file_info.get(
+                "url_private"
+            )
+            fallback_stem = f"slack-file-{index}"
+            if not download_url:
+                preparation.errors.append(
+                    f"{filename or fallback_stem}: Slack download URL was missing."
+                )
+                continue
+            try:
+                preparation.attachments.append(
+                    self._download_to_incoming_attachment(
+                        artifact_dir,
+                        str(download_url),
+                        str(filename) if filename else None,
+                        fallback_stem=fallback_stem,
+                        headers=auth_headers,
+                    )
+                )
+            except Exception as exc:
+                preparation.errors.append(f"{filename or fallback_stem}: {exc}")
+
+        if not has_text and not preparation.attachments:
+            preparation.skip_execution = True
+            preparation.skip_reason = self._incoming_attachment_failure_reply()
+        return preparation
 
     def _get_bot_identity(self):
         """Fetch bot's own user_id and name using auth.test."""
@@ -129,7 +177,7 @@ class SlackConnector(BaseConnector):
                     continue
 
             content = msg.get("text", "").strip()
-            if not content:
+            if not content and not (msg.get("files") or []):
                 continue
 
             # Filtering by message age
@@ -153,7 +201,12 @@ class SlackConnector(BaseConnector):
         # Process the single target message (if any)
         if target_msg:
             content = target_msg.get("text", "").strip()
-            prompt_with_history = f"{identity_context}[Recent Chat History]\n{history_context}\n\n[Current Instruction]\n{content}"
+            attachment_names = self._get_attachment_names(target_msg)
+            prompt_with_history = (
+                f"{identity_context}[Recent Chat History]\n{history_context}\n\n"
+                "[Current Instruction]\n"
+                f"{content or self._build_attachment_only_instruction()}"
+            )
             connector_meta = {
                 "connector": {
                     "name": self.name,
@@ -164,6 +217,8 @@ class SlackConnector(BaseConnector):
                     "source_user_id": str(target_msg.get("user", "")),
                     "source_user_name": str(target_msg.get("user", "")),
                     "input_message": content,
+                    "input_attachment_names": attachment_names,
+                    "input_attachment_count": len(attachment_names),
                     "history_snapshot": history_context,
                 }
             }
@@ -173,14 +228,27 @@ class SlackConnector(BaseConnector):
                 working_dir=self.config.working_dir,
                 run_name=self._build_run_name(),
                 metadata=connector_meta,
+                incoming_attachment_preparer=lambda artifact_dir: (
+                    self._prepare_incoming_attachments(
+                        artifact_dir,
+                        target_msg,
+                        has_text=bool(content),
+                    )
+                ),
             )
             run_id = reply_data.get("run_id")
             reply_text = reply_data.get("stdout", "")
-            if reply_data.get("returncode") != 0 and not reply_text:
+            if reply_data.get("skipped_execution"):
+                reply_text = reply_data.get("stderr", "")
+            elif reply_data.get("returncode") != 0 and not reply_text:
                 err_text = reply_data.get("stderr") or "unknown error"
                 reply_text = f"Error generating reply: {err_text}"
             final_reply_text = clean_ai_reply(reply_text)
-            self._log_history("User", content, run_id=run_id)
+            self._log_history(
+                "User",
+                self._build_history_entry(content, attachment_names),
+                run_id=run_id,
+            )
             delivery = self._post_reply(
                 ConnectorMessage(
                     text=final_reply_text,
