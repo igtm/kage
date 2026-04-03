@@ -1,12 +1,24 @@
 import json
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .connector_payload import ConnectorAttachment
-from .runs import write_run_metadata
+from .runs import load_run_metadata, write_run_metadata
 
 ARTIFACT_ENV_VAR = "KAGE_ARTIFACT_DIR"
 CONNECTOR_TARGETS_ENV_VAR = "KAGE_CONNECTOR_TARGETS_JSON"
 ARTIFACT_STAGING_DIRNAME = "connector-artifacts"
+INCOMING_ARTIFACT_DIRNAME = "incoming"
+_INVALID_ARTIFACT_NAME_RE = re.compile(r"[\\/\r\n\t]+")
+
+
+@dataclass
+class IncomingAttachmentPreparation:
+    attachments: list[ConnectorAttachment] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    skip_execution: bool = False
+    skip_reason: str | None = None
 
 
 def ensure_workspace_artifact_staging_dir(base_dir: Path, exec_id: str) -> Path:
@@ -19,6 +31,57 @@ def ensure_workspace_artifact_staging_dir(base_dir: Path, exec_id: str) -> Path:
     )
     artifact_dir.mkdir(parents=True, exist_ok=True)
     return artifact_dir
+
+
+def ensure_workspace_incoming_artifact_dir(artifact_dir: Path) -> Path:
+    incoming_dir = artifact_dir / INCOMING_ARTIFACT_DIRNAME
+    incoming_dir.mkdir(parents=True, exist_ok=True)
+    return incoming_dir
+
+
+def normalize_artifact_filename(
+    filename: str | None,
+    *,
+    fallback_stem: str = "attachment",
+) -> str:
+    candidate = Path((filename or "").strip()).name
+    candidate = candidate.replace("\x00", "")
+    candidate = _INVALID_ARTIFACT_NAME_RE.sub("_", candidate).strip(" .")
+    return candidate or fallback_stem
+
+
+def reserve_artifact_path(
+    directory: Path,
+    filename: str | None,
+    *,
+    fallback_stem: str = "attachment",
+) -> Path:
+    safe_name = normalize_artifact_filename(filename, fallback_stem=fallback_stem)
+    candidate = directory / safe_name
+    stem = candidate.stem or fallback_stem
+    suffix = candidate.suffix
+    index = 1
+    while candidate.exists():
+        candidate = directory / f"{stem}-{index}{suffix}"
+        index += 1
+    return candidate
+
+
+def write_incoming_attachment_bytes(
+    artifact_dir: Path,
+    filename: str | None,
+    payload: bytes,
+    *,
+    fallback_stem: str = "attachment",
+) -> ConnectorAttachment:
+    incoming_dir = ensure_workspace_incoming_artifact_dir(artifact_dir)
+    path = reserve_artifact_path(
+        incoming_dir,
+        filename,
+        fallback_stem=fallback_stem,
+    )
+    path.write_bytes(payload)
+    return ConnectorAttachment.from_path(path)
 
 
 def normalize_connector_targets(
@@ -70,6 +133,36 @@ def build_connector_delivery_prompt(
     )
 
 
+def build_connector_incoming_prompt(
+    artifact_dir: Path,
+    attachments: list[ConnectorAttachment],
+    errors: list[str] | None = None,
+) -> str:
+    error_list = list(errors or [])
+    if not attachments and not error_list:
+        return ""
+
+    incoming_dir = artifact_dir / INCOMING_ARTIFACT_DIRNAME
+    file_lines = "\n".join(f"- `{attachment.name}`" for attachment in attachments)
+    error_lines = "\n".join(f"- {error}" for error in error_list)
+
+    parts = [
+        "\n\n## Connector Incoming Attachments",
+        "The current connector message included file attachments.",
+        f"Downloaded attachment directory: `{incoming_dir}`",
+    ]
+    if attachments:
+        parts.append(
+            "If those files are relevant, inspect them directly from that directory."
+        )
+        parts.append("Downloaded files:")
+        parts.append(file_lines)
+    if error_list:
+        parts.append("Download issues:")
+        parts.append(error_lines)
+    return "\n".join(parts)
+
+
 def inject_connector_delivery_env(
     env: dict[str, str],
     artifact_dir: Path,
@@ -99,14 +192,41 @@ def collect_artifacts_from_dir(
     return attachments
 
 
+def _load_artifact_metadata(exec_id: str) -> dict[str, object]:
+    metadata = load_run_metadata(exec_id)
+    artifacts = metadata.get("artifacts")
+    return dict(artifacts) if isinstance(artifacts, dict) else {}
+
+
 def write_artifact_metadata(
     exec_id: str,
     artifact_dir: Path | None,
     attachments: list[ConnectorAttachment],
 ) -> None:
-    payload = {
-        "dir": str(artifact_dir) if artifact_dir else None,
+    artifacts = _load_artifact_metadata(exec_id)
+    artifacts.update(
+        {
+            "dir": str(artifact_dir) if artifact_dir else None,
+            "files": [attachment.to_metadata() for attachment in attachments],
+            "count": len(attachments),
+        }
+    )
+    write_run_metadata(exec_id, {"artifacts": artifacts}, merge=True)
+
+
+def write_incoming_artifact_metadata(
+    exec_id: str,
+    artifact_dir: Path | None,
+    attachments: list[ConnectorAttachment],
+    errors: list[str] | None = None,
+) -> None:
+    artifacts = _load_artifact_metadata(exec_id)
+    artifacts["incoming"] = {
+        "dir": (
+            str(artifact_dir / INCOMING_ARTIFACT_DIRNAME) if artifact_dir else None
+        ),
         "files": [attachment.to_metadata() for attachment in attachments],
         "count": len(attachments),
+        "errors": list(errors or []),
     }
-    write_run_metadata(exec_id, {"artifacts": payload}, merge=True)
+    write_run_metadata(exec_id, {"artifacts": artifacts}, merge=True)
