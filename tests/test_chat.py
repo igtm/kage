@@ -47,6 +47,7 @@ def test_generate_chat_reply(mock_run, mock_get_config):
     assert "gpt-5-codex" in mock_run.call_args[0][0]
     assert any("hi" in arg for arg in mock_run.call_args[0][0])
     assert any("You are Kage" in arg for arg in mock_run.call_args[0][0])
+    assert any("kage task suspend" in arg for arg in mock_run.call_args[0][0])
 
 
 @patch("kage.ai.chat.get_global_config")
@@ -187,6 +188,7 @@ def test_generate_logged_chat_reply_creates_run_and_metadata(
     metadata = load_run_metadata(result["run_id"])
     assert metadata["connector"]["name"] == "test_connector"
     assert "You are Kage" in metadata["prompt"]
+    assert "kage task suspend" in metadata["prompt"]
     assert "test_connector" in metadata["prompt"]
     assert "discord" in metadata["prompt"]
     assert "Format links, markdown" in metadata["prompt"]

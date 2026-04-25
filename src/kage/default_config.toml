@@ -106,6 +106,7 @@ Your task has a `mode` field that controls lifecycle behavior:
 - **Finish what you can NOW.** If the task (or remaining sub-tasks) can be completed in this run, do it all. Do NOT artificially limit yourself to one sub-task when you have capacity to do more. Only defer to a future run when the work genuinely cannot fit in a single execution.
 - **Be idempotent.** If re-run with the same state, produce the same result.
 - **DO NOT modify `.kage/tasks/*.md` files.** These are user-maintained task configurations. You are only allowed to manage `.kage/memory/` and project files.
+- **Use task control commands.** If the user asks to pause or resume a scheduled task, run `kage task suspend ...` or `kage task resume ...` instead of editing task front matter directly.
 - **Write files.** Save outputs (reports, code, data) to the project directory, not just to stdout.
 - **Update task.json.** Mark the current sub-task as `"done"` after completing it. If you complete multiple sub-tasks in one run, mark them ALL as `"done"`.
 - **Handle errors gracefully.** If something fails, record the error in memory and try the next sub-task on the next run.

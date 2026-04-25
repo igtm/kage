@@ -136,6 +136,27 @@ def _task_type_label(task, compiled_state: str | None = None) -> str:
     return "Shell"
 
 
+def _suspension_table_value(status) -> str:
+    if status.is_invalid:
+        return "[red]invalid[/red]"
+    if status.is_suspended and status.until:
+        return f"[yellow]until {status.until.isoformat(timespec='seconds')}[/yellow]"
+    if status.raw_until:
+        return "[dim]expired[/dim]"
+    return "-"
+
+
+def _execution_result_message(result) -> str:
+    result_value = getattr(result, "value", str(result))
+    messages = {
+        "skipped_inactive": "task is inactive",
+        "skipped_suspended": "task is suspended",
+        "skipped_concurrency": "task is already running",
+        "failed_config": "task configuration is incomplete",
+    }
+    return messages.get(result_value, "task did not start")
+
+
 def _task_completion_items(incomplete: str) -> list[CompletionItem]:
     from .parser import load_project_tasks
     from .scheduler import get_projects
@@ -623,6 +644,7 @@ def task_list(
     table.add_column("Project", style="dim")
     table.add_column("Task Name", style="bold")
     table.add_column("Active")
+    table.add_column("Suspended")
     table.add_column("Schedule")
     table.add_column("Type")
     table.add_column("Provider/Command")
@@ -652,10 +674,17 @@ def task_list(
                 task_type = _task_type_label(t)
                 provider_info = (t.command or "")[:40]
             status = "[green]ON[/green]" if t.active else "[red]OFF[/red]"
+            from .suspension import get_suspension_status
+
+            suspension = get_suspension_status(
+                t,
+                tz_name=t.timezone or merged_cfg.timezone,
+            )
             table.add_row(
                 _project_short_name(str(proj_dir)),
                 t.name,
                 status,
+                _suspension_table_value(suspension),
                 t.cron,
                 task_type,
                 provider_info or "-",
@@ -756,8 +785,8 @@ We need to select the best free OCR model for extracting text from PDFs. Please 
 def _set_task_active_state(name: Optional[str], active: bool, all_tasks: bool = False):
     from .scheduler import get_projects
     from .parser import load_project_tasks
+    from .suspension import update_task_file_metadata
     from rich.console import Console
-    import re
 
     console = Console()
     projects = get_projects()
@@ -769,23 +798,11 @@ def _set_task_active_state(name: Optional[str], active: bool, all_tasks: bool = 
             t = local_task.task
             if all_tasks or t.name == name:
                 found_any = True
-                # ファイルを直接書き換える
-                content = task_file.read_text(encoding="utf-8")
-
-                # Markdown の Front Matter を書き換える
-                # シンプルに正規表現で active: ... を置換
-                new_val = "true" if active else "false"
-                if "active:" in content:
-                    content = re.sub(
-                        r"active:\s*(true|false)", f"active: {new_val}", content
-                    )
-                else:
-                    # active が無い場合は cron: の後に追加
-                    content = re.sub(
-                        r"(cron:.*?\n)", rf"\1active: {new_val}\n", content
-                    )
-
-                task_file.write_text(content, encoding="utf-8")
+                update_task_file_metadata(
+                    task_file,
+                    task_name=t.name,
+                    updates={"active": active},
+                )
                 state_str = (
                     "[green]ENABLED[/green]" if active else "[red]DISABLED[/red]"
                 )
@@ -828,6 +845,103 @@ def task_off(
     _set_task_active_state(name, False, all_tasks)
 
 
+@task_app.command("suspend")
+def task_suspend(
+    name: str = typer.Argument(
+        ...,
+        help="Task name to suspend",
+        autocompletion=_complete_task_names,
+    ),
+    for_duration: Optional[str] = typer.Option(
+        None,
+        "--for",
+        help="Suspend for one duration token: 30m, 3h, 14d, or 2w",
+    ),
+    until: Optional[str] = typer.Option(
+        None,
+        "--until",
+        help="Suspend until an ISO date or datetime",
+    ),
+    reason: Optional[str] = typer.Option(
+        None,
+        "--reason",
+        help="Optional reason stored in task front matter",
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project path substring for task lookup"
+    ),
+):
+    """Suspend a task until a deadline without changing its active state."""
+    from .config import get_global_config
+    from .suspension import (
+        parse_suspension_deadline,
+        suspension_deadline_from_duration,
+        update_task_file_metadata,
+    )
+    from rich.console import Console
+
+    if bool(for_duration) == bool(until):
+        typer.echo("Specify exactly one of --for or --until.")
+        raise typer.Exit(1)
+
+    console = Console()
+    proj_dir, task_file, task = _resolve_named_task(name, project=project)
+
+    cfg = get_global_config(workspace_dir=proj_dir)
+    task_tz = task.timezone or cfg.timezone
+    try:
+        deadline = (
+            suspension_deadline_from_duration(for_duration, tz_name=task_tz)
+            if for_duration
+            else parse_suspension_deadline(until or "", tz_name=task_tz)
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from exc
+
+    updates = {"suspended_until": deadline.isoformat(timespec="seconds")}
+    remove_keys: set[str] = set()
+    if reason is not None and reason.strip():
+        updates["suspended_reason"] = reason
+    elif reason is not None:
+        remove_keys.add("suspended_reason")
+
+    update_task_file_metadata(
+        task_file,
+        task_name=task.name,
+        updates=updates,
+        remove_keys=remove_keys,
+    )
+    console.print(
+        f"[yellow]SUSPENDED[/yellow]: {task.name} until {updates['suspended_until']} ({task_file})"
+    )
+
+
+@task_app.command("resume")
+def task_resume(
+    name: str = typer.Argument(
+        ...,
+        help="Task name to resume",
+        autocompletion=_complete_task_names,
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project path substring for task lookup"
+    ),
+):
+    """Remove task suspension metadata without starting the task."""
+    from .suspension import update_task_file_metadata
+    from rich.console import Console
+
+    console = Console()
+    _proj_dir, task_file, task = _resolve_named_task(name, project=project)
+    update_task_file_metadata(
+        task_file,
+        task_name=task.name,
+        remove_keys={"suspended_until", "suspended_reason"},
+    )
+    console.print(f"[green]RESUMED[/green]: {task.name} ({task_file})")
+
+
 @task_app.command("show")
 def task_show(
     name: str = typer.Argument(
@@ -842,11 +956,17 @@ def task_show(
     """Show detailed task configuration, including compiled lock freshness and prompt hash."""
     from .compiler import compiled_task_status, prompt_hash
     from .config import get_global_config
+    from .suspension import get_suspension_status
     from rich.console import Console
     from rich.panel import Panel
 
     console = Console()
     proj_dir, task_file, task = _resolve_named_task(name, project=project)
+    merged_cfg = get_global_config(workspace_dir=proj_dir)
+    suspension = get_suspension_status(
+        task,
+        tz_name=task.timezone or merged_cfg.timezone,
+    )
     details = [
         f"[bold]Name:[/bold]           {task.name}",
         f"[bold]Schedule:[/bold]       {task.cron}",
@@ -855,12 +975,13 @@ def task_show(
         f"[bold]Timezone:[/bold]       {task.timezone or 'global'}",
         f"[bold]Allowed Hours:[/bold]  {task.allowed_hours or 'any'}",
         f"[bold]Denied Hours:[/bold]   {task.denied_hours or 'none'}",
+        f"[bold]Suspension:[/bold]     {suspension.summary}",
+        f"[bold]Suspend Reason:[/bold] {task.suspended_reason or '-'}",
         f"[bold]Project:[/bold]        {proj_dir}",
         f"[bold]File:[/bold]           {task_file}",
     ]
     compiled = compiled_task_status(task, task_file)
     if task.prompt:
-        merged_cfg = get_global_config(workspace_dir=proj_dir)
         compiled_state = (
             "fresh"
             if compiled and compiled["exists"] and compiled["is_fresh"]
@@ -910,15 +1031,39 @@ def task_run(
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Project path substring for task lookup"
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Run even when the task is currently suspended",
+    ),
 ):
-    """Run a specific task immediately (ignores schedule)."""
-    from .executor import execute_task
+    """Run a specific task immediately (ignores schedule, but not suspension unless forced)."""
+    from .config import get_global_config
+    from .executor import TaskExecutionResult, execute_task
+    from .suspension import get_suspension_status
     from rich.console import Console
 
     console = Console()
     proj_dir, task_file, task = _resolve_named_task(name, project=project)
+    if not force:
+        cfg = get_global_config(workspace_dir=proj_dir)
+        suspension = get_suspension_status(
+            task,
+            tz_name=task.timezone or cfg.timezone,
+        )
+        if suspension.is_suspended:
+            console.print(
+                f"[yellow]Task '{name}' is suspended:[/yellow] {suspension.summary}"
+            )
+            raise typer.Exit(1)
+
     console.print(f"[cyan]Running task:[/cyan] [bold]{name}[/bold] in {proj_dir}")
-    execute_task(proj_dir, task, task_file=task_file)
+    result = execute_task(proj_dir, task, task_file=task_file, force=force)
+    if result != TaskExecutionResult.STARTED:
+        console.print(
+            f"[yellow]Task '{name}' did not start:[/yellow] {_execution_result_message(result)}"
+        )
+        raise typer.Exit(1)
     console.print(f"[green]✓ Task '{name}' completed.[/green]")
 
 
@@ -1020,9 +1165,14 @@ def run(
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Project path substring for task lookup"
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Run even when the task is currently suspended",
+    ),
 ):
     """Run a specific task immediately."""
-    task_run(name=name, project=project)
+    task_run(name=name, project=project, force=force)
 
 
 @app.command()
@@ -1411,6 +1561,7 @@ def doctor():
     from croniter import croniter
     from rich.console import Console
     from rich.table import Table
+    from .suspension import parse_suspension_deadline
     from .config import (
         get_global_config,
         KAGE_GLOBAL_DIR,
@@ -1671,6 +1822,8 @@ def doctor():
             "timeout_minutes",
             "allowed_hours",
             "denied_hours",
+            "suspended_until",
+            "suspended_reason",
             "command",
             "shell",
             "working_dir",
@@ -1714,6 +1867,21 @@ def doctor():
             task_data.get("working_dir"), str
         ):
             fail(label, "working_dir must be string")
+        if task_data.get("suspended_until") is not None:
+            if not isinstance(task_data["suspended_until"], str):
+                fail(label, "suspended_until must be string")
+            else:
+                try:
+                    parse_suspension_deadline(
+                        task_data["suspended_until"],
+                        tz_name=task_data.get("timezone") or merged_cfg.timezone,
+                    )
+                except ValueError as exc:
+                    warn(label, str(exc))
+        if task_data.get("suspended_reason") is not None and not isinstance(
+            task_data["suspended_reason"], str
+        ):
+            fail(label, "suspended_reason must be string")
 
         command_template = task_data.get("command_template")
         if command_template is not None and (
@@ -1788,6 +1956,8 @@ def doctor():
             "timeout_minutes",
             "allowed_hours",
             "denied_hours",
+            "suspended_until",
+            "suspended_reason",
             "provider",
             "command",
             "shell",
@@ -1822,6 +1992,12 @@ def doctor():
             "name": fm.get("name"),
             "cron": fm.get("cron"),
             "active": fm.get("active", "true"),
+            "mode": fm.get("mode"),
+            "concurrency_policy": fm.get("concurrency_policy"),
+            "timezone": fm.get("timezone"),
+            "timeout_minutes": fm.get("timeout_minutes"),
+            "allowed_hours": fm.get("allowed_hours"),
+            "denied_hours": fm.get("denied_hours"),
             "prompt": body if body.strip() else None,
             "command": fm.get("command", "").strip()
             if isinstance(fm.get("command"), str)
@@ -1831,6 +2007,8 @@ def doctor():
             "provider": fm.get("provider"),
             "parser": fm.get("parser"),
             "parser_args": fm.get("parser_args"),
+            "suspended_until": fm.get("suspended_until"),
+            "suspended_reason": fm.get("suspended_reason"),
             "connector": fm.get("connector"),
             "connectors": fm.get("connectors"),
             "notify_connectors": fm.get("notify_connectors"),

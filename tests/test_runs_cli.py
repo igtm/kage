@@ -5,11 +5,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import tomlkit
 from typer.testing import CliRunner
 
 from kage import db
 from kage.compiler import get_task_source_fingerprints
 from kage.config import CommandDef, GlobalConfig, ProviderConfig
+from kage.executor import TaskExecutionResult
 from kage.main import app
 from kage.parser import TaskDef
 from kage.runs import format_local_timestamp, format_relative_timestamp, get_run
@@ -272,7 +274,12 @@ def test_task_list_shows_compiled_statuses(mocker, tmp_path: Path):
     shell_file = project_dir / ".kage" / "tasks" / "shell.md"
     task_file.parent.mkdir(parents=True)
 
-    prompt_task = TaskDef(name="Nightly", cron="* * * * *", prompt="hello")
+    prompt_task = TaskDef(
+        name="Nightly",
+        cron="* * * * *",
+        prompt="hello",
+        suspended_until="2999-01-01T00:00:00+00:00",
+    )
     shell_task = TaskDef(name="Shell", cron="* * * * *", command="echo hi")
     cfg = GlobalConfig(
         default_ai_engine="gemini",
@@ -300,15 +307,314 @@ def test_task_list_shows_compiled_statuses(mocker, tmp_path: Path):
         ],
     )
 
-    result = runner.invoke(app, ["task", "list"], env={"COLUMNS": "160"})
+    result = runner.invoke(app, ["task", "list"], env={"COLUMNS": "220"})
 
     assert result.exit_code == 0
     assert "Nightly" in result.stdout
     assert "Shell" in result.stdout
     assert "Prompt (Compiled)" in result.stdout
     assert "gemini (Inherited)" in result.stdout
+    assert "2999-01-01T00:00:00+00:00" in result.stdout
     assert "proj" in result.stdout
     assert str(project_dir) not in result.stdout
+
+
+def test_task_suspend_until_updates_frontmatter_without_body(mocker, tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.md"
+    task_file.parent.mkdir(parents=True)
+    task_file.write_text(
+        """---
+name: Nightly
+cron: "* * * * *"
+---
+
+# Prompt
+
+Keep this body exactly.
+""",
+        encoding="utf-8",
+    )
+    mocker.patch("kage.scheduler.get_projects", return_value=[project_dir])
+    mocker.patch(
+        "kage.config.get_global_config",
+        side_effect=lambda workspace_dir=None: GlobalConfig(timezone="UTC"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "suspend",
+            "Nightly",
+            "--until",
+            "2026-05-09",
+            "--reason",
+            "Vacation",
+        ],
+    )
+
+    assert result.exit_code == 0
+    content = task_file.read_text(encoding="utf-8")
+    assert 'suspended_until: "2026-05-09T00:00:00+00:00"' in content
+    assert 'suspended_reason: "Vacation"' in content
+    assert content.split("---\n", 2)[2] == "\n# Prompt\n\nKeep this body exactly.\n"
+
+
+def test_task_resume_removes_suspension_fields(mocker, tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.md"
+    task_file.parent.mkdir(parents=True)
+    task_file.write_text(
+        """---
+name: Nightly
+cron: "* * * * *"
+suspended_until: "2026-05-09T00:00:00+00:00"
+suspended_reason: "Vacation"
+---
+
+hello
+""",
+        encoding="utf-8",
+    )
+    mocker.patch("kage.scheduler.get_projects", return_value=[project_dir])
+
+    result = runner.invoke(app, ["task", "resume", "Nightly"])
+
+    assert result.exit_code == 0
+    content = task_file.read_text(encoding="utf-8")
+    assert "suspended_until" not in content
+    assert "suspended_reason" not in content
+    assert content.endswith("\nhello\n")
+
+
+def test_task_suspend_updates_toml_task_section(mocker, tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.toml"
+    task_file.parent.mkdir(parents=True)
+    task_file.write_text(
+        """
+[task_nightly]
+name = "Nightly"
+cron = "* * * * *"
+command = "echo hello"
+
+[task_other]
+name = "Other"
+cron = "* * * * *"
+command = "echo other"
+""".lstrip(),
+        encoding="utf-8",
+    )
+    mocker.patch("kage.scheduler.get_projects", return_value=[project_dir])
+    mocker.patch(
+        "kage.config.get_global_config",
+        side_effect=lambda workspace_dir=None: GlobalConfig(timezone="UTC"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "suspend",
+            "Nightly",
+            "--until",
+            "2026-05-09",
+            "--reason",
+            "Vacation",
+        ],
+    )
+
+    assert result.exit_code == 0
+    doc = tomlkit.parse(task_file.read_text(encoding="utf-8"))
+    assert doc["task_nightly"]["suspended_until"] == "2026-05-09T00:00:00+00:00"
+    assert doc["task_nightly"]["suspended_reason"] == "Vacation"
+    assert "suspended_until" not in doc["task_other"]
+
+
+def test_task_resume_removes_suspension_fields_from_toml_task(mocker, tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.toml"
+    task_file.parent.mkdir(parents=True)
+    task_file.write_text(
+        """
+[task_nightly]
+name = "Nightly"
+cron = "* * * * *"
+command = "echo hello"
+suspended_until = "2026-05-09T00:00:00+00:00"
+suspended_reason = "Vacation"
+
+[task_other]
+name = "Other"
+cron = "* * * * *"
+command = "echo other"
+suspended_until = "2026-05-01T00:00:00+00:00"
+""".lstrip(),
+        encoding="utf-8",
+    )
+    mocker.patch("kage.scheduler.get_projects", return_value=[project_dir])
+
+    result = runner.invoke(app, ["task", "resume", "Nightly"])
+
+    assert result.exit_code == 0
+    doc = tomlkit.parse(task_file.read_text(encoding="utf-8"))
+    assert "suspended_until" not in doc["task_nightly"]
+    assert "suspended_reason" not in doc["task_nightly"]
+    assert doc["task_other"]["suspended_until"] == "2026-05-01T00:00:00+00:00"
+
+
+def test_task_suspend_without_reason_preserves_existing_reason(mocker, tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.md"
+    task_file.parent.mkdir(parents=True)
+    task_file.write_text(
+        """---
+name: Nightly
+cron: "* * * * *"
+suspended_until: "2026-05-01T00:00:00+00:00"
+suspended_reason: "Keep this note"
+---
+
+hello
+""",
+        encoding="utf-8",
+    )
+    mocker.patch("kage.scheduler.get_projects", return_value=[project_dir])
+    mocker.patch(
+        "kage.config.get_global_config",
+        side_effect=lambda workspace_dir=None: GlobalConfig(timezone="UTC"),
+    )
+
+    result = runner.invoke(
+        app,
+        ["task", "suspend", "Nightly", "--until", "2026-05-09"],
+    )
+
+    assert result.exit_code == 0
+    content = task_file.read_text(encoding="utf-8")
+    assert 'suspended_until: "2026-05-09T00:00:00+00:00"' in content
+    assert 'suspended_reason: "Keep this note"' in content
+
+
+def test_task_suspend_requires_project_when_ambiguous(mocker, tmp_path: Path):
+    project_a = tmp_path / "a"
+    project_b = tmp_path / "b"
+    for project_dir in (project_a, project_b):
+        task_file = project_dir / ".kage" / "tasks" / "nightly.md"
+        task_file.parent.mkdir(parents=True)
+        task_file.write_text(
+            """---
+name: Nightly
+cron: "* * * * *"
+---
+
+hello
+""",
+            encoding="utf-8",
+        )
+    mocker.patch("kage.scheduler.get_projects", return_value=[project_a, project_b])
+
+    result = runner.invoke(
+        app,
+        ["task", "suspend", "Nightly", "--until", "2026-05-09"],
+    )
+
+    assert result.exit_code == 1
+    assert "exists in multiple projects" in result.stdout
+
+
+def test_task_run_force_passes_force_to_executor(mocker, tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.md"
+    task = TaskDef(
+        name="Nightly",
+        cron="* * * * *",
+        command="echo hi",
+        suspended_until="2999-01-01T00:00:00+00:00",
+    )
+    mocker.patch(
+        "kage.main._resolve_named_task",
+        return_value=(project_dir, task_file, task),
+    )
+    execute_task = mocker.patch(
+        "kage.executor.execute_task", return_value=TaskExecutionResult.STARTED
+    )
+
+    result = runner.invoke(app, ["task", "run", "Nightly", "--force"])
+
+    assert result.exit_code == 0
+    assert execute_task.call_args.kwargs["force"] is True
+
+
+def test_task_run_without_force_blocks_suspended_task(mocker, tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.md"
+    task = TaskDef(
+        name="Nightly",
+        cron="* * * * *",
+        command="echo hi",
+        suspended_until="2999-01-01T00:00:00+00:00",
+    )
+    mocker.patch(
+        "kage.main._resolve_named_task",
+        return_value=(project_dir, task_file, task),
+    )
+    mocker.patch(
+        "kage.config.get_global_config",
+        side_effect=lambda workspace_dir=None: GlobalConfig(timezone="UTC"),
+    )
+    execute_task = mocker.patch(
+        "kage.executor.execute_task", return_value=TaskExecutionResult.STARTED
+    )
+
+    result = runner.invoke(app, ["task", "run", "Nightly"])
+
+    assert result.exit_code == 1
+    assert "is suspended" in result.stdout
+    execute_task.assert_not_called()
+
+
+def test_top_level_run_force_passes_force_to_executor(mocker, tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.md"
+    task = TaskDef(
+        name="Nightly",
+        cron="* * * * *",
+        command="echo hi",
+        suspended_until="2999-01-01T00:00:00+00:00",
+    )
+    mocker.patch(
+        "kage.main._resolve_named_task",
+        return_value=(project_dir, task_file, task),
+    )
+    execute_task = mocker.patch(
+        "kage.executor.execute_task", return_value=TaskExecutionResult.STARTED
+    )
+
+    result = runner.invoke(app, ["run", "Nightly", "--force"])
+
+    assert result.exit_code == 0
+    assert execute_task.call_args.kwargs["force"] is True
+
+
+def test_task_run_reports_non_started_executor_result(mocker, tmp_path: Path):
+    project_dir = tmp_path / "proj"
+    task_file = project_dir / ".kage" / "tasks" / "nightly.md"
+    task = TaskDef(name="Nightly", cron="* * * * *", command="echo hi")
+    mocker.patch(
+        "kage.main._resolve_named_task",
+        return_value=(project_dir, task_file, task),
+    )
+    mocker.patch(
+        "kage.executor.execute_task", return_value=TaskExecutionResult.FAILED_CONFIG
+    )
+
+    result = runner.invoke(app, ["task", "run", "Nightly"])
+
+    assert result.exit_code == 1
+    assert "did not start" in result.stdout
+    assert "configuration is incomplete" in result.stdout
 
 
 def test_doctor_reports_stale_compiled_locks(mocker, tmp_path: Path):
@@ -393,7 +699,13 @@ Create a report
 """,
         encoding="utf-8",
     )
-    task = TaskDef(name="Nightly", cron="* * * * *", prompt="Create a report")
+    task = TaskDef(
+        name="Nightly",
+        cron="* * * * *",
+        prompt="Create a report",
+        suspended_until="2999-01-01T00:00:00+00:00",
+        suspended_reason="Vacation",
+    )
     prompt_hash = get_task_source_fingerprints(task_file)["prompt_hash"]
     cfg = GlobalConfig(
         default_ai_engine="gemini",
@@ -415,3 +727,5 @@ Create a report
     assert result.exit_code == 0
     assert "Prompt Hash" in result.stdout
     assert prompt_hash in result.stdout
+    assert "Suspension" in result.stdout
+    assert "Vacation" in result.stdout

@@ -1261,7 +1261,9 @@ INDEX_HTML = """
             
             filteredTasks.forEach(task => {
                 let nextRunDisplay = 'Not scheduled';
-                if (task.next_run && task.active) {
+                if (task.is_suspended) {
+                    nextRunDisplay = task.suspension_summary || 'Suspended';
+                } else if (task.next_run && task.active) {
                     try {
                         const d = new Date(task.next_run);
                         if (!isNaN(d.getTime())) {
@@ -1288,6 +1290,8 @@ INDEX_HTML = """
                     { key: 'Timeout', val: task.timeout_minutes ? task.timeout_minutes + ' min' : null },
                     { key: 'Allowed Hours', val: task.allowed_hours },
                     { key: 'Denied Hours', val: task.denied_hours },
+                    { key: 'Suspension', val: task.suspension_summary && task.suspension_summary !== '-' ? task.suspension_summary : null },
+                    { key: 'Suspend Reason', val: task.suspended_reason },
                     { key: 'Shell', val: task.shell },
                     { key: 'Command', val: task.command },
                     { key: 'Provider', val: task.provider_display }
@@ -1321,10 +1325,12 @@ INDEX_HTML = """
                 }
 
                 tasksHtml += `
-                    <div class="card ${task.active ? '' : 'inactive'}" style="margin-bottom: 16px;" id="task-${escapeHtml(task.name)}">
+                    <div class="card ${task.active && !task.is_suspended ? '' : 'inactive'}" style="margin-bottom: 16px;" id="task-${escapeHtml(task.name)}">
                         <div class="card-header">
                             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                                 <h4 style="margin:0; font-size: 1rem;">${escapeHtml(task.name)}</h4>
+                                ${task.suspension_invalid ? '<span class="status-badge" style="background:rgba(218,54,51,0.15); color:var(--error-text);">SUSPEND INVALID</span>' : ''}
+                                ${task.is_suspended && !task.suspension_invalid ? '<span class="status-badge" style="background:rgba(210,153,34,0.15); color:var(--warning);">SUSPENDED</span>' : ''}
                                 ${task.compiled_state === 'fresh' ? '<span class="status-badge" style="background:rgba(35,134,54,0.15); color:var(--success-text);">LOCK FRESH</span>' : ''}
                                 ${task.compiled_state === 'stale' ? '<span class="status-badge" style="background:rgba(218,54,51,0.15); color:var(--error-text);">LOCK STALE</span>' : ''}
                                 ${task.compiled_state === 'none' ? '<span class="status-badge" style="background:rgba(110,118,129,0.15); color:var(--text-dim);">NO LOCK</span>' : ''}
@@ -1351,7 +1357,7 @@ INDEX_HTML = """
                             <span class="details-icon">▼</span> Details
                         </button>
 
-                        <button class="btn" onclick="runTaskNow('${task.project_path}', '${task.name}', '${task.file}')" style="margin-top: 12px; width: 100%; font-size: 0.8rem;" ${task.active ? '' : 'disabled'}>Run Now</button>
+                        <button class="btn" onclick="runTaskNow('${task.project_path}', '${task.name}', '${task.file}')" style="margin-top: 12px; width: 100%; font-size: 0.8rem;" ${task.active && !task.is_suspended ? '' : 'disabled'}>Run Now</button>
                     </div>
                 `;
             });
@@ -1393,10 +1399,12 @@ INDEX_HTML = """
                         });
                         if (!response.ok) throw new Error('Failed to toggle task');
 
-                        if (active) card.classList.remove('inactive');
+                        const taskData = allConfigData.tasks.find(t => t.project_path === projectPath && t.name === taskName && (!file || t.file === file));
+                        const isSuspended = Boolean(taskData && taskData.is_suspended);
+                        if (active && !isSuspended) card.classList.remove('inactive');
                         else card.classList.add('inactive');
                         
-                        if (runBtn) runBtn.disabled = !active;
+                        if (runBtn) runBtn.disabled = !active || isSuspended;
 
                     } catch (error) {
                         alert(error.message);
@@ -1851,6 +1859,7 @@ def get_config_api():
     from .compiler import compiled_task_indicator
     from .scheduler import get_projects
     from .parser import load_project_tasks
+    from .suspension import get_suspension_status
     from datetime import datetime, timezone as dt_timezone
     import zoneinfo
     from croniter import croniter
@@ -1858,15 +1867,15 @@ def get_config_api():
     config = get_global_config()
     projects = get_projects()
 
-    # Setup timezone for calculating next run
-    tz_name = config.timezone
-    try:
-        tz = zoneinfo.ZoneInfo(tz_name)
-    except Exception:
-        tz = dt_timezone.utc
     all_tasks = []
     for proj_dir in projects:
         merged_cfg = get_global_config(workspace_dir=proj_dir)
+        # Setup timezone for calculating next run
+        tz_name = merged_cfg.timezone or config.timezone
+        try:
+            tz = zoneinfo.ZoneInfo(tz_name)
+        except Exception:
+            tz = dt_timezone.utc
         tasks = load_project_tasks(proj_dir)
         for toml_path, task_def in tasks:
             t = task_def.task
@@ -1892,6 +1901,7 @@ def get_config_api():
 
             # Use task-specific timezone if defined, otherwise fallback to global
             task_tz = tz
+            task_tz_name = t.timezone or tz_name
             if t.timezone:
                 try:
                     task_tz = zoneinfo.ZoneInfo(t.timezone)
@@ -1899,6 +1909,11 @@ def get_config_api():
                     pass
 
             task_now = datetime.now(task_tz)
+            suspension = get_suspension_status(
+                t,
+                now=task_now,
+                tz_name=task_tz_name,
+            )
             next_run_str = ""
             try:
                 itr = croniter(t.cron, task_now)
@@ -1922,6 +1937,11 @@ def get_config_api():
                     "timeout_minutes": t.timeout_minutes,
                     "allowed_hours": t.allowed_hours,
                     "denied_hours": t.denied_hours,
+                    "suspended_until": t.suspended_until,
+                    "suspended_reason": t.suspended_reason,
+                    "is_suspended": suspension.is_suspended,
+                    "suspension_invalid": suspension.is_invalid,
+                    "suspension_summary": suspension.summary,
                     "provider": t.provider
                     or (t.ai.engine if (t.ai and t.ai.engine) else None),
                     "provider_display": provider_display,
@@ -1950,7 +1970,8 @@ def run_task_now(req: RunTaskRequest):
     from pathlib import Path
     from fastapi.responses import JSONResponse
     from .parser import load_project_tasks
-    from .executor import execute_task
+    from .executor import TaskExecutionResult, execute_task
+    from .suspension import get_suspension_status
 
     proj_dir = Path(req.project_path).expanduser().resolve()
     if not proj_dir.exists():
@@ -1978,7 +1999,36 @@ def run_task_now(req: RunTaskRequest):
             )
 
         task_file, task = matched
-        execute_task(proj_dir, task, task_file=task_file)
+        cfg = get_global_config(workspace_dir=proj_dir)
+        suspension = get_suspension_status(
+            task,
+            tz_name=task.timezone or cfg.timezone,
+        )
+        if suspension.is_suspended:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": f"Task '{req.task_name}' is suspended: {suspension.summary}"
+                },
+            )
+        result = execute_task(proj_dir, task, task_file=task_file)
+        if result != TaskExecutionResult.STARTED:
+            status_code = (
+                409
+                if result
+                in {
+                    TaskExecutionResult.SKIPPED_INACTIVE,
+                    TaskExecutionResult.SKIPPED_CONCURRENCY,
+                    TaskExecutionResult.SKIPPED_SUSPENDED,
+                }
+                else 400
+            )
+            return JSONResponse(
+                status_code=status_code,
+                content={
+                    "error": f"Task '{req.task_name}' did not start: {result.value}"
+                },
+            )
         return {"message": f"Task '{req.task_name}' started."}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -2000,8 +2050,8 @@ def stop_execution_api(exec_id: str):
 @app.post("/api/tasks/toggle")
 def toggle_task(req: ToggleTaskRequest):
     import tomlkit
-    import re
     from pathlib import Path
+    from .suspension import update_markdown_front_matter
 
     task_file = Path(req.file) if req.file else None
     if not task_file or not task_file.exists():
@@ -2010,25 +2060,21 @@ def toggle_task(req: ToggleTaskRequest):
     try:
         content = task_file.read_text(encoding="utf-8")
         if task_file.suffix == ".md":
-            new_val = "true" if req.active else "false"
-            if "active:" in content:
-                content = re.sub(
-                    r"active:\s*(true|false)", f"active: {new_val}", content
-                )
-            else:
-                content = re.sub(r"(cron:.*?\n)", rf"\1active: {new_val}\n", content)
+            update_markdown_front_matter(task_file, updates={"active": req.active})
+            content = None
         else:
-            doc = tomlkit.load(content)
+            doc = tomlkit.loads(content)
             if "task" in doc:
                 doc["task"]["active"] = req.active
             else:
                 for k, v in doc.items():
-                    if k.startswith("task") and isinstance(v, dict):
+                    if k.startswith("task") and hasattr(v, "get"):
                         if v.get("name") == req.task_name:
                             v["active"] = req.active
             content = tomlkit.dumps(doc)
 
-        task_file.write_text(content, encoding="utf-8")
+        if content is not None:
+            task_file.write_text(content, encoding="utf-8")
         return {
             "message": f"Task '{req.task_name}' {'enabled' if req.active else 'disabled'}."
         }
