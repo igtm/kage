@@ -36,6 +36,13 @@ class TaskDef(BaseModel):
     denied_hours: Optional[str] = pydantic.Field(
         default=None, description="実行を禁止する時間帯（例: '0-5,12'）"
     )
+    suspended_until: Optional[str] = pydantic.Field(
+        default=None,
+        description="この日時までタスクの新規実行を停止する（ISO date/datetime）",
+    )
+    suspended_reason: Optional[str] = pydantic.Field(
+        default=None, description="タスク停止の理由"
+    )
     notify_connectors: Optional[list[str]] = pydantic.Field(
         default=None,
         description="実行完了時に結果を通知するコネクター名のリスト（例: ['discord']）",
@@ -228,6 +235,8 @@ def parse_task_file(filepath: Path) -> List[tuple[str, TaskDef]]:
             else None,
             "allowed_hours": fm.get("allowed_hours"),
             "denied_hours": fm.get("denied_hours"),
+            "suspended_until": fm.get("suspended_until"),
+            "suspended_reason": fm.get("suspended_reason"),
             "command": command,
             "shell": fm.get("shell"),
             "working_dir": fm.get("working_dir"),

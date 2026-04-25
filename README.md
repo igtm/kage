@@ -97,7 +97,7 @@ kage --install-completion
 
 Reload your shell after installation (`exec $SHELL -l`).
 
-Shell completion also suggests task names and recent run IDs for positional arguments like `kage run <task>`, `kage compile <task>`, `kage logs [<task>]`, `kage task run <name>`, and `kage runs show <exec_id>`.
+Shell completion also suggests task names and recent run IDs for positional arguments like `kage run <task>`, `kage compile <task>`, `kage logs [<task>]`, `kage task run <name>`, `kage task suspend <name>`, `kage task resume <name>`, and `kage runs show <exec_id>`.
 `kage doctor` also reports whether bash/zsh completion scripts are installed.
 
 ## Use Cases
@@ -144,6 +144,15 @@ You are conducting a systematic evaluation of free/open-source OCR solutions for
 ```
 
 `working_dir` is optional. Absolute paths are used as-is; relative paths are resolved from the task file directory (`.kage/tasks/`).
+
+To pause a task without disabling it, use suspension metadata or the CLI:
+
+```yaml
+suspended_until: "2026-05-09T18:30:00+09:00"
+suspended_reason: "Vacation for 2 weeks"
+```
+
+`kage task suspend <name> --for 2w --reason "Vacation"` writes those fields for you. `--for` accepts one token with `m`, `h`, `d`, or `w`; `--until` accepts an ISO date or datetime. Date-only values resume at midnight in the task timezone. Suspended tasks are skipped by cron and by manual `kage run`; use `kage run <task> --force` or `kage task run <task> --force` to run one intentionally.
 
 When you wake up:
 ```
@@ -231,7 +240,7 @@ Cleanup old logs every midnight.
 |---------|-------------|
 | `kage onboard` | Global setup (cron, directories, DB) |
 | `kage init` | Initialize kage in the current directory |
-| `kage run <task>` | Run a specific task immediately |
+| `kage run <task>` | Run a specific task immediately; add `--force` to bypass suspension |
 | `kage compile <task>` | Compile a prompt task into a sibling `.lock.sh` override |
 | `kage runs` | List execution runs in a status-colored table with relative time |
 | `kage runs show <exec_id>` | Show run metadata, paths, and status details |
@@ -242,7 +251,9 @@ Cleanup old logs every midnight.
 | `kage cron install` | Register to system scheduler |
 | `kage cron status` | Check background status |
 | `kage task list` | List tasks with status, effective type, and provider/command |
-| `kage task show <name>` | Show detailed task configuration and prompt hash |
+| `kage task show <name>` | Show detailed task configuration, suspension state, and prompt hash |
+| `kage task suspend <name> --for 2w` | Suspend future starts without changing `active` |
+| `kage task resume <name>` | Remove suspension metadata without starting the task |
 | `kage connector list` | List all configured connectors |
 | `kage connector setup <type>` | Show setup guide for a connector (discord, slack, telegram) |
 | `kage connector poll` | Manually poll connectors with `poll = true` |
@@ -263,6 +274,8 @@ On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its
 If a prompt task has a sibling compiled lock such as `.kage/tasks/nightly.lock.sh`, kage executes that lock instead of the prompt body only while its stored `prompt_hash` still matches the current prompt body. When the prompt changes, the lock becomes stale and you need to run `kage compile <task>` again. `kage doctor`, `kage task list`, and the UI task cards all show whether a lock is fresh, stale, or missing. `kage task show <name>` also prints the current prompt hash so you can inspect what the lock should match.
 
 `kage task list` shortens the project column to the leaf directory name, shows prompt tasks as `Prompt` or `Prompt (Compiled)`, and resolves inherited providers as values like `gemini (Inherited)` so you can see what will actually run. Built-in `codex` runs now use `codex exec --yolo ...` in the default command template.
+
+Suspension is separate from `active`: `active: false` disables a task, while `suspended_until` only blocks new starts until the deadline expires. Invalid `suspended_until` values fail closed, so the task is skipped until you fix the value or run `kage task resume <name>`.
 
 Connector polling replies are recorded in the same run history. Use `kage runs --source connector_poll` to isolate them, then inspect the raw AI CLI output with `kage logs --run <exec_id>`.
 

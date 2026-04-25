@@ -3,7 +3,6 @@ from __future__ import annotations
 import locale
 from datetime import datetime
 import os
-import re
 from typing import Any
 
 from textual.app import App, ComposeResult
@@ -76,6 +75,8 @@ def _format_task_details(task: dict[str, Any], *, is_ja: bool) -> str:
         f"{'タイムゾーン' if is_ja else 'Timezone'}: {task.get('task_timezone') or '-'}",
         f"{'許可時間' if is_ja else 'Allowed Hours'}: {_safe_str(task.get('allowed_hours'))}",
         f"{'禁止時間' if is_ja else 'Denied Hours'}: {_safe_str(task.get('denied_hours'))}",
+        f"{'停止' if is_ja else 'Suspension'}: {_safe_str(task.get('suspension_summary'))}",
+        f"{'停止理由' if is_ja else 'Suspend Reason'}: {_safe_str(task.get('suspended_reason'))}",
         f"{'タイムアウト' if is_ja else 'Timeout'}: {_safe_str(task.get('timeout_minutes'))}",
         f"{'Compiled' if not is_ja else 'Compiled'}: {_safe_str(task.get('compiled_state'))}",
     ]
@@ -319,14 +320,27 @@ class KageTuiApp(App[None]):
         task_file = Path(task["file"])
         if not task_file.exists():
             return
-        content = task_file.read_text(encoding="utf-8")
         current_active = task["active"]
-        new_val = "false" if current_active else "true"
-        if "active:" in content:
-            content = re.sub(r"active:\s*(true|false)", f"active: {new_val}", content)
+        if task_file.suffix.lower() == ".md":
+            from .suspension import update_markdown_front_matter
+
+            update_markdown_front_matter(
+                task_file,
+                updates={"active": not current_active},
+            )
         else:
-            content = re.sub(r"(cron:.*?\n)", rf"\1active: {new_val}\n", content)
-        task_file.write_text(content, encoding="utf-8")
+            import tomlkit
+
+            content = task_file.read_text(encoding="utf-8")
+            doc = tomlkit.loads(content)
+            if "task" in doc:
+                doc["task"]["active"] = not current_active
+            else:
+                for key, value in doc.items():
+                    if key.startswith("task") and hasattr(value, "get"):
+                        if value.get("name") == task["name"]:
+                            value["active"] = not current_active
+            task_file.write_text(tomlkit.dumps(doc), encoding="utf-8")
         self._reload()
 
     def _reload(self) -> None:
@@ -457,7 +471,10 @@ class KageTuiApp(App[None]):
         table = self.query_one("#tasks-table", DataTable)
         table.clear(columns=False)
         for task in self.tasks:
-            indicator = "●" if task["active"] else "─"
+            if task.get("is_suspended"):
+                indicator = "⏸"
+            else:
+                indicator = "●" if task["active"] else "─"
             table.add_row(indicator, _task_label(task), key=_task_key(task))
         self._move_cursor(
             table,

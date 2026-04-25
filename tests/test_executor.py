@@ -19,6 +19,7 @@ from kage.runs import load_run_metadata
 from kage.executor import (
     _build_connector_notification_message,
     _normalize_headless_args,
+    TaskExecutionResult,
     execute_task,
 )
 from kage.parser import TaskDef
@@ -128,6 +129,115 @@ def test_execute_shell_command_with_custom_shell(
     cmd = popen.call_args.args[0]
     assert Path(cmd[0]).name == "bash"
     assert cmd[1:] == ["-c", "echo hello"]
+
+
+def test_execute_task_skips_current_suspension(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    popen = mocker.patch("kage.executor.subprocess.Popen")
+    task = TaskDef(
+        name="shell",
+        cron="* * * * *",
+        command="echo hello",
+        suspended_until="2999-01-01T00:00:00+00:00",
+    )
+
+    started = execute_task(tmp_path, task)
+
+    assert started == TaskExecutionResult.SKIPPED_SUSPENDED
+    popen.assert_not_called()
+
+
+def test_execute_task_skips_invalid_suspension(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    popen = mocker.patch("kage.executor.subprocess.Popen")
+    task = TaskDef(
+        name="shell",
+        cron="* * * * *",
+        command="echo hello",
+        suspended_until="not-a-date",
+    )
+
+    started = execute_task(tmp_path, task)
+
+    assert started == TaskExecutionResult.SKIPPED_SUSPENDED
+    popen.assert_not_called()
+
+
+def test_execute_task_allows_expired_suspension(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    popen = mocker.patch("kage.executor.subprocess.Popen", return_value=DummyProc())
+    task = TaskDef(
+        name="shell",
+        cron="* * * * *",
+        command="echo hello",
+        suspended_until="2000-01-01T00:00:00+00:00",
+    )
+
+    started = execute_task(tmp_path, task)
+
+    assert started == TaskExecutionResult.STARTED
+    popen.assert_called_once()
+
+
+def test_execute_task_force_bypasses_current_suspension(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    popen = mocker.patch("kage.executor.subprocess.Popen", return_value=DummyProc())
+    task = TaskDef(
+        name="shell",
+        cron="* * * * *",
+        command="echo hello",
+        suspended_until="2999-01-01T00:00:00+00:00",
+    )
+
+    started = execute_task(tmp_path, task, force=True)
+
+    assert started == TaskExecutionResult.STARTED
+    popen.assert_called_once()
+
+
+def test_execute_task_returns_failed_config_when_command_spawn_fails(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    update_execution = mocker.patch("kage.executor.update_execution")
+    start_execution = mocker.patch(
+        "kage.executor.start_execution", return_value="exec-spawn-fail"
+    )
+    mocker.patch(
+        "kage.executor.run_logged_command", side_effect=FileNotFoundError("missing cli")
+    )
+
+    task = TaskDef(name="shell", cron="* * * * *", command="echo hello")
+
+    result = execute_task(tmp_path, task)
+
+    assert result == TaskExecutionResult.FAILED_CONFIG
+    assert start_execution.called
+    assert update_execution.call_args.args[1] == "ERROR"
+    assert "missing cli" in update_execution.call_args.args[3]
+
+
+def test_execute_task_returns_started_when_command_setup_fails_after_spawn(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    update_execution = mocker.patch("kage.executor.update_execution")
+    popen = mocker.patch("kage.executor.subprocess.Popen", return_value=DummyProc())
+    mocker.patch(
+        "kage.executor._stream_process_output",
+        side_effect=RuntimeError("stream wiring failed"),
+    )
+
+    task = TaskDef(name="shell", cron="* * * * *", command="echo hello")
+
+    result = execute_task(tmp_path, task)
+
+    assert result == TaskExecutionResult.STARTED
+    popen.assert_called_once()
+    assert update_execution.call_args.args[1] == "ERROR"
+    assert "stream wiring failed" in update_execution.call_args.args[3]
 
 
 def test_execute_task_injects_artifact_dir_for_connector_notifications(
@@ -362,9 +472,10 @@ Fix this
     )
 
     task = TaskDef(name="ai_task", cron="* * * * *", prompt="Fix this")
-    execute_task(tmp_path, task, task_file=task_file)
+    result = execute_task(tmp_path, task, task_file=task_file)
 
     popen.assert_not_called()
+    assert result == TaskExecutionResult.FAILED_CONFIG
     assert start_execution.call_args.kwargs["execution_kind"] == "compiled"
     assert "Compiled lock is stale" in update_execution.call_args.args[3]
 

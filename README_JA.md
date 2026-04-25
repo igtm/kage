@@ -97,7 +97,7 @@ kage --install-completion
 
 設定後はシェルを再読み込みしてください（`exec $SHELL -l`）。
 
-シェル補完では `kage run <task>`、`kage compile <task>`、`kage logs [<task>]`、`kage task run <name>`、`kage runs show <exec_id>` のような位置引数に対して task 名や最近の run id も候補に出ます。
+シェル補完では `kage run <task>`、`kage compile <task>`、`kage logs [<task>]`、`kage task run <name>`、`kage task suspend <name>`、`kage task resume <name>`、`kage runs show <exec_id>` のような位置引数に対して task 名や最近の run id も候補に出ます。
 `kage doctor` でも bash / zsh の completion script が入っているか確認できます。
 
 ## ユースケース
@@ -144,6 +144,15 @@ working_dir: ../../benchmark
 ```
 
 `working_dir` は任意です。絶対パスはそのまま使われ、相対パスは task file が置かれているディレクトリ（`.kage/tasks/`）基準で解決されます。
+
+task を無効化せず一時停止する場合は、suspension metadata か CLI を使います。
+
+```yaml
+suspended_until: "2026-05-09T18:30:00+09:00"
+suspended_reason: "2週間の休暇"
+```
+
+`kage task suspend <name> --for 2w --reason "Vacation"` はこれらの field を task file の front matter に書き込みます。`--for` は `m`, `h`, `d`, `w` のいずれか 1 token、`--until` は ISO date / datetime を受け付けます。日付だけを指定した場合は task timezone の午前 0 時に再開します。停止中の task は cron と手動 `kage run` のどちらでも skip され、意図的に 1 回だけ実行する場合は `kage run <task> --force` または `kage task run <task> --force` を使います。
 
 朝起きた時:
 ```
@@ -231,7 +240,7 @@ shell: "bash"
 |---------|-------------|
 | `kage onboard` | グローバルセットアップ |
 | `kage init` | 現在のディレクトリに kage を初期化 |
-| `kage run <task>` | 特定 task を即時実行 |
+| `kage run <task>` | 特定 task を即時実行。停止中 task は `--force` で実行 |
 | `kage compile <task>` | prompt task から同名の `.lock.sh` override を生成 |
 | `kage runs` | 相対日時付きの色付きテーブルで実行履歴を表示 |
 | `kage runs show <exec_id>` | 実行メタデータ、状態、ログパスを表示 |
@@ -242,7 +251,9 @@ shell: "bash"
 | `kage cron install` | システムスケジューラーに登録 |
 | `kage cron status` | バックグラウンド実行状態の確認 |
 | `kage task list` | 状態、実効 Type、Provider/Command 付きでタスク一覧を表示 |
-| `kage task show <name>` | 詳細設定と prompt hash を表示 |
+| `kage task show <name>` | 詳細設定、停止状態、prompt hash を表示 |
+| `kage task suspend <name> --for 2w` | `active` を変えずに future starts を一時停止 |
+| `kage task resume <name>` | task を即時実行せず suspension metadata だけ削除 |
 | `kage connector list` | 設定済みのコネクター一覧を表示 |
 | `kage connector setup <type>` | コネクター（discord, slack, telegram）のセットアップガイドを表示 |
 | `kage connector poll` | `poll = true` のコネクターを即座にポーリング |
@@ -262,6 +273,8 @@ macOS では `cron` の代わりに `launchd` が使用されます。`config.to
 prompt task と同名の compiled lock 例えば `.kage/tasks/nightly.lock.sh` が存在する場合、kage はその lock に保持された `prompt_hash` が現在の prompt 本文と一致している間だけ Markdown 本文の代わりにそれを実行します。prompt 本文を更新したら lock は stale 扱いになるので、`kage compile <task>` を再実行してください。`kage doctor`、`kage task list`、UI の task card でも fresh / stale / missing を確認できます。`kage task show <name>` では現在の prompt hash も確認できます。
 
 `kage task list` では project 列は末尾ディレクトリ名だけを表示し、prompt task は `Prompt` または `Prompt (Compiled)` として見えます。provider 未指定でも `gemini (Inherited)` のように実際に使われる provider を表示します。built-in の `codex` 実行テンプレートは既定で `codex exec --yolo ...` を使います。
+
+suspension は `active` とは別の状態です。`active: false` は task を無効化し、`suspended_until` は deadline まで新規実行だけを止めます。不正な `suspended_until` は fail closed として扱われるため、値を直すか `kage task resume <name>` するまで task は skip されます。
 
 connector の `poll` 返信も同じ run 履歴に保存されます。`kage runs --source connector_poll` で絞り込み、`kage logs --run <exec_id>` で AI CLI の raw output を確認できます。
 

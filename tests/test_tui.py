@@ -42,6 +42,8 @@ def test_format_task_details_includes_prompt_and_compiled_state():
             "timeout_minutes": 15,
             "compiled_state": "fresh",
             "compiled_path": "/tmp/demo/.kage/tasks/nightly.lock.sh",
+            "suspension_summary": "until: 2999-01-01T00:00:00+00:00",
+            "suspended_reason": "Vacation",
             "command": None,
             "prompt": "write a summary",
         },
@@ -51,6 +53,8 @@ def test_format_task_details_includes_prompt_and_compiled_state():
     assert "Prompt (Compiled)" in rendered
     assert "gemini (Inherited)" in rendered
     assert "Compiled Path" in rendered
+    assert "until: 2999-01-01T00:00:00+00:00" in rendered
+    assert "Vacation" in rendered
     assert "write a summary" in rendered
 
 

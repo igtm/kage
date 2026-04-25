@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +42,21 @@ from .runs import (
     infer_output_summary,
     write_run_metadata,
 )
+from .suspension import get_suspension_status, update_markdown_front_matter
+
+
+class TaskExecutionResult(str, Enum):
+    STARTED = "started"
+    SKIPPED_INACTIVE = "skipped_inactive"
+    SKIPPED_SUSPENDED = "skipped_suspended"
+    SKIPPED_CONCURRENCY = "skipped_concurrency"
+    FAILED_CONFIG = "failed_config"
+
+
+class LoggedCommandError(RuntimeError):
+    def __init__(self, message: str, *, started: bool):
+        super().__init__(message)
+        self.started = started
 
 
 def _normalize_headless_args(cmd: list[str]) -> list[str]:
@@ -200,12 +216,15 @@ def _compute_prompt_hash(prompt: str) -> str:
 def _deactivate_task(task_file: Path):
     if not task_file.exists():
         return
-    content = task_file.read_text(encoding="utf-8")
-    new_content = re.sub(r"active:\s*(true|false)", "active: false", content)
-    if content == new_content:
-        # active が無い場合は cron: の後に追加
-        new_content = re.sub(r"(cron:.*?\n)", r"\1active: false\n", content)
-    task_file.write_text(new_content, encoding="utf-8")
+    if task_file.suffix.lower() == ".md":
+        update_markdown_front_matter(task_file, updates={"active": False})
+    else:
+        content = task_file.read_text(encoding="utf-8")
+        new_content = re.sub(r"active:\s*(true|false)", "active: false", content)
+        if content == new_content:
+            # active が無い場合は cron: の後に追加
+            new_content = re.sub(r"(cron:.*?\n)", r"\1active: false\n", content)
+        task_file.write_text(new_content, encoding="utf-8")
     print(f"Task deactivated: {task_file.name}")
 
 
@@ -394,28 +413,41 @@ def run_logged_command(
     exec_id: str,
     timeout: float | None = None,
 ) -> dict:
-    proc = subprocess.Popen(
-        cmd,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-        start_new_session=True,
-    )
-
-    set_execution_pid(exec_id, proc.pid)
-
-    stream_state = _stream_process_output(proc, exec_id)
     try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            start_new_session=True,
+        )
+        set_execution_pid(exec_id, proc.pid)
+        stream_state = _stream_process_output(proc, exec_id)
         returncode = proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         proc.wait()
         raise
+    except Exception as exc:
+        if "proc" in locals():
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=1)
+            except Exception:
+                pass
+            raise LoggedCommandError(str(exc), started=True) from exc
+        raise
     finally:
-        for thread in stream_state["threads"]:
-            thread.join()
+        if "stream_state" in locals():
+            for thread in stream_state["threads"]:
+                thread.join()
 
     return {
         "returncode": returncode,
@@ -471,10 +503,35 @@ def stop_execution(exec_id: str):
         print(f"Failed to stop execution {exec_id}: {e}")
 
 
-def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = None):
+def execute_task(
+    project_dir: Path,
+    task: TaskDef,
+    task_file: Optional[Path] = None,
+    *,
+    force: bool = False,
+) -> TaskExecutionResult:
     if not task.active:
         print(f"Skipping inactive task '{task.name}' in {project_dir}")
-        return
+        return TaskExecutionResult.SKIPPED_INACTIVE
+
+    if task.suspended_until is not None and not force:
+        global_config_for_suspension = get_global_config(workspace_dir=project_dir)
+        suspension = get_suspension_status(
+            task,
+            tz_name=task.timezone or global_config_for_suspension.timezone,
+        )
+        if suspension.is_suspended:
+            if suspension.is_invalid:
+                print(
+                    f"Skipping suspended task '{task.name}' in {project_dir}: "
+                    f"invalid suspended_until ({suspension.raw_until})"
+                )
+            else:
+                print(
+                    f"Skipping suspended task '{task.name}' in {project_dir}: "
+                    f"{suspension.summary}"
+                )
+            return TaskExecutionResult.SKIPPED_SUSPENDED
 
     from .config import get_system_prompt
     from .parser import ConcurrencyPolicy, ExecutionMode
@@ -488,7 +545,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
             print(
                 f"Task '{task.name}' is already running (PID: {running_pid}). Skipping."
             )
-            return
+            return TaskExecutionResult.SKIPPED_CONCURRENCY
         elif task.concurrency_policy == ConcurrencyPolicy.REPLACE:
             print(
                 f"Task '{task.name}' is already running (PID: {running_pid}). Terminating and replacing."
@@ -505,6 +562,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
     exec_id: str | None = None
     artifact_staging_dir: Path | None = None
     attachments: list[ConnectorAttachment] = []
+    command_started = False
 
     # ロックファイル作成
     try:
@@ -591,7 +649,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 msg = "AIエンジンが未指定です。"
                 print(f"[kage] ERROR: {msg}")
                 log_execution(str(project_dir), task.name, "FAILED", "", msg)
-                return
+                return TaskExecutionResult.FAILED_CONFIG
 
             # プロンプトの構築: System Prompt + Task Plan + Memory + Task Instructions
             thinking_tag = get_thinking_tag(engine_name)
@@ -625,7 +683,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 "",
                 "No prompt or command specified",
             )
-            return
+            return TaskExecutionResult.FAILED_CONFIG
 
         try:
             from .db import init_db
@@ -730,7 +788,9 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                     exec_id=exec_id,
                     timeout=timeout,
                 )
+                command_started = True
             except subprocess.TimeoutExpired:
+                command_started = True
                 if artifact_staging_dir is not None:
                     attachments = collect_artifacts_from_dir(
                         artifact_staging_dir,
@@ -752,7 +812,7 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 write_artifact_metadata(exec_id, artifact_staging_dir, attachments)
 
             if get_execution_status(exec_id) == "STOPPED":
-                return
+                return TaskExecutionResult.STARTED
 
             # autostop チェック: task.json の sub_tasks が全て done の場合
             if prompt_execution and task.mode == ExecutionMode.AUTOSTOP and task_file:
@@ -837,6 +897,13 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                     attachments=attachments,
                 )
         except Exception as e:
+            if isinstance(e, LoggedCommandError) and e.started:
+                command_started = True
+            elif exec_id and get_execution_pid(exec_id) is not None:
+                command_started = True
+            if exec_id is None:
+                print(f"[kage] ERROR before execution start: {e}")
+                return TaskExecutionResult.FAILED_CONFIG
             if exec_id and artifact_staging_dir is not None and not attachments:
                 attachments = collect_artifacts_from_dir(
                     artifact_staging_dir,
@@ -858,6 +925,8 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                     run_id=exec_id,
                     attachments=attachments,
                 )
+            if not command_started:
+                return TaskExecutionResult.FAILED_CONFIG
     finally:
         if lock_path.exists():
             lock_path.unlink()
@@ -868,3 +937,4 @@ def execute_task(project_dir: Path, task: TaskDef, task_file: Optional[Path] = N
                 set_execution_pid(exec_id, None)
         except Exception:
             pass
+    return TaskExecutionResult.STARTED

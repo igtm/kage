@@ -57,6 +57,29 @@ Include benchmark table and recommendations.
     assert task.working_dir == "../../workspace"
 
 
+def test_parse_markdown_front_matter_suspension_fields(tmp_path: Path):
+    task_file = tmp_path / "suspended.md"
+    task_file.write_text(
+        """---
+name: Suspended Task
+cron: "0 2 * * *"
+suspended_until: "2026-05-09T18:30:00+09:00"
+suspended_reason: "Vacation for 2 weeks"
+---
+
+Do this later.
+""",
+        encoding="utf-8",
+    )
+
+    parsed = parse_task_file(task_file)
+
+    assert len(parsed) == 1
+    _, task = parsed[0]
+    assert task.suspended_until == "2026-05-09T18:30:00+09:00"
+    assert task.suspended_reason == "Vacation for 2 weeks"
+
+
 def test_parse_markdown_command_task(tmp_path: Path):
     task_file = tmp_path / "shell.md"
     task_file.write_text(

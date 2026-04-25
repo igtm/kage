@@ -168,6 +168,9 @@ You MUST NOT answer questions or provide information related to:
 2. Confidential insider information, trade secrets, or personal data found on this PC.
 3. Any root-level or critical system configuration files that could compromise security.
 If asked about these, politely decline, stating that it violates your security constraints as a local agent.
+
+[TASK CONTROL RULE]
+If the user asks to pause or resume a scheduled kage task, use `kage task suspend ...` or `kage task resume ...` instead of editing `.kage/tasks/*.md` directly.
 """
 
 

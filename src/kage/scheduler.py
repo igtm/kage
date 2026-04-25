@@ -5,6 +5,7 @@ from pathlib import Path
 from .config import KAGE_PROJECTS_LIST, get_global_config
 from .parser import load_project_tasks, TaskDef
 from .executor import execute_task
+from .suspension import get_suspension_status
 
 
 def get_projects() -> list[Path]:
@@ -104,9 +105,11 @@ def run_all_scheduled_tasks():
     now = datetime.now(dt_timezone.utc)
     projects = get_projects()
     cfg = get_global_config()
-    tz_name = cfg.timezone
+    default_tz_name = cfg.timezone
 
     for proj_dir in projects:
+        project_cfg = get_global_config(workspace_dir=proj_dir)
+        tz_name = project_cfg.timezone or default_tz_name
         tasks = load_project_tasks(proj_dir)
         for toml_file, local_task in tasks:
             t = local_task.task
@@ -115,6 +118,15 @@ def run_all_scheduled_tasks():
 
             # タスク固有のタイムゾーン、なければグローバル
             task_tz = t.timezone or tz_name
+
+            suspension = get_suspension_status(t, now=now, tz_name=task_tz)
+            if suspension.is_suspended:
+                if suspension.is_invalid:
+                    print(
+                        f"Skipping task '{t.name}' in {proj_dir}: "
+                        f"invalid suspended_until ({suspension.raw_until})"
+                    )
+                continue
 
             # 時間帯枠のチェック
             if not is_within_time_window(t, now, task_tz):
