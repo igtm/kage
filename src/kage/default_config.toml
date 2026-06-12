@@ -153,8 +153,8 @@ template = ["gemini", "--approval-mode", "yolo", "{model_args}", "--prompt", "{p
 template = [
   "agy",
   "--dangerously-skip-permissions",
-  "--print",
   "{model_args}",
+  "--print",
   "{prompt}",
 ]
 

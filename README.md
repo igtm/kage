@@ -43,7 +43,7 @@ Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging dir
 
 Default built-in AI providers: `codex`, `claude`, `gemini`, `antigravity`, `opencode`, `copilot`, `aider`.
 
-Use `provider: antigravity` to target Antigravity CLI. The built-in command template prefers the official `agy` binary and automatically falls back to `antigravity` when that is the executable name exposed on your PATH.
+Use `provider: antigravity` to target Antigravity CLI. The built-in command template prefers the official `agy` binary and automatically falls back to `antigravity` when that is the executable name exposed on your PATH. For connector chat replies, kage uses a concise final-answer prompt and keeps Antigravity model arguments before `--print` so the user message is handled as the prompt instead of CLI session metadata.
 
 Check out the [Technical Architecture](ARCHITECTURE.md) for more details.
 

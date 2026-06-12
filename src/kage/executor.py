@@ -60,6 +60,34 @@ class LoggedCommandError(RuntimeError):
         self.started = started
 
 
+_ANTIGRAVITY_PRINT_FLAGS = {"--print", "-p", "--prompt"}
+_ANTIGRAVITY_MODEL_FLAGS = {"--model"}
+
+
+def _normalize_antigravity_print_order(cmd: list[str]) -> list[str]:
+    """Keep Antigravity model flags before print mode so the prompt is not swallowed."""
+    if not cmd or Path(cmd[0]).name not in {"agy", "antigravity"}:
+        return cmd
+
+    print_idx = next(
+        (idx for idx, part in enumerate(cmd) if part in _ANTIGRAVITY_PRINT_FLAGS),
+        None,
+    )
+    if print_idx is None:
+        return cmd
+
+    idx = print_idx + 1
+    while idx < len(cmd) - 1:
+        if cmd[idx] in _ANTIGRAVITY_MODEL_FLAGS:
+            flag_value = cmd[idx : idx + 2]
+            del cmd[idx : idx + 2]
+            cmd[print_idx:print_idx] = flag_value
+            print_idx += len(flag_value)
+            continue
+        idx += 1
+    return cmd
+
+
 def _normalize_headless_args(cmd: list[str]) -> list[str]:
     """When running without a TTY, avoid interactive approval prompts for AI CLIs."""
     if not cmd:
@@ -163,7 +191,7 @@ def _normalize_headless_args(cmd: list[str]) -> list[str]:
                 new_cmd.insert(-1, "--print")
             else:
                 new_cmd.append("--print")
-        return new_cmd
+        return _normalize_antigravity_print_order(new_cmd)
 
     return cmd
 

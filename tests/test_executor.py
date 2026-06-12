@@ -74,8 +74,8 @@ def executor_config():
                 template=[
                     "agy",
                     "--dangerously-skip-permissions",
-                    "--print",
                     "{model_args}",
+                    "--print",
                     "{prompt}",
                 ]
             ),
@@ -549,6 +549,30 @@ def test_prepare_command_for_execution_falls_back_to_antigravity_binary(mocker):
     assert "--print" in cmd
 
 
+def test_normalize_headless_args_moves_antigravity_model_before_print(mocker):
+    mocker.patch("kage.executor.sys.stdin.isatty", return_value=False)
+
+    cmd = _normalize_headless_args(
+        [
+            "agy",
+            "--dangerously-skip-permissions",
+            "--print",
+            "--model",
+            "Gemini 3.5 Flash (High)",
+            "hello",
+        ]
+    )
+
+    assert cmd == [
+        "agy",
+        "--dangerously-skip-permissions",
+        "--model",
+        "Gemini 3.5 Flash (High)",
+        "--print",
+        "hello",
+    ]
+
+
 def test_execute_inline_command_template_does_not_auto_inject_model(
     tmp_path: Path, mock_executor_env, mocker
 ):
@@ -700,8 +724,8 @@ def test_config_default_loaded():
     assert config.commands["antigravity"].template == [
         "agy",
         "--dangerously-skip-permissions",
-        "--print",
         "{model_args}",
+        "--print",
         "{prompt}",
     ]
     assert config.ui_port == 8484

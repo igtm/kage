@@ -31,6 +31,8 @@ PROVIDER_THINKING_TAGS: dict[str, str] = {
 }
 DEFAULT_THINKING_TAG = "think"
 IncomingAttachmentPreparer = Callable[[Path], IncomingAttachmentPreparation]
+_ANTIGRAVITY_PRINT_FLAGS = {"--print", "-p", "--prompt"}
+_ANTIGRAVITY_MODEL_FLAGS = {"--model"}
 _QUICK_TAG_RE = re.compile(
     r"<\s*\/?\s*(?:think(?:ing)?|thought|antthinking|antml:thinking|final)\b",
     re.IGNORECASE,
@@ -177,6 +179,27 @@ If asked about these, politely decline, stating that it violates your security c
 If the user asks to pause or resume a scheduled kage task, use `kage task suspend ...` or `kage task resume ...` instead of editing `.kage/tasks/*.md` directly.
 """
 
+AGENT_CHAT_SYSTEM_PROMPT = """
+You are Kage (影), a concise assistant replying to a chat connector message.
+Answer the user's current message directly in the same language when practical.
+
+[OUTPUT RULES]
+- Output only the final user-facing answer.
+- Do not output your plan, tool-use narration, progress updates, or preamble.
+- Do not mention your model name or runtime unless the user explicitly asks.
+- Do not use `<think>`, `<thinking>`, or `<final>` tags.
+
+[CRITICAL SECURITY RULE]
+You MUST NOT answer questions or provide information related to:
+1. System credentials, passwords, SSH keys, or API tokens.
+2. Confidential insider information, trade secrets, or personal data found on this PC.
+3. Any root-level or critical system configuration files that could compromise security.
+If asked about these, politely decline, stating that it violates your security constraints as a local agent.
+
+[TASK CONTROL RULE]
+If the user asks to pause or resume a scheduled kage task, tell them the appropriate `kage task suspend ...` or `kage task resume ...` command instead of editing `.kage/tasks/*.md` directly.
+"""
+
 
 def clean_ai_reply(text: str) -> str:
     """
@@ -201,6 +224,30 @@ def _resolve_chat_working_dir(config, working_dir: str | None) -> Path:
         cwd_path.mkdir(parents=True, exist_ok=True)
         return cwd_path
     return Path.cwd()
+
+
+def _normalize_antigravity_print_order(cmd: list[str]) -> list[str]:
+    """Keep Antigravity model flags before print mode so the prompt is not swallowed."""
+    if not cmd or Path(cmd[0]).name not in {"agy", "antigravity"}:
+        return cmd
+
+    print_idx = next(
+        (idx for idx, part in enumerate(cmd) if part in _ANTIGRAVITY_PRINT_FLAGS),
+        None,
+    )
+    if print_idx is None:
+        return cmd
+
+    idx = print_idx + 1
+    while idx < len(cmd) - 1:
+        if cmd[idx] in _ANTIGRAVITY_MODEL_FLAGS:
+            flag_value = cmd[idx : idx + 2]
+            del cmd[idx : idx + 2]
+            cmd[print_idx:print_idx] = flag_value
+            print_idx += len(flag_value)
+            continue
+        idx += 1
+    return cmd
 
 
 def _build_chat_invocation(
@@ -229,9 +276,13 @@ def _build_chat_invocation(
     template = cmd_def.template
 
     thinking_tag = get_thinking_tag(engine_name)
-    parts = [
-        f"[System Context]\n{DEFAULT_SYSTEM_PROMPT.strip().format(thinking_tag=thinking_tag)}"
-    ]
+    antigravity_commands = {"antigravity", "agy"}
+    if provider.command in antigravity_commands:
+        system_text = AGENT_CHAT_SYSTEM_PROMPT.strip()
+    else:
+        system_text = DEFAULT_SYSTEM_PROMPT.strip().format(thinking_tag=thinking_tag)
+
+    parts = [f"[System Context]\n{system_text}"]
     if system_prompt:
         parts.append(f"[Additional Instructions]\n{system_prompt.strip()}")
     if artifact_dir is not None:
@@ -246,6 +297,7 @@ def _build_chat_invocation(
     system_context = "\n\n".join(parts)
 
     cmd = render_command_template(template, system_context, provider=provider)
+    cmd = _normalize_antigravity_print_order(cmd)
 
     env = os.environ.copy()
     if config.env_path:

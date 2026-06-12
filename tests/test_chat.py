@@ -5,6 +5,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from kage import db
 from kage.ai.chat import (
+    _build_chat_invocation,
     clean_ai_reply,
     generate_chat_reply,
     generate_logged_chat_reply,
@@ -109,6 +110,38 @@ def test_generate_chat_reply_uses_gemini_reasoning_and_final_tags(
     assert "<think>" in prompt_arg
     assert "<final>" in prompt_arg
     assert GEMINI_CLI_SUNSET_DATE in capsys.readouterr().err
+
+
+@patch("kage.ai.chat.get_global_config")
+@patch("kage.ai.chat.shutil.which", return_value=None)
+def test_chat_invocation_moves_antigravity_model_before_print(
+    mock_which, mock_get_config, tmp_path
+):
+    config = GlobalConfig()
+    config.default_ai_engine = "antigravity"
+    config.providers["antigravity"] = ProviderConfig(
+        command="antigravity",
+        model="Gemini 3.5 Flash (High)",
+        model_flag="--model",
+    )
+    config.commands["antigravity"] = CommandDef(
+        template=[
+            "agy",
+            "--dangerously-skip-permissions",
+            "--print",
+            "{model_args}",
+            "{prompt}",
+        ]
+    )
+    mock_get_config.return_value = config
+
+    invocation = _build_chat_invocation("こんにちは", working_dir=str(tmp_path))
+
+    cmd = invocation["cmd"]
+    assert cmd.index("--model") < cmd.index("--print")
+    prompt_arg = cmd[cmd.index("--print") + 1]
+    assert "[System Context]" in prompt_arg
+    assert "[User Message]\nこんにちは" in prompt_arg
 
 
 @pytest.fixture

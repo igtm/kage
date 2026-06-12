@@ -43,7 +43,7 @@ connector を使う run では workspace 内の staging directory として `KAG
 
 デフォルト同梱の AI provider は `codex`, `claude`, `gemini`, `antigravity`, `opencode`, `copilot`, `aider` です。
 
-Antigravity CLI を使う場合は `provider: antigravity` を指定します。built-in の command template は公式の `agy` binary を優先し、PATH 上で `antigravity` という実行名しか見えていない環境では自動でそちらへフォールバックします。
+Antigravity CLI を使う場合は `provider: antigravity` を指定します。built-in の command template は公式の `agy` binary を優先し、PATH 上で `antigravity` という実行名しか見えていない環境では自動でそちらへフォールバックします。connector chat 返信では、kage は最終回答だけを返すための簡潔な prompt を使い、Antigravity の model 引数を `--print` より前に置くことで、ユーザーのメッセージが CLI session metadata ではなく prompt として処理されるようにします。
 
 詳細な技術解説は [技術構成ドキュメント](ARCHITECTURE_JA.md) を参照してください。
 
