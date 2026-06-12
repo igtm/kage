@@ -33,6 +33,7 @@ from .db import (
     start_execution,
     update_execution,
 )
+from .gemini_transition import emit_gemini_transition_warning, is_gemini_provider_name
 from .parser import TaskDef
 from .ai.chat import clean_ai_reply, get_thinking_tag
 from .compiler import compiled_task_status
@@ -682,6 +683,10 @@ def execute_task(
                 print(f"[kage] ERROR: {msg}")
                 log_execution(str(project_dir), task.name, "FAILED", "", msg)
                 return TaskExecutionResult.FAILED_CONFIG
+            if is_gemini_provider_name(engine_name):
+                emit_gemini_transition_warning(
+                    f"Task '{task.name}' is about to use Gemini CLI"
+                )
 
             # プロンプトの構築: System Prompt + Task Plan + Memory + Task Instructions
             thinking_tag = get_thinking_tag(engine_name)

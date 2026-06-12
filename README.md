@@ -315,7 +315,7 @@ model = "gpt-5-codex"
 model = "claude-sonnet-4-5"
 
 [providers.antigravity]
-model = "gemini-2.5-pro"
+model = "Gemini 3.5 Flash"
 
 [providers.opencode]
 model = "openai/gpt-5-codex"
@@ -325,7 +325,7 @@ Built-in providers use `--model` by default. You can also set nested keys via CL
 
 ```bash
 kage config default_ai_engine antigravity --global
-kage config providers.antigravity.model gemini-2.5-pro --global
+kage config providers.antigravity.model "Gemini 3.5 Flash" --global
 kage config providers.codex.model gpt-5-codex --global
 kage config providers.codex.model gpt-5-mini --local
 ```

@@ -50,6 +50,8 @@ If a prompt task has a sibling compiled lock like `.kage/tasks/nightly.lock.sh`,
 
 In `kage task list`, prompt tasks render as `Prompt` or `Prompt (Compiled)`, stale compiled locks are highlighted, the project column uses only the leaf directory name, and inherited providers show up explicitly as values like `gemini (Inherited)`. The built-in `codex` command template runs `codex exec --yolo ...` by default.
 
+If a workspace still uses the built-in `gemini` provider, kage warns in CLI output about the Gemini CLI consumer sunset on June 18, 2026 and points users to the Google blog migration announcement. Prefer `antigravity` for new consumer workflows.
+
 Suspension is separate from `active`: cron and normal manual runs skip a task while `suspended_until` is in the future, or while the value is invalid. Use `kage run <task> --force` or `kage task run <task> --force` for a deliberate one-off run. Connector-driven agents should use `kage task suspend` / `kage task resume` instead of editing `.kage/tasks/*.md` directly.
 
 Connector poll replies are recorded as normal runs. Use `kage runs --source connector_poll` to find them and `kage logs --run <exec_id>` to inspect raw AI CLI output.

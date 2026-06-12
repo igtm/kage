@@ -15,6 +15,7 @@ from kage.executor import TaskExecutionResult
 from kage.main import app
 from kage.parser import TaskDef
 from kage.runs import format_local_timestamp, format_relative_timestamp, get_run
+from kage.gemini_transition import GEMINI_CLI_SUNSET_DATE
 
 runner = CliRunner()
 
@@ -683,6 +684,60 @@ hello
     assert result.exit_code == 0
     assert "compiled locks" in result.stdout
     assert "Nightly@proj" in result.stdout
+
+
+def test_doctor_warns_when_default_engine_is_gemini(mocker, tmp_path: Path):
+    global_dir = tmp_path / ".kage"
+    config_path = global_dir / "config.toml"
+    projects_list = global_dir / "projects.list"
+    db_path = global_dir / "kage.db"
+    logs_dir = global_dir / "logs"
+    state_path = global_dir / "migrations" / "install_state.json"
+
+    global_dir.mkdir(parents=True)
+    logs_dir.mkdir(parents=True)
+    config_path.write_text("", encoding="utf-8")
+    projects_list.write_text("", encoding="utf-8")
+    db_path.write_text("", encoding="utf-8")
+
+    cfg = GlobalConfig(
+        default_ai_engine="gemini",
+        commands={"gemini": CommandDef(template=["gemini", "--prompt", "{prompt}"])},
+        providers={"gemini": ProviderConfig(command="gemini")},
+    )
+
+    mocker.patch("kage.config.KAGE_GLOBAL_DIR", global_dir)
+    mocker.patch("kage.config.KAGE_CONFIG_PATH", config_path)
+    mocker.patch("kage.config.KAGE_PROJECTS_LIST", projects_list)
+    mocker.patch("kage.config.KAGE_DB_PATH", db_path)
+    mocker.patch("kage.config.KAGE_LOGS_DIR", logs_dir)
+    mocker.patch(
+        "kage.config.get_global_config",
+        side_effect=lambda workspace_dir=None: cfg,
+    )
+    mocker.patch("kage.scheduler.get_projects", return_value=[])
+    mocker.patch(
+        "kage.migrations.runner.get_install_migration_state_path",
+        return_value=state_path,
+    )
+    mocker.patch("kage.migrations.runner.discover_install_migrations", return_value=[])
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert GEMINI_CLI_SUNSET_DATE in result.stdout
+    assert "antigravity" in result.stdout
+
+
+def test_config_warns_when_setting_default_engine_to_gemini(mocker, tmp_path: Path):
+    config_path = tmp_path / "config.toml"
+    mocker.patch("kage.config.KAGE_CONFIG_PATH", config_path)
+
+    result = runner.invoke(app, ["config", "default_ai_engine", "gemini", "--global"])
+
+    assert result.exit_code == 0
+    assert GEMINI_CLI_SUNSET_DATE in result.output
+    assert "antigravity" in result.output
 
 
 def test_task_show_includes_prompt_hash(mocker, tmp_path: Path):

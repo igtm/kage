@@ -1465,12 +1465,18 @@ def config(
 ):
     """Update configuration via CLI."""
     from .config import set_config_value
+    from .gemini_transition import (
+        emit_gemini_transition_warning,
+        should_warn_for_gemini_config,
+    )
 
     if is_global and is_local:
         raise typer.BadParameter("--global and --local cannot be used together")
 
     scope = "global" if is_global else "local" if is_local else "project"
     set_config_value(key, value, is_global=is_global, scope=scope)
+    if should_warn_for_gemini_config(key, value):
+        emit_gemini_transition_warning(f"You're configuring Gemini CLI via '{key}'")
 
 
 @app.command("config-show")
@@ -1484,6 +1490,10 @@ def config_show(
     from rich.console import Console
     from rich.table import Table
     from .config import get_global_config, KAGE_CONFIG_PATH
+    from .gemini_transition import (
+        build_gemini_transition_warning,
+        is_gemini_provider_name,
+    )
 
     ws_dir = Path(workspace).resolve() if workspace else Path.cwd()
     ws_cfg_path = ws_dir / ".kage" / "config.toml"
@@ -1492,6 +1502,10 @@ def config_show(
 
     console = Console()
     console.print("\n[bold cyan]kage config-show[/bold cyan]\n")
+    if is_gemini_provider_name(cfg.default_ai_engine):
+        console.print(
+            f"[yellow]{build_gemini_transition_warning('default_ai_engine is set to gemini')}[/yellow]\n"
+        )
 
     summary = Table(show_header=False, box=None, padding=(0, 1))
     summary.add_column("k", style="bold")
@@ -1573,6 +1587,7 @@ def doctor():
         KAGE_DB_PATH,
         KAGE_LOGS_DIR,
     )
+    from .gemini_transition import build_gemini_transition_warning
 
     is_ja = os.environ.get("LANG", "").startswith("ja")
 
@@ -2129,6 +2144,14 @@ def doctor():
         ok("default_ai_engine", f'"{cfg.default_ai_engine}"')
     else:
         warn(t_ai_not_set, t_ai_hint)
+    if cfg.default_ai_engine == "gemini":
+        console.print(
+            f"[yellow]{build_gemini_transition_warning('default_ai_engine is set to gemini')}[/yellow]\n"
+        )
+        warn(
+            "gemini cli sunset",
+            build_gemini_transition_warning("default_ai_engine is set to gemini"),
+        )
 
     # 6. Provider Checks
     if cfg.default_ai_engine:

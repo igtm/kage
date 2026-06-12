@@ -16,6 +16,10 @@ from ..artifacts import (
 )
 from ..config import get_global_config, render_command_template
 from ..connector_payload import ConnectorAttachment
+from ..gemini_transition import (
+    emit_gemini_transition_warning,
+    is_gemini_provider_name,
+)
 from ..runs import infer_output_summary
 
 # Provider name → thinking tag mapping
@@ -211,6 +215,8 @@ def _build_chat_invocation(
     engine_name = config.default_ai_engine
     if not engine_name:
         raise ValueError("default_ai_engine is not set in global config.")
+    if is_gemini_provider_name(engine_name):
+        emit_gemini_transition_warning("Chat is about to use Gemini CLI")
 
     provider = config.providers.get(engine_name)
     if not provider:

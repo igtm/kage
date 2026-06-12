@@ -15,6 +15,7 @@ from kage.artifacts import (
     write_incoming_attachment_bytes,
 )
 from kage.config import GlobalConfig, ProviderConfig, CommandDef
+from kage.gemini_transition import GEMINI_CLI_SUNSET_DATE
 from kage.runs import get_run, load_run_metadata
 
 
@@ -89,7 +90,7 @@ def test_get_thinking_tag_uses_think_for_gemini():
 @patch("kage.ai.chat.get_global_config")
 @patch("kage.ai.chat.subprocess.run")
 def test_generate_chat_reply_uses_gemini_reasoning_and_final_tags(
-    mock_run, mock_get_config
+    mock_run, mock_get_config, capsys
 ):
     config = GlobalConfig()
     config.default_ai_engine = "gemini"
@@ -107,6 +108,7 @@ def test_generate_chat_reply_uses_gemini_reasoning_and_final_tags(
     prompt_arg = mock_run.call_args[0][0][-1]
     assert "<think>" in prompt_arg
     assert "<final>" in prompt_arg
+    assert GEMINI_CLI_SUNSET_DATE in capsys.readouterr().err
 
 
 @pytest.fixture

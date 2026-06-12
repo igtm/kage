@@ -106,7 +106,7 @@ def executor_config():
             "antigravity": ProviderConfig(
                 command="antigravity",
                 parser="raw",
-                model="gemini-2.5-pro",
+                model="Gemini 3.5 Flash",
                 model_flag="--model",
             ),
         },
@@ -589,7 +589,7 @@ def test_execute_explicit_antigravity_provider_uses_builtin_template(
     assert "--dangerously-skip-permissions" in cmd
     assert "--print" in cmd
     assert "--model" in cmd
-    assert cmd[cmd.index("--model") + 1] == "gemini-2.5-pro"
+    assert cmd[cmd.index("--model") + 1] == "Gemini 3.5 Flash"
 
 
 def test_execute_inline_command_template_can_opt_into_model_placeholder(
@@ -645,14 +645,16 @@ def test_render_command_template_inserts_model_before_prompt():
 
 
 def test_render_command_template_honors_explicit_model_placeholder():
-    provider = ProviderConfig(command="gemini", model="gemini-2.5-pro", model_flag="-m")
+    provider = ProviderConfig(
+        command="gemini", model="Gemini 3.5 Flash", model_flag="-m"
+    )
     cmd = render_command_template(
         ["gemini", "{model_args}", "--prompt", "{prompt}"],
         "hello",
         provider=provider,
     )
 
-    assert cmd == ["gemini", "-m", "gemini-2.5-pro", "--prompt", "hello"]
+    assert cmd == ["gemini", "-m", "Gemini 3.5 Flash", "--prompt", "hello"]
 
 
 def test_render_command_template_does_not_double_inject_after_prompt():

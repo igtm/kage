@@ -14,6 +14,7 @@ from .config import (
     get_system_prompt,
     render_command_template,
 )
+from .gemini_transition import emit_gemini_transition_warning, is_gemini_provider_name
 from .parser import TaskDef
 
 COMPILED_SCRIPT_SUFFIX = ".lock.sh"
@@ -178,6 +179,8 @@ def _build_compile_request(
     engine_name = task.provider or global_config.default_ai_engine
     if not engine_name:
         raise ValueError("AI engine is not configured for compilation.")
+    if is_gemini_provider_name(engine_name):
+        emit_gemini_transition_warning(f"Compiling '{task.name}' with Gemini CLI")
 
     provider = global_config.providers.get(engine_name)
     extra_args = task.ai.args if task.ai and task.ai.args else []
