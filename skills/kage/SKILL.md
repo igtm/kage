@@ -64,7 +64,7 @@ Install-time migrations are discovered automatically from `src/kage/migrations/i
 ---
 name: <Task Name>
 cron: "<cron expression>"
-provider: <provider name>           # e.g. codex, claude, gemini, opencode, copilot, aider
+provider: <provider name>           # e.g. codex, claude, gemini, antigravity, opencode, copilot, aider
 mode: continuous                    # continuous | once | autostop
 concurrency_policy: allow           # allow | forbid | replace
 timeout_minutes: 60                 # minutes (optional)

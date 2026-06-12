@@ -149,6 +149,15 @@ template = [
 [commands.gemini]
 template = ["gemini", "--approval-mode", "yolo", "{model_args}", "--prompt", "{prompt}"]
 
+[commands.antigravity]
+template = [
+  "agy",
+  "--dangerously-skip-permissions",
+  "--print",
+  "{model_args}",
+  "{prompt}",
+]
+
 [commands.opencode]
 template = ["opencode", "run", "{model_args}", "{prompt}"]
 
@@ -167,6 +176,10 @@ model_flag = "--model"
 
 [providers.gemini]
 command = "gemini"
+model_flag = "--model"
+
+[providers.antigravity]
+command = "antigravity"
 model_flag = "--model"
 
 [providers.opencode]

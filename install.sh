@@ -60,7 +60,7 @@ if $IS_JA; then
     MSG_LOGS="  実行履歴:             kage runs"
     MSG_RAW_LOGS="  生ログ閲覧:           kage logs <task>"
     MSG_AI="  AIエンジンを設定する場合:"
-    MSG_AI_CMD="    kage config default_ai_engine codex --global"
+    MSG_AI_CMD="    kage config default_ai_engine antigravity --global"
     MSG_HACK="Happy hacking! 🌑"
 else
     MSG_TITLE="🌑 kage - AI Native Cron Task Runner Installer"
@@ -80,7 +80,7 @@ else
     MSG_LOGS="  View run history:      kage runs"
     MSG_RAW_LOGS="  View raw logs:        kage logs <task>"
     MSG_AI="  To set an AI engine:"
-    MSG_AI_CMD="    kage config default_ai_engine codex --global"
+    MSG_AI_CMD="    kage config default_ai_engine antigravity --global"
     MSG_HACK="Happy hacking! 🌑"
 fi
 

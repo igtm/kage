@@ -148,7 +148,39 @@ def _normalize_headless_args(cmd: list[str]) -> list[str]:
                 new_cmd.append("-p")
             return new_cmd
 
+    if exe in {"agy", "antigravity"}:
+        new_cmd = list(cmd)
+        if "--dangerously-skip-permissions" not in new_cmd:
+            new_cmd.insert(1, "--dangerously-skip-permissions")
+        if (
+            "--print" not in new_cmd
+            and "-p" not in new_cmd
+            and "--prompt" not in new_cmd
+            and "--prompt-interactive" not in new_cmd
+        ):
+            if len(new_cmd) > 1:
+                new_cmd.insert(-1, "--print")
+            else:
+                new_cmd.append("--print")
+        return new_cmd
+
     return cmd
+
+
+def _resolve_executable_path(executable: str, env: dict[str, str]) -> str | None:
+    exe_path = shutil.which(executable, path=env.get("PATH"))
+    if exe_path:
+        return exe_path
+
+    fallback_names = {
+        "agy": ["antigravity"],
+        "antigravity": ["agy"],
+    }
+    for fallback in fallback_names.get(executable, []):
+        fallback_path = shutil.which(fallback, path=env.get("PATH"))
+        if fallback_path:
+            return fallback_path
+    return None
 
 
 def _get_memory_dir(project_dir: Path, task_name: str) -> Path:
@@ -400,7 +432,7 @@ def _stream_process_output(proc: subprocess.Popen, exec_id: str) -> dict:
 def prepare_command_for_execution(cmd: list[str], env: dict[str, str]) -> list[str]:
     prepared = list(cmd)
     if prepared and prepared[0]:
-        exe_path = shutil.which(prepared[0], path=env.get("PATH"))
+        exe_path = _resolve_executable_path(prepared[0], env)
         if exe_path:
             prepared[0] = exe_path
     return _normalize_headless_args(prepared)

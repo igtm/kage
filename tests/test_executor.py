@@ -21,6 +21,7 @@ from kage.executor import (
     _normalize_headless_args,
     TaskExecutionResult,
     execute_task,
+    prepare_command_for_execution,
 )
 from kage.parser import TaskDef
 
@@ -69,6 +70,15 @@ def executor_config():
             "opencode": CommandDef(
                 template=["opencode", "run", "{model_args}", "{prompt}"]
             ),
+            "antigravity": CommandDef(
+                template=[
+                    "agy",
+                    "--dangerously-skip-permissions",
+                    "--print",
+                    "{model_args}",
+                    "{prompt}",
+                ]
+            ),
         },
         providers={
             "codex": ProviderConfig(
@@ -91,6 +101,12 @@ def executor_config():
                 command="opencode",
                 parser="raw",
                 model="openai/gpt-5-codex",
+                model_flag="--model",
+            ),
+            "antigravity": ProviderConfig(
+                command="antigravity",
+                parser="raw",
+                model="gemini-2.5-pro",
                 model_flag="--model",
             ),
         },
@@ -509,6 +525,30 @@ def test_normalize_headless_args_preserves_codex_yolo(mocker):
     assert cmd == ["codex", "exec", "--yolo", "--model", "gpt-5-codex", "hello"]
 
 
+def test_normalize_headless_args_adds_antigravity_print_and_permissions(mocker):
+    mocker.patch("kage.executor.sys.stdin.isatty", return_value=False)
+
+    cmd = _normalize_headless_args(["agy", "hello"])
+
+    assert cmd == ["agy", "--dangerously-skip-permissions", "--print", "hello"]
+
+
+def test_prepare_command_for_execution_falls_back_to_antigravity_binary(mocker):
+    mocker.patch("kage.executor.sys.stdin.isatty", return_value=False)
+    mocker.patch(
+        "kage.executor.shutil.which",
+        side_effect=lambda cmd, path=None: {"antigravity": "/usr/bin/antigravity"}.get(
+            cmd
+        ),
+    )
+
+    cmd = prepare_command_for_execution(["agy", "hello"], {})
+
+    assert cmd[0] == "/usr/bin/antigravity"
+    assert "--dangerously-skip-permissions" in cmd
+    assert "--print" in cmd
+
+
 def test_execute_inline_command_template_does_not_auto_inject_model(
     tmp_path: Path, mock_executor_env, mocker
 ):
@@ -530,6 +570,26 @@ def test_execute_inline_command_template_does_not_auto_inject_model(
     assert cmd[0] == "inline_cli"
     assert "--model" not in cmd
     assert "Fix this inline" in cmd[1]
+
+
+def test_execute_explicit_antigravity_provider_uses_builtin_template(
+    tmp_path: Path, mock_executor_env, mocker
+):
+    popen = mocker.patch(
+        "kage.executor.subprocess.Popen", return_value=DummyProc(stdout="ai response")
+    )
+
+    task = TaskDef(
+        name="ai_task", cron="* * * * *", prompt="Fix this", provider="antigravity"
+    )
+    execute_task(tmp_path, task)
+
+    cmd = popen.call_args.args[0]
+    assert Path(cmd[0]).name == "agy"
+    assert "--dangerously-skip-permissions" in cmd
+    assert "--print" in cmd
+    assert "--model" in cmd
+    assert cmd[cmd.index("--model") + 1] == "gemini-2.5-pro"
 
 
 def test_execute_inline_command_template_can_opt_into_model_placeholder(
@@ -621,14 +681,24 @@ def test_config_default_loaded():
     """ライブラリデフォルトに model 対応済み provider が含まれる"""
     config = get_global_config(workspace_dir=Path("/nonexistent"))
     assert "codex" in config.providers
+    assert "antigravity" in config.providers
     assert "opencode" in config.providers
     assert "copilot" in config.providers
     assert config.providers["codex"].model_flag == "--model"
+    assert config.providers["antigravity"].command == "antigravity"
+    assert "antigravity" in config.commands
     assert "copilot" in config.commands
     assert config.commands["codex"].template == [
         "codex",
         "exec",
         "--yolo",
+        "{model_args}",
+        "{prompt}",
+    ]
+    assert config.commands["antigravity"].template == [
+        "agy",
+        "--dangerously-skip-permissions",
+        "--print",
         "{model_args}",
         "{prompt}",
     ]

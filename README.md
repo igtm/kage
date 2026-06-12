@@ -4,7 +4,7 @@
 
 English | [日本語](./README_JA.md)
 
-`kage` is an ultra-lightweight, OS-native execution layer for AI agents. By leveraging standard schedulers like **cron** and **launchd**, it runs official AI CLIs (`gemini`, `claude`, `codex`, `opencode`, `copilot`, etc.) in headless mode with zero background overhead. You can install it on your work PC, define tasks in Markdown inside your project repository, and leave it running overnight. By morning, your AI agent has finished the work for you, delivering documented results while you were away.
+`kage` is an ultra-lightweight, OS-native execution layer for AI agents. By leveraging standard schedulers like **cron** and **launchd**, it runs official AI CLIs (`antigravity`, `gemini`, `claude`, `codex`, `opencode`, `copilot`, etc.) in headless mode with zero background overhead. You can install it on your work PC, define tasks in Markdown inside your project repository, and leave it running overnight. By morning, your AI agent has finished the work for you, delivering documented results while you were away.
 
 > **Go to sleep. Wake up to results.** — kage runs your AI agents overnight, so you start every morning with answers, not questions.
 
@@ -13,7 +13,7 @@ English | [日本語](./README_JA.md)
 `kage` is built to be a **thin, transparent, and resource-efficient** execution layer.
 
 - **OS Native**: Does not run a persistent background daemon. It leverages **cron (Linux)** and **launchd (macOS)** to wake up, execute tasks, and exit. Zero memory footprint when idle.
-- **Headless CLI Mode**: Directly integrates with **official AI CLIs** (like `gemini`, `claude`, `opencode`, `copilot`, etc.) in their standard mode. It doesn't rely on unofficial or unstable internal APIs.
+- **Headless CLI Mode**: Directly integrates with **official AI CLIs** (like `antigravity`, `gemini`, `claude`, `opencode`, `copilot`, etc.) in their standard mode. It doesn't rely on unofficial or unstable internal APIs.
 - **Stateless & Transparent**: Every execution is logged, and states are managed simply via SQLite and Markdown files.
 
 ## Dashboard
@@ -41,7 +41,9 @@ English | [日本語](./README_JA.md)
 
 Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that same run and called out in the prompt so the provider can decide whether to inspect them. Discord, Slack, and Telegram still upload every top-level file left in `KAGE_ARTIFACT_DIR` alongside the text output, so tasks should keep only the intended final deliverables there and delete unwanted Markdown/Marp/HTML, downloaded images, and other intermediate assets before finishing.
 
-Default built-in AI providers: `codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider`.
+Default built-in AI providers: `codex`, `claude`, `gemini`, `antigravity`, `opencode`, `copilot`, `aider`.
+
+Use `provider: antigravity` to target Antigravity CLI. The built-in command template prefers the official `agy` binary and automatically falls back to `antigravity` when that is the executable name exposed on your PATH.
 
 Check out the [Technical Architecture](ARCHITECTURE.md) for more details.
 
@@ -223,6 +225,17 @@ provider: gemini
 Analyze the current codebase for architectural drifts.
 ```
 
+The same task can use Antigravity CLI with:
+
+```markdown
+---
+name: Project Auditor
+cron: "0 * * * *"
+provider: antigravity
+---
+Analyze the current codebase for architectural drifts.
+```
+
 **Shell-Command Task** — nightly log cleanup:
 ```markdown
 ---
@@ -301,6 +314,9 @@ model = "gpt-5-codex"
 [providers.claude]
 model = "claude-sonnet-4-5"
 
+[providers.antigravity]
+model = "gemini-2.5-pro"
+
 [providers.opencode]
 model = "openai/gpt-5-codex"
 ```
@@ -308,6 +324,8 @@ model = "openai/gpt-5-codex"
 Built-in providers use `--model` by default. You can also set nested keys via CLI:
 
 ```bash
+kage config default_ai_engine antigravity --global
+kage config providers.antigravity.model gemini-2.5-pro --global
 kage config providers.codex.model gpt-5-codex --global
 kage config providers.codex.model gpt-5-mini --local
 ```

@@ -4,7 +4,7 @@
 
 [English](./README.md) | 日本語
 
-`kage` は、OS標準の **cron** や **launchd** を活用した、極めて軽量かつ透明性の高い AI エージェント実行レイヤーです。公式 AI CLI（`gemini`, `claude`, `codex`, `opencode`, `copilot` 等）をヘッドレスモードで直接駆動し、常駐デーモンなしで動作します。仕事用のPCにインストールして開発リポジトリ内にやりたいことを Markdown で書き、あとはPCを起動したまま眠りにつくだけです。朝起きたときには AI があなたの代わりに仕事を終えており、答えの用意された状態で一日を始めることができます。
+`kage` は、OS標準の **cron** や **launchd** を活用した、極めて軽量かつ透明性の高い AI エージェント実行レイヤーです。公式 AI CLI（`antigravity`, `gemini`, `claude`, `codex`, `opencode`, `copilot` 等）をヘッドレスモードで直接駆動し、常駐デーモンなしで動作します。仕事用のPCにインストールして開発リポジトリ内にやりたいことを Markdown で書き、あとはPCを起動したまま眠りにつくだけです。朝起きたときには AI があなたの代わりに仕事を終えており、答えの用意された状態で一日を始めることができます。
 
 > **寝ている間に、成果を。** — `kage` はあなたの代わりに夜通しAIエージェントを走らせます。朝起きたとき、そこにあるのは「疑問」ではなく「答え」です。
 
@@ -13,7 +13,7 @@
 `kage` は、**「薄く、透明で、リソース効率の良い」** 実行レイヤーであることを目指して設計されています。
 
 - **OS ネイティブ**: 独自の常駐デーモンを持ちません。**cron (Linux)** や **launchd (macOS)** という OS 標準の仕組みを利用して、必要な時だけ起動し、仕事を終えると速やかに終了します。待機時のメモリ消費はゼロです。
-- **公式 CLI 活用**: Gemini や Claude、GCP SDK などの **公式 AI CLI ツール** をヘッドレスモードでそのまま利用します。非公式 API や不安定な内部実装に依存せず、確実な動作を提供します。
+- **公式 CLI 活用**: Antigravity や Gemini、Claude、GCP SDK などの **公式 AI CLI ツール** をヘッドレスモードでそのまま利用します。非公式 API や不安定な内部実装に依存せず、確実な動作を提供します。
 - **ステートレス & 透明性**: すべての実行はログに記録され、状態管理は SQLite と Markdown ファイルのみで行われるシンプルで追いかけやすい構成です。
 
 ## ダッシュボード
@@ -41,7 +41,9 @@
 
 connector を使う run では workspace 内の staging directory として `KAGE_ARTIFACT_DIR`（例: `.kage/tmp/connector-artifacts/<run_id>`）が作られます。受信した connector 添付は同じ run の `KAGE_ARTIFACT_DIR/incoming` に保存され、その場所が prompt に追記されるので provider 側が必要に応じて読む前提です。Discord / Slack / Telegram は `KAGE_ARTIFACT_DIR` 直下に最後に残っている top-level file を本文と一緒にすべて upload するので、そこには PNG / PDF など意図した最終成果物だけを残し、不要な Markdown / Marp / HTML、ダウンロード画像、中間 asset は終了前に削除してください。
 
-デフォルト同梱の AI provider は `codex`, `claude`, `gemini`, `opencode`, `copilot`, `aider` です。
+デフォルト同梱の AI provider は `codex`, `claude`, `gemini`, `antigravity`, `opencode`, `copilot`, `aider` です。
+
+Antigravity CLI を使う場合は `provider: antigravity` を指定します。built-in の command template は公式の `agy` binary を優先し、PATH 上で `antigravity` という実行名しか見えていない環境では自動でそちらへフォールバックします。
 
 詳細な技術解説は [技術構成ドキュメント](ARCHITECTURE_JA.md) を参照してください。
 
@@ -223,6 +225,17 @@ provider: gemini
 現在のコードベースを分析し、アーキテクチャの乖離を確認してください。
 ```
 
+同じ task を Antigravity CLI で動かす場合:
+
+```markdown
+---
+name: プロジェクト監査役
+cron: "0 * * * *"
+provider: antigravity
+---
+現在のコードベースを分析し、アーキテクチャの乖離を確認してください。
+```
+
 **シェルコマンド・タスク** — 毎晩ログ削除:
 ```markdown
 ---
@@ -300,6 +313,9 @@ model = "gpt-5-codex"
 [providers.claude]
 model = "claude-sonnet-4-5"
 
+[providers.antigravity]
+model = "gemini-2.5-pro"
+
 [providers.opencode]
 model = "openai/gpt-5-codex"
 ```
@@ -307,6 +323,8 @@ model = "openai/gpt-5-codex"
 built-in provider は既定で `--model` を使います。CLI から nested key を保存することもできます。
 
 ```bash
+kage config default_ai_engine antigravity --global
+kage config providers.antigravity.model gemini-2.5-pro --global
 kage config providers.codex.model gpt-5-codex --global
 kage config providers.codex.model gpt-5-mini --local
 ```
