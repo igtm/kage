@@ -52,8 +52,11 @@ graph TD
 - **`kage cron install`**: OS のスケジューラーに `kage run` を登録します。
 - **ステートレスな設計**: 起動のたびに現在のコンテキスト（`.kage/tasks` や `config.toml`）を評価し、実行が必要なタスクがあれば AI を呼び出します。実行が終わればプロセスは終了します。
 
-### 2. コネクターのポーリング方式 (Polling-based Connectors)
-`kage` の Discord/Slack コネクターは、**Webhook や WebSocket による待機（プッシュ型）ではなく、定期的なメッセージ取得（プル型）** で動作します。
+### 2. コネクター
+
+`kage` の Discord/Slack/Telegram コネクターはタスク通知を随時送信できます。双方向チャットはデフォルトで `poll = true` による**定期的なメッセージ取得（ポーリング）**で動作します。
+
+Discord には `realtime = true` モードもあり、長寿命の Gateway WebSocket 接続を維持します。このモードでは bot が入力中表示を出し、メッセージ到着と同時に返信を返します。
 
 ```mermaid
 sequenceDiagram

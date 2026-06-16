@@ -30,6 +30,7 @@ class ProviderConfig(BaseModel):
 class DiscordConnectorConfig(BaseModel):
     type: str = "discord"
     poll: bool = False
+    realtime: bool = False
     bot_token: str = ""
     channel_id: str = ""
     user_id: Optional[str] = None
@@ -42,6 +43,7 @@ class DiscordConnectorConfig(BaseModel):
 class SlackConnectorConfig(BaseModel):
     type: str = "slack"
     poll: bool = False
+    realtime: bool = False
     bot_token: str = ""
     channel_id: str = ""
     user_id: Optional[str] = None
@@ -51,6 +53,7 @@ class SlackConnectorConfig(BaseModel):
     working_dir: Optional[str] = None
     type: str = "slack"
     poll: bool = False
+    realtime: bool = False
     bot_token: str = ""
     channel_id: str = ""
     user_id: Optional[str] = None
@@ -62,6 +65,7 @@ class SlackConnectorConfig(BaseModel):
 class TelegramConnectorConfig(BaseModel):
     type: str = "telegram"
     poll: bool = False
+    realtime: bool = False
     bot_token: str = ""
     chat_id: str = ""
     user_id: Optional[str] = None

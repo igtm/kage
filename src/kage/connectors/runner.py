@@ -67,3 +67,33 @@ def run_connectors():
 
     for t in threads:
         t.join()
+
+
+def run_realtime_connectors():
+    """
+    Run all connectors with realtime=True concurrently.
+    This function blocks until all realtime listeners exit (normally never).
+    """
+    config = get_global_config()
+    realtime_connectors: list[BaseConnector] = []
+
+    for name, c_dict in config.connectors.items():
+        connector = _build_connector(name, c_dict)
+        if connector and connector.config.realtime:
+            realtime_connectors.append(connector)
+
+    if not realtime_connectors:
+        print("[kage] No connectors have realtime=true. Nothing to start.")
+        return
+
+    threads = []
+    for connector in realtime_connectors:
+        t = threading.Thread(target=connector.realtime, daemon=True)
+        threads.append(t)
+        t.start()
+
+    try:
+        for t in threads:
+            t.join()
+    except KeyboardInterrupt:
+        print("[kage] Stopping realtime connectors...")

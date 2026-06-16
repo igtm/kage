@@ -293,6 +293,11 @@ class SlackConnector(BaseConnector):
         )
         self._write_delivery_metadata(message.run_id, delivery)
 
+    def realtime(self):
+        print(
+            f"[kage] Slack realtime mode is not implemented yet (connector: {self.name})."
+        )
+
     def _post_reply(self, message: str | ConnectorMessage) -> ConnectorDelivery:
         """Post a reply, splitting if needed. Returns delivery details."""
         payload = normalize_connector_message(message)

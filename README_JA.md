@@ -34,7 +34,7 @@
     - **多重起動制御**: `allow`, `forbid` (重複スキップ), `replace` (古い方を終了)。
     - **時間枠制限**: `allowed_hours: "9-17"`, `denied_hours: "12"` のように実行時間を制限。
 - **Markdown 本位**: YAML front matter を持つシンプルな Markdown ファイルでタスクを定義。
-- **コネクター**: Discord/Slack/Telegram との連携。タスク通知は常に有効。双方向チャットは `poll = true` で有効化（⚠️ チャンネルの参加者にPC上のAIへのアクセスを許可します）。
+- **コネクター**: Discord/Slack/Telegram との連携。タスク通知は常に有効。双方向チャットは `poll = true`（1分間隔のポーリング）または Discord の `realtime = true`（WebSocket で即時返信＋入力中表示）で有効化（⚠️ チャンネルの参加者にPC上のAIへのアクセスを許可します）。
 - **思考プロセスの隔離**: AIエージェントの推論過程を `<think>` タグで隔離し、通知・summary・整形済み出力では除外します。`kage logs` では調査用に raw stream をそのまま確認できます。
 - **多層的な設定**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > デフォルト。
 - **Webダッシュボード**: 実行履歴、タスク管理、AIチャットを一箇所で提供。
@@ -270,11 +270,40 @@ shell: "bash"
 | `kage connector list` | 設定済みのコネクター一覧を表示 |
 | `kage connector setup <type>` | コネクター（discord, slack, telegram）のセットアップガイドを表示 |
 | `kage connector poll` | `poll = true` のコネクターを即座にポーリング |
+| `kage connector realtime start [name]` | デタッチされたリアルタイムリスナーを開始 |
+| `kage connector realtime stop [name]` | リアルタイムリスナーを停止 |
+| `kage connector realtime restart [name]` | リアルタイムリスナーを再起動 |
+| `kage connector realtime status` | 実行中のリアルタイムリスナーを表示 |
+| `kage connector realtime run [name]` | リアルタイムリスナーを foreground で実行 |
 | `kage migrate install` | pending な install-time migration を手動実行 |
 | `kage doctor` | 設定と環境の診断 |
 | `kage skill` | エージェントの指針を表示 |
 | `kage ui` | Webダッシュボードを開く |
 | `kage tui` | runs/tasks/connectors/config の4タブを持つ端末ダッシュボードを開く |
+
+## Connectors
+
+コネクターは Discord / Slack / Telegram といった外部チャットサービスと連携します。`notify_connectors` によるタスク通知は、認証情報さえ設定されていれば **常に有効** です。
+
+双方向チャットを有効にする場合、各コネクターで **どちらか一方だけ** を選んでください。
+
+- `poll = true` — cron/launchd 経由で 1 分ごとにメッセージを取得します。
+- `realtime = true` — Discord のみ。Gateway WebSocket で即時受信し、入力中表示の上で即座に返信します。
+
+すでに crontab に `kage cron run` が登録されている場合、リアルタイムリスナーは自動的に管理されます。`realtime = true` に設定してから最大 1 分で起動し、`realtime = true` を外すと次の cron 実行時に停止します。手動で管理する場合は以下のコマンドを使います。
+
+```bash
+kage connector realtime start [name]   # デタッチで開始
+kage connector realtime stop [name]    # 停止
+kage connector realtime restart [name] # 再起動
+kage connector realtime status         # 実行中一覧
+kage connector realtime run [name]     # foreground 実行（デバッグ用）
+```
+
+リアルタイムログは `~/.kage/logs/connector-realtime-<name>.log` に書き込まれ、起動時にローテーションされます。古いローテート済みログは 7 日以上経過するか 5 ファイルを超えたものから削除されます。
+
+> **⚠️ セキュリティ警告**: `poll = true` または `realtime = true` を有効にすると、チャンネルの参加者が PC 上の AI と対話できるようになります。必ず一方だけを有効にし、プライベート/信頼できるチャンネルでのみ使用してください。
+
 ### macOS launchd 独自設定
 macOS では `cron` の代わりに `launchd` が使用されます。`config.toml` で以下の独自設定が可能です：
 

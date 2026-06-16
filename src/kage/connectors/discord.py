@@ -1,5 +1,7 @@
+import asyncio
 import json
 import mimetypes
+import threading
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -18,8 +20,16 @@ from .base import BaseConnector
 
 
 class DiscordConnector(BaseConnector):
+    GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
+    # GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT
+    GATEWAY_INTENTS = 37377
+
     def __init__(self, name: str, config):
         super().__init__(name, config)
+        self._bot_user_id: str | None = None
+        self._bot_name: str | None = None
+        self._bot_identity_lock = threading.Lock()
+        self._realtime_lock = threading.Lock()
 
     @staticmethod
     def _get_attachment_names(message: dict) -> list[str]:
@@ -81,16 +91,35 @@ class DiscordConnector(BaseConnector):
             pass
         return None, None
 
-    def poll_and_reply(self):
+    def _fetch_bot_identity(self):
+        """Return cached bot identity, fetching it once if needed."""
+        with self._bot_identity_lock:
+            if self._bot_user_id is None:
+                self._bot_user_id, self._bot_name = self._get_bot_identity()
+            return self._bot_user_id, self._bot_name
+
+    def _build_identity_context(self) -> str:
+        bot_user_id, bot_name = self._fetch_bot_identity()
+        if not bot_user_id:
+            return ""
+        return (
+            f"[YOUR IDENTITY ON DISCORD]\n"
+            f"- Your Username: {bot_name}\n"
+            f"- Your User ID: {bot_user_id}\n"
+            f"- Mentions like <@{bot_user_id}> or <@!{bot_user_id}> refer to YOU. "
+            f"Do not greet yourself.\n\n"
+        )
+
+    def _fetch_recent_messages(self, limit: int | None = None) -> list[dict]:
+        """Fetch the most recent messages from the configured channel."""
         if not self.config.bot_token or not self.config.channel_id:
-            return
+            return []
 
-        state = self._load_state()
-        last_message_id = state.get("last_message_id")
-
-        limit = max(1, min(100, self.config.history_limit))
-        url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages?limit={limit}"
-
+        resolved_limit = max(1, min(100, limit or self.config.history_limit))
+        url = (
+            f"https://discord.com/api/v10/channels/{self.config.channel_id}/messages"
+            f"?limit={resolved_limit}"
+        )
         req = urllib.request.Request(
             url,
             headers={
@@ -98,23 +127,150 @@ class DiscordConnector(BaseConnector):
                 "User-Agent": "kage-connector",
             },
         )
-
         try:
             with urllib.request.urlopen(req) as response:
-                messages = json.loads(response.read().decode())
-        except urllib.error.URLError:
-            return
+                return json.loads(response.read().decode())
         except Exception:
+            return []
+
+    @staticmethod
+    def _build_history_context(messages: list[dict], bot_user_id: str | None) -> str:
+        """Build a recent chat history string from Discord message objects."""
+        history_lines = []
+        for msg in messages:
+            author_name = msg.get("author", {}).get("username", "Unknown")
+            is_bot = msg.get("author", {}).get("bot", False)
+            content_text = msg.get("content", "").strip()
+            if content_text:
+                role = "Assistant" if is_bot else author_name
+                if bot_user_id and msg.get("author", {}).get("id") == bot_user_id:
+                    role = "Assistant"
+                history_lines.append(f"{role}: {content_text}")
+        return "\n".join(history_lines)
+
+    def _is_valid_target_message(self, msg: dict) -> bool:
+        """Check whether a message should trigger a reply."""
+        if msg.get("author", {}).get("bot"):
+            return False
+
+        if self.config.user_id:
+            author_id = msg.get("author", {}).get("id")
+            if author_id != str(self.config.user_id):
+                return False
+
+        content = msg.get("content", "").strip()
+        if not content and not (msg.get("attachments") or []):
+            return False
+
+        return True
+
+    def _process_target_message(
+        self,
+        target_msg: dict,
+        messages: list[dict],
+        identity_context: str,
+        history_context: str,
+        *,
+        execution_kind: str = "connector_poll",
+    ) -> None:
+        """Generate and post a reply for a single target message."""
+        content = target_msg.get("content", "").strip()
+        attachment_names = self._get_attachment_names(target_msg)
+        prompt_with_history = (
+            f"{identity_context}[Recent Chat History]\n{history_context}\n\n"
+            "[Current Instruction]\n"
+            f"{content or self._build_attachment_only_instruction()}"
+        )
+        connector_meta = {
+            "connector": {
+                "name": self.name,
+                "type": self.config.type,
+                "channel_id": str(self.config.channel_id),
+                "conversation_id": str(self.config.channel_id),
+                "source_message_id": str(target_msg.get("id", "")),
+                "source_user_id": str(target_msg.get("author", {}).get("id", "")),
+                "source_user_name": target_msg.get("author", {}).get("username", ""),
+                "input_message": content,
+                "input_attachment_names": attachment_names,
+                "input_attachment_count": len(attachment_names),
+                "history_snapshot": history_context,
+            }
+        }
+        reply_data = generate_logged_chat_reply(
+            prompt_with_history,
+            system_prompt=self.config.system_prompt,
+            working_dir=self.config.working_dir,
+            run_name=self._build_run_name(),
+            execution_kind=execution_kind,
+            metadata=connector_meta,
+            incoming_attachment_preparer=lambda artifact_dir: (
+                self._prepare_incoming_attachments(
+                    artifact_dir,
+                    target_msg,
+                    has_text=bool(content),
+                )
+            ),
+        )
+        run_id = reply_data.get("run_id")
+        reply_text = reply_data.get("stdout", "")
+        if reply_data.get("skipped_execution"):
+            reply_text = reply_data.get("stderr", "")
+        elif reply_data.get("returncode") != 0 and not reply_text:
+            err_text = reply_data.get("stderr") or "unknown error"
+            reply_text = f"Error generating reply: {err_text}"
+        final_reply_text = clean_ai_reply(reply_text)
+        attachments = list(reply_data.get("attachments", []))
+        self._log_history(
+            "User",
+            self._build_history_entry(content, attachment_names),
+            run_id=run_id,
+        )
+        delivery = self._post_reply(
+            ConnectorMessage(
+                text=final_reply_text,
+                attachments=attachments,
+                run_id=run_id,
+            )
+        )
+        self._write_delivery_metadata(run_id, delivery)
+        if run_id:
+            write_run_metadata(
+                run_id,
+                {
+                    "connector": {
+                        **connector_meta["connector"],
+                        "posted_reply_id": delivery.posted_message_id,
+                        "posted_reply_text": final_reply_text,
+                        "uploaded_attachment_names": [
+                            item.name for item in delivery.uploaded_attachments
+                        ],
+                        "skipped_attachment_names": [
+                            item.name for item in delivery.skipped_attachments
+                        ],
+                        "attachment_errors": list(delivery.errors),
+                    }
+                },
+            )
+
+        # Advance past bot's own reply to prevent self-reply on next poll
+        if delivery.posted_message_id:
+            state = self._load_state()
+            state["last_message_id"] = delivery.posted_message_id
+            self._save_state(state)
+
+    def poll_and_reply(self):
+        if not self.config.bot_token or not self.config.channel_id:
             return
 
+        state = self._load_state()
+        last_message_id = state.get("last_message_id")
+
+        messages = self._fetch_recent_messages()
         if not messages:
             return
 
-        # Fetch our own identity to help the AI recognize itself
-        bot_user_id, bot_name = self._get_bot_identity()
-        identity_context = ""
-        if bot_user_id:
-            identity_context = f"[YOUR IDENTITY ON DISCORD]\n- Your Username: {bot_name}\n- Your User ID: {bot_user_id}\n- Mentions like <@{bot_user_id}> or <@!{bot_user_id}> refer to YOU. Do not greet yourself.\n\n"
+        identity_context = self._build_identity_context()
+        bot_user_id, _ = self._fetch_bot_identity()
 
         # Discord API returns newer messages first. Sort oldest to newest.
         messages.sort(key=lambda x: int(x["id"]))
@@ -127,18 +283,7 @@ class DiscordConnector(BaseConnector):
             self._save_state(state)
             return
 
-        # Build recent message history string to inject as context
-        history_lines = []
-        for msg in messages:
-            author_name = msg.get("author", {}).get("username", "Unknown")
-            is_bot = msg.get("author", {}).get("bot", False)
-            content_text = msg.get("content", "").strip()
-            if content_text:
-                role = "Assistant" if is_bot else author_name
-                if bot_user_id and msg.get("author", {}).get("id") == bot_user_id:
-                    role = "Assistant"
-                history_lines.append(f"{role}: {content_text}")
-        history_context = "\n".join(history_lines)
+        history_context = self._build_history_context(messages, bot_user_id)
 
         # Find the single newest user message to respond to.
         # We only respond to ONE message per poll to avoid long processing
@@ -156,17 +301,7 @@ class DiscordConnector(BaseConnector):
             # Always advance the watermark so we don't re-scan these
             newest_id = msg_id
 
-            if msg.get("author", {}).get("bot"):
-                continue
-
-            # Filtering by user_id
-            if self.config.user_id:
-                author_id = msg.get("author", {}).get("id")
-                if author_id != str(self.config.user_id):
-                    continue
-
-            content = msg.get("content", "").strip()
-            if not content and not (msg.get("attachments") or []):
+            if not self._is_valid_target_message(msg):
                 continue
 
             # Filtering by message age
@@ -188,89 +323,13 @@ class DiscordConnector(BaseConnector):
 
         # Process the single target message (if any)
         if target_msg:
-            content = target_msg.get("content", "").strip()
-            attachment_names = self._get_attachment_names(target_msg)
-            prompt_with_history = (
-                f"{identity_context}[Recent Chat History]\n{history_context}\n\n"
-                "[Current Instruction]\n"
-                f"{content or self._build_attachment_only_instruction()}"
+            self._process_target_message(
+                target_msg,
+                messages,
+                identity_context,
+                history_context,
+                execution_kind="connector_poll",
             )
-            connector_meta = {
-                "connector": {
-                    "name": self.name,
-                    "type": self.config.type,
-                    "channel_id": str(self.config.channel_id),
-                    "conversation_id": str(self.config.channel_id),
-                    "source_message_id": str(target_msg.get("id", "")),
-                    "source_user_id": str(target_msg.get("author", {}).get("id", "")),
-                    "source_user_name": target_msg.get("author", {}).get(
-                        "username", ""
-                    ),
-                    "input_message": content,
-                    "input_attachment_names": attachment_names,
-                    "input_attachment_count": len(attachment_names),
-                    "history_snapshot": history_context,
-                }
-            }
-            reply_data = generate_logged_chat_reply(
-                prompt_with_history,
-                system_prompt=self.config.system_prompt,
-                working_dir=self.config.working_dir,
-                run_name=self._build_run_name(),
-                metadata=connector_meta,
-                incoming_attachment_preparer=lambda artifact_dir: (
-                    self._prepare_incoming_attachments(
-                        artifact_dir,
-                        target_msg,
-                        has_text=bool(content),
-                    )
-                ),
-            )
-            run_id = reply_data.get("run_id")
-            reply_text = reply_data.get("stdout", "")
-            if reply_data.get("skipped_execution"):
-                reply_text = reply_data.get("stderr", "")
-            elif reply_data.get("returncode") != 0 and not reply_text:
-                err_text = reply_data.get("stderr") or "unknown error"
-                reply_text = f"Error generating reply: {err_text}"
-            final_reply_text = clean_ai_reply(reply_text)
-            attachments = list(reply_data.get("attachments", []))
-            self._log_history(
-                "User",
-                self._build_history_entry(content, attachment_names),
-                run_id=run_id,
-            )
-            delivery = self._post_reply(
-                ConnectorMessage(
-                    text=final_reply_text,
-                    attachments=attachments,
-                    run_id=run_id,
-                )
-            )
-            self._write_delivery_metadata(run_id, delivery)
-            if run_id:
-                write_run_metadata(
-                    run_id,
-                    {
-                        "connector": {
-                            **connector_meta["connector"],
-                            "posted_reply_id": delivery.posted_message_id,
-                            "posted_reply_text": final_reply_text,
-                            "uploaded_attachment_names": [
-                                item.name for item in delivery.uploaded_attachments
-                            ],
-                            "skipped_attachment_names": [
-                                item.name for item in delivery.skipped_attachments
-                            ],
-                            "attachment_errors": list(delivery.errors),
-                        }
-                    },
-                )
-
-            # Advance past bot's own reply to prevent self-reply on next poll
-            if delivery.posted_message_id:
-                state["last_message_id"] = delivery.posted_message_id
-                self._save_state(state)
 
     def send_message(self, payload):
         if not self.config.bot_token or not self.config.channel_id:
@@ -284,6 +343,234 @@ class DiscordConnector(BaseConnector):
             )
         )
         self._write_delivery_metadata(message.run_id, delivery)
+
+    def _trigger_typing(self) -> None:
+        """Trigger Discord's typing indicator in the configured channel."""
+        if not self.config.bot_token or not self.config.channel_id:
+            return
+        url = f"https://discord.com/api/v10/channels/{self.config.channel_id}/typing"
+        req = urllib.request.Request(
+            url,
+            data=b"",
+            headers={
+                "Authorization": f"Bot {self.config.bot_token}",
+                "User-Agent": "kage-connector",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req):
+                pass
+        except Exception:
+            pass
+
+    def _keep_typing_alive(self, stop_event: threading.Event) -> None:
+        """Send typing indicator every ~8 seconds until stop_event is set."""
+        self._trigger_typing()
+        while not stop_event.wait(timeout=8.0):
+            self._trigger_typing()
+
+    def _handle_realtime_message(self, msg: dict) -> None:
+        """Process a single message received from the Discord Gateway."""
+        if not self.config.bot_token or not self.config.channel_id:
+            return
+
+        msg_id = msg.get("id")
+        if not msg_id:
+            return
+
+        # Ignore messages from other channels (including DMs unless configured).
+        if str(msg.get("channel_id")) != str(self.config.channel_id):
+            return
+
+        # Serialize realtime message handling so we don't reply to multiple
+        # messages concurrently or corrupt the shared state file.
+        with self._realtime_lock:
+            state = self._load_state()
+            last_message_id = state.get("last_message_id")
+
+            # Skip messages we've already processed
+            if last_message_id and int(msg_id) <= int(last_message_id):
+                return
+
+            # Skip bot messages but still advance the watermark
+            if msg.get("author", {}).get("bot"):
+                state["last_message_id"] = msg_id
+                self._save_state(state)
+                return
+
+            if not self._is_valid_target_message(msg):
+                # Advance watermark so we don't re-evaluate this message
+                state["last_message_id"] = msg_id
+                self._save_state(state)
+                return
+
+            # Update watermark immediately to avoid duplicate processing
+            state["last_message_id"] = msg_id
+            self._save_state(state)
+
+            # Show "is typing" while generating the reply
+            stop_typing = threading.Event()
+            typing_thread = threading.Thread(
+                target=self._keep_typing_alive,
+                args=(stop_typing,),
+                daemon=True,
+            )
+            typing_thread.start()
+
+            try:
+                # Fetch recent history for context and make sure the target is included
+                messages = self._fetch_recent_messages()
+                messages.sort(key=lambda x: int(x["id"]))
+                if not any(m.get("id") == msg_id for m in messages):
+                    messages.append(msg)
+                    messages.sort(key=lambda x: int(x["id"]))
+
+                identity_context = self._build_identity_context()
+                bot_user_id, _ = self._fetch_bot_identity()
+                history_context = self._build_history_context(messages, bot_user_id)
+
+                self._process_target_message(
+                    msg,
+                    messages,
+                    identity_context,
+                    history_context,
+                    execution_kind="connector_realtime",
+                )
+            finally:
+                stop_typing.set()
+
+    def realtime(self):
+        """Run a long-lived Discord Gateway listener and reply to messages in real time."""
+        if not self.config.bot_token or not self.config.channel_id:
+            print(
+                f"[kage] Discord connector '{self.name}' is missing bot_token or "
+                f"channel_id; realtime mode cannot start."
+            )
+            return
+
+        print(f"[kage] Starting Discord realtime listener for '{self.name}'...")
+        try:
+            asyncio.run(self._realtime_loop())
+        except KeyboardInterrupt:
+            print(f"[kage] Discord realtime listener for '{self.name}' stopped.")
+
+    async def _realtime_loop(self):
+        """Async Gateway loop with automatic reconnect."""
+        import websockets
+
+        reconnect_delay = 1.0
+        while True:
+            try:
+                async with websockets.connect(self.GATEWAY_URL) as websocket:
+                    print(f"[kage] Discord realtime connected for '{self.name}'.")
+                    reconnect_delay = 1.0
+                    await self._gateway_session(websocket)
+            except websockets.ConnectionClosed as exc:
+                print(
+                    f"[kage] Discord realtime connection closed for '{self.name}'"
+                    f" (code {exc.code}); reconnecting in {reconnect_delay}s..."
+                )
+            except Exception as exc:
+                print(
+                    f"[kage] Discord realtime error for '{self.name}': {exc};"
+                    f" reconnecting in {reconnect_delay}s..."
+                )
+
+            await asyncio.sleep(min(reconnect_delay, 60.0))
+            reconnect_delay = min(reconnect_delay * 2, 60.0)
+
+    async def _gateway_session(self, websocket):
+        """Handle a single Gateway connection session."""
+
+        heartbeat_interval: float | None = None
+        last_sequence: int | None = None
+        heartbeat_task = None
+
+        try:
+            async for message in websocket:
+                payload = json.loads(message)
+                op = payload.get("op")
+                d = payload.get("d")
+                t = payload.get("t")
+                s = payload.get("s")
+                if s is not None:
+                    last_sequence = s
+
+                if op == 10:  # Hello
+                    heartbeat_interval = d["heartbeat_interval"] / 1000.0
+                    heartbeat_task = asyncio.create_task(
+                        self._gateway_heartbeat(websocket, heartbeat_interval)
+                    )
+                    await self._send_identify(websocket)
+
+                elif op == 11:  # Heartbeat ACK
+                    pass
+
+                elif op == 1:  # Heartbeat request
+                    await self._send_heartbeat(websocket, last_sequence)
+
+                elif op == 0:  # Dispatch
+                    if t == "MESSAGE_CREATE":
+                        # Handle messages in a thread pool so heartbeats continue
+                        asyncio.create_task(
+                            asyncio.to_thread(self._handle_realtime_message, d)
+                        )
+                    elif t == "READY":
+                        print(
+                            f"[kage] Discord realtime ready for '{self.name}'"
+                            f" (session {d.get('session_id')})."
+                        )
+
+                elif op == 7:  # Reconnect
+                    await websocket.close(4000, "Server requested reconnect")
+                    break
+
+                elif op == 9:  # Invalid session
+                    await asyncio.sleep(5.0)
+                    await self._send_identify(websocket)
+
+        finally:
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+
+    async def _send_identify(self, websocket):
+        """Send the Identify payload to the Discord Gateway."""
+        identify = {
+            "op": 2,
+            "d": {
+                "token": self.config.bot_token,
+                "intents": self.GATEWAY_INTENTS,
+                "properties": {
+                    "os": "linux",
+                    "browser": "kage",
+                    "device": "kage",
+                },
+                "compress": False,
+            },
+        }
+        await websocket.send(json.dumps(identify))
+
+    @staticmethod
+    async def _send_heartbeat(websocket, last_sequence: int | None):
+        """Send a heartbeat payload."""
+        await websocket.send(json.dumps({"op": 1, "d": last_sequence}))
+
+    async def _gateway_heartbeat(self, websocket, interval: float):
+        """Send periodic heartbeats until cancelled."""
+        # Jitter: first heartbeat after random fraction of interval
+        await asyncio.sleep(interval * 0.8)
+        while True:
+            try:
+                await websocket.send(json.dumps({"op": 1, "d": None}))
+            except Exception:
+                break
+            await asyncio.sleep(interval)
 
     def _post_reply(self, message: str | ConnectorMessage) -> ConnectorDelivery:
         """Post a reply, splitting if needed. Returns delivery details."""

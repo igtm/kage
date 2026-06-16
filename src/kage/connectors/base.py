@@ -155,3 +155,12 @@ class BaseConnector(ABC):
         Send a notification message to the external chat service.
         """
         pass
+
+    @abstractmethod
+    def realtime(self):
+        """
+        Run a real-time listener for the external chat service.
+        This method is long-lived and should only return on fatal error or
+        explicit shutdown. It is invoked by ``kage connector realtime start``.
+        """
+        pass

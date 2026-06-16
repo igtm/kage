@@ -1620,12 +1620,16 @@ INDEX_HTML = """
 \\`\\`\\`toml
 [connectors.my_discord]
 type = "discord"
-poll = true  # ⚠️ Only in private/trusted channels
+# Choose ONE chat mode:
+poll = true      # 1-minute polling
+# realtime = true  # instant WebSocket replies with typing indicator
 bot_token = "..."
 channel_id = "..."
 \\`\\`\\`
 
-⚠️ **Security**: \\`poll = true\\` grants channel members AI access to your PC. Task notifications work even with \\`poll = false\\`.
+\\`realtime = true\\` starts automatically if you have \\`kage cron run\\` in your crontab, or run \\`kage connector realtime start\\` manually.
+
+⚠️ **Security**: \\`poll = true\\` or \\`realtime = true\\` grants channel members AI access to your PC. Only enable one mode, and only in private/trusted channels. Task notifications work even with both set to \\`false\\`.
 `,
             slack: `
 # Slack Setup Guide

@@ -102,6 +102,7 @@ def _format_connector_history(
         f"{'名前' if is_ja else 'Name'}: {connector.get('name', '-')}",
         f"Type: {masked.get('type', '-')}",
         f"Poll: {masked.get('poll', False)}",
+        f"Realtime: {masked.get('realtime', False)}",
         f"{'チャネル' if is_ja else 'Channel'}: {_safe_str(masked.get('channel_id') or masked.get('chat_id'))}",
         "",
         f"{'履歴' if is_ja else 'History'}:",

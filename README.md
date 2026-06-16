@@ -35,7 +35,7 @@ English | [日本語](./README_JA.md)
     - **Time Windows**: Restrict execution using `allowed_hours: "9-17"` or `denied_hours: "12"`.
 - **Markdown-First**: Define tasks using simple Markdown files with YAML front matter.
 - **Layered Configuration**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > defaults.
-- **Connectors**: Integrate with Discord/Slack/Telegram. Task notifications are always enabled; bi-directional chat requires `poll = true` (⚠️ grants channel members AI access to your PC).
+- **Connectors**: Integrate with Discord/Slack/Telegram. Task notifications are always enabled; bi-directional chat uses `poll = true` (1-minute polling) or Discord `realtime = true` (instant WebSocket replies with typing indicator) (⚠️ grants channel members AI access to your PC).
 - **Thinking Process Isolation**: AI workers automatically wrap reasoning in `<think>` tags. Notifications, summaries, and cleaned outputs hide them, while `kage logs` keeps the raw stream available for debugging.
 - **Web Dashboard**: Execution history, task management, and AI chat — all in one place.
 
@@ -270,11 +270,39 @@ Cleanup old logs every midnight.
 | `kage connector list` | List all configured connectors |
 | `kage connector setup <type>` | Show setup guide for a connector (discord, slack, telegram) |
 | `kage connector poll` | Manually poll connectors with `poll = true` |
+| `kage connector realtime start [name]` | Start detached realtime listeners |
+| `kage connector realtime stop [name]` | Stop realtime listeners |
+| `kage connector realtime restart [name]` | Restart realtime listeners |
+| `kage connector realtime status` | Show running realtime listeners |
+| `kage connector realtime run [name]` | Run realtime listener in foreground |
 | `kage migrate install` | Run pending install-time migrations manually |
 | `kage doctor` | Diagnose configuration health |
 | `kage skill` | Display agent skill guidelines |
 | `kage ui` | Open the web dashboard |
 | `kage tui` | Open the terminal dashboard with runs, tasks, connectors, and config tabs |
+
+## Connectors
+
+Connectors integrate with external chat services (Discord, Slack, Telegram). Task notifications via `notify_connectors` are **always enabled** as long as credentials are configured.
+
+For bi-directional chat, choose **one** mode per connector:
+
+- `poll = true` — fetch messages every minute via cron/launchd.
+- `realtime = true` — Discord-only long-lived Gateway WebSocket listener with instant replies and a typing indicator.
+
+If you already have `kage cron run` in your crontab, realtime listeners are managed automatically: set `realtime = true` and the listener starts within one minute; remove it and the listener stops on the next cron tick. You can also manage them manually:
+
+```bash
+kage connector realtime start [name]   # start detached listener(s)
+kage connector realtime stop [name]    # stop listener(s)
+kage connector realtime restart [name] # restart listener(s)
+kage connector realtime status         # show running listeners
+kage connector realtime run [name]     # run in foreground for debugging
+```
+
+Realtime logs are written to `~/.kage/logs/connector-realtime-<name>.log` and rotated on each start; old rotated logs are kept for 7 days (max 5 files).
+
+> **⚠️ Security Warning**: `poll = true` or `realtime = true` allows anyone in the channel to interact with the AI, which has **full access to your PC's file system and tools**. Only enable one chat mode, and only in private/trusted channels.
 
 ### macOS launchd Specific Settings
 On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its behavior in `config.toml`:

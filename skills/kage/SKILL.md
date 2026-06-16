@@ -16,7 +16,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - **Time Windows**: `allowed_hours: "9-17"` or `denied_hours: "12"`.
 - **Task Suspension**: `suspended_until` pauses future starts without changing `active`.
 - **State Persistence**: `.kage/memory/{task}/{date}.json`.
-- **Connectors**: Integrate with Discord/Slack/Telegram for task notifications (always on) and optional bi-directional chat (`poll = true`).
+- **Connectors**: Integrate with Discord/Slack/Telegram for task notifications (always on) and optional bi-directional chat (`poll = true` for polling or `realtime = true` for Discord instant replies; realtime listeners are managed by `kage cron run`).
 - **Layered Config**: `.kage/config.local.toml` > `.kage/config.toml` > `~/.kage/config.toml` > defaults.
 
 ## CLI
@@ -39,6 +39,11 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage connector list` — List all configured connectors.
 - `kage connector setup <type>` — Show setup guide for a connector (discord, slack, telegram).
 - `kage connector poll` — Manually trigger polling for all connectors.
+- `kage connector realtime start [name]` — Start detached realtime listeners.
+- `kage connector realtime stop [name]` — Stop realtime listeners.
+- `kage connector realtime restart [name]` — Restart realtime listeners.
+- `kage connector realtime status` — Show running realtime listeners.
+- `kage connector realtime run [name]` — Run realtime listener in foreground.
 - `kage doctor` — Diagnose config and environment.
 - `kage migrate install` — Run pending install-time migrations manually.
 - `kage ui` — Open web dashboard.
@@ -101,20 +106,36 @@ working_dir: ../../workspace
 
 ## Connectors
 
-Connectors integrate with external chat services. Sending (task notifications via `notify_connectors`) is **always enabled** as long as credentials are configured. Polling (bi-directional chat) is controlled by the `poll` flag.
+Connectors integrate with external chat services. Sending (task notifications via `notify_connectors`) is **always enabled** as long as credentials are configured. Bi-directional chat is controlled by the `poll` flag (1-minute polling) or the `realtime` flag (WebSocket-based instant replies).
 
 Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that run and mentioned in the prompt so the provider can decide whether to use them. Discord, Slack, and Telegram upload every top-level file left in `KAGE_ARTIFACT_DIR` with the text reply, so leave only the intended final deliverables in that directory and delete unwanted Markdown/Marp/HTML, downloaded images, and other intermediate assets before the run ends.
 
 ```toml
 [connectors.my_discord]
 type = "discord"
-poll = false          # Set to true to enable bi-directional chat
+# Choose ONE chat mode:
+poll = false          # Set to true to enable 1-minute polling
+# realtime = true     # Discord only: instant replies with typing indicator
 working_dir = "~/my-project"  # Optional: execution directory for this connector
 bot_token = "..."
 channel_id = "..."
 ```
 
-> **⚠️ Security Warning**: Setting `poll = true` allows anyone in the channel to interact with the AI, which has **full access to your PC's file system and tools**. Only enable polling in private/trusted channels.
+Start a Discord realtime listener with:
+
+```bash
+kage connector realtime start        # start once (detached)
+kage connector realtime stop         # stop all listeners
+kage connector realtime restart      # restart all listeners
+kage connector realtime status       # show running listeners
+kage connector realtime run          # run in foreground (for debugging)
+```
+
+If you already have `kage cron run` installed in your crontab, realtime listeners are managed automatically: enabling `realtime = true` in config will start the listener within one minute, and disabling it will stop the listener on the next cron tick.
+
+Realtime logs are written to `~/.kage/logs/connector-realtime-<name>.log` and rotated on each start. Rotated logs older than 7 days or beyond the newest 5 files are cleaned up automatically.
+
+> **⚠️ Security Warning**: Setting `poll = true` or `realtime = true` allows anyone in the channel to interact with the AI, which has **full access to your PC's file system and tools**. Only enable one chat mode, and only in private/trusted channels.
 
 ## Configuration Hierarchy
 

@@ -52,8 +52,11 @@ graph TD
 - **`kage cron install`**: Registers `kage run` to the OS scheduler.
 - **Stateless Design**: Upon each execution, it evaluates the current context (`.kage/tasks` and `config.toml`). If a task needs to be run, it calls the AI engine. Once finished, the process exits.
 
-### 2. Polling-based Connectors
-The Discord and Slack connectors in `kage` operate by **periodically fetching messages (polling)** rather than waiting for Webhooks or WebSockets (push-based).
+### 2. Connectors
+
+The Discord, Slack, and Telegram connectors in `kage` can send task notifications at any time. For bi-directional chat they default to **periodically fetching messages (polling)** via `poll = true`.
+
+Discord also supports a `realtime = true` mode that opens a long-lived Gateway WebSocket connection. In this mode the bot shows a typing indicator and replies as soon as a message arrives, instead of waiting for the next cron tick.
 
 ```mermaid
 sequenceDiagram

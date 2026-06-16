@@ -23,7 +23,7 @@ project_app = typer.Typer(help="Manage registered projects")
 app.add_typer(project_app, name="project")
 
 connector_app = typer.Typer(
-    help="Manage chat connectors (Discord, Slack, Telegram, etc.), including artifact uploads and incoming attachment downloads"
+    help="Manage chat connectors (Discord, Slack, Telegram, etc.), including realtime chat, artifact uploads and incoming attachment downloads"
 )
 app.add_typer(connector_app, name="connector")
 
@@ -2179,6 +2179,40 @@ def doctor():
             t_connector_artifacts,
             t_connector_artifacts_detail,
         )
+        for c_name, c_dict in cfg.connectors.items():
+            c_type = c_dict.get("type", "unknown")
+            if hasattr(c_type, "unwrap"):
+                c_type = c_type.unwrap()
+            is_poll = c_dict.get("poll", False)
+            is_realtime = c_dict.get("realtime", False)
+            if hasattr(is_poll, "unwrap"):
+                is_poll = is_poll.unwrap()
+            if hasattr(is_realtime, "unwrap"):
+                is_realtime = is_realtime.unwrap()
+            if is_poll and is_realtime:
+                warn(
+                    f"connectors.{c_name}",
+                    "poll and realtime are both enabled; use only one chat mode to avoid duplicate replies",
+                )
+            elif is_realtime and c_type == "discord":
+                from .connectors.realtime_manager import is_realtime_running
+
+                if is_realtime_running(c_name):
+                    ok(
+                        f"connectors.{c_name}",
+                        "Discord realtime mode configured and listener is running",
+                    )
+                else:
+                    warn(
+                        f"connectors.{c_name}",
+                        "Discord realtime mode configured but listener is not running;"
+                        " it will be started automatically by 'kage cron run'",
+                    )
+            elif is_realtime:
+                warn(
+                    f"connectors.{c_name}",
+                    f"realtime is not yet implemented for {c_type} connectors",
+                )
     else:
         ok(
             t_connector_artifacts,
@@ -2374,13 +2408,16 @@ def connector_setup(
 ```toml
 [connectors.my_discord]
 type = "discord"
-poll = true   # ⚠️ Only enable in private/trusted channels (grants AI access to your PC)
+# Choose ONE of the following chat modes:
+poll = true      # 1-minute polling (simpler, no Gateway required)
+# realtime = true  # WebSocket-based instant replies with typing indicator
 bot_token = "YOUR_BOT_TOKEN"
 channel_id = "YOUR_CHANNEL_ID"
 system_prompt = "Optional additional instructions for this connector"
 ```
 
-> **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
+> **⚠️ Security**: `poll = true` or `realtime = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Only enable one of them, and only in private/trusted channels. Task notifications (via `notify_connectors`) work even with both flags set to `false`.
+> **Realtime**: Run `kage connector realtime start` to start the long-lived WebSocket listener. The bot will show a typing indicator and reply immediately when a message arrives. If you have `kage cron run` installed in your crontab, realtime listeners are started/stopped automatically within one minute of changing the config.
 > **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that run, and Discord, Slack, and Telegram upload every top-level file left in `KAGE_ARTIFACT_DIR` with the text reply or task notification, so leave only the intended final deliverables there and delete source Markdown/Marp/HTML, downloaded images, and other intermediate assets unless the user explicitly asked for them.
 """
         console.print(
@@ -2483,10 +2520,18 @@ def connector_list():
         c_type = c_dict.get("type", "unknown")
         # Handle tomlkit boolean types or standard ones
         is_polling = c_dict.get("poll", False)
+        is_realtime = c_dict.get("realtime", False)
         if hasattr(is_polling, "unwrap"):
             is_polling = is_polling.unwrap()
+        if hasattr(is_realtime, "unwrap"):
+            is_realtime = is_realtime.unwrap()
 
-        status = "[green]Poll ON[/green]" if is_polling else "[dim]Poll OFF[/dim]"
+        status_parts = []
+        if is_polling:
+            status_parts.append("[green]Poll ON[/green]")
+        if is_realtime:
+            status_parts.append("[magenta]Realtime ON[/magenta]")
+        status = " ".join(status_parts) if status_parts else "[dim]Inactive[/dim]"
 
         details = []
         if c_type == "discord":
@@ -2520,3 +2565,164 @@ def connector_poll():
         console.print("[green]✔ Polling completed.[/green]")
     except Exception as e:
         console.print(f"[red]✘ Polling failed: {e}[/red]")
+
+
+realtime_app = typer.Typer(
+    help="Manage long-lived realtime connector listeners (Discord only for now)"
+)
+connector_app.add_typer(realtime_app, name="realtime")
+
+
+def _resolve_realtime_names(name: Optional[str]) -> list[str]:
+    """Return a list of realtime connector names to operate on.
+
+    If ``name`` is given, validate it exists and has realtime=true.
+    Otherwise return all connectors with realtime=true.
+    """
+    from .connectors.runner import get_connector
+    from .connectors.realtime_manager import get_realtime_connector_names
+
+    if name:
+        connector = get_connector(name)
+        if not connector:
+            print(f"[kage] Connector '{name}' not found.")
+            raise typer.Exit(1)
+        if not connector.config.realtime:
+            print(f"[kage] Connector '{name}' does not have realtime=true.")
+            raise typer.Exit(1)
+        return [name]
+    return get_realtime_connector_names()
+
+
+@realtime_app.command("run")
+def realtime_run(
+    name: Optional[str] = typer.Argument(
+        None,
+        help="Connector name to run in the foreground (runs all realtime connectors if omitted)",
+    ),
+):
+    """Run realtime listener(s) in the foreground (for debugging / manual use)."""
+    from .connectors.runner import get_connector, run_realtime_connectors
+
+    if name:
+        connector = get_connector(name)
+        if not connector:
+            print(f"[kage] Connector '{name}' not found.")
+            raise typer.Exit(1)
+        if not connector.config.realtime:
+            print(f"[kage] Connector '{name}' does not have realtime=true.")
+            raise typer.Exit(1)
+        try:
+            connector.realtime()
+        except KeyboardInterrupt:
+            print(f"[kage] Realtime listener for '{name}' stopped.")
+        return
+
+    try:
+        run_realtime_connectors()
+    except KeyboardInterrupt:
+        print("[kage] Realtime connectors stopped.")
+
+
+@realtime_app.command("start")
+def realtime_start(
+    name: Optional[str] = typer.Argument(
+        None,
+        help="Connector name to start (starts all realtime connectors if omitted)",
+    ),
+):
+    """Start detached realtime listener(s)."""
+    from .connectors.realtime_manager import start_realtime_connector
+
+    names = _resolve_realtime_names(name)
+    if not names:
+        print("[kage] No connectors have realtime=true.")
+        raise typer.Exit(0)
+
+    for n in names:
+        started, msg = start_realtime_connector(n)
+        print(f"[kage] {msg}")
+
+
+@realtime_app.command("stop")
+def realtime_stop(
+    name: Optional[str] = typer.Argument(
+        None,
+        help="Connector name to stop (stops all realtime listeners if omitted)",
+    ),
+):
+    """Stop realtime listener(s)."""
+    from .connectors.realtime_manager import (
+        get_realtime_status,
+        stop_realtime_connector,
+    )
+
+    if name:
+        names = [name]
+    else:
+        names = [s["name"] for s in get_realtime_status() if s["running"]]
+
+    if not names:
+        print("[kage] No realtime listeners are running.")
+        raise typer.Exit(0)
+
+    for n in names:
+        stopped, msg = stop_realtime_connector(n)
+        print(f"[kage] {msg}")
+
+
+@realtime_app.command("restart")
+def realtime_restart(
+    name: Optional[str] = typer.Argument(
+        None,
+        help="Connector name to restart (restarts all realtime listeners if omitted)",
+    ),
+):
+    """Restart realtime listener(s)."""
+    from .connectors.realtime_manager import restart_realtime_connector
+
+    names = _resolve_realtime_names(name)
+    if not names:
+        print("[kage] No connectors have realtime=true.")
+        raise typer.Exit(0)
+
+    for n in names:
+        _, msg = restart_realtime_connector(n)
+        print(f"[kage] {msg}")
+
+
+@realtime_app.command("status")
+def realtime_status():
+    """Show running realtime listeners."""
+    from .connectors.realtime_manager import get_realtime_status
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    status = get_realtime_status()
+
+    if not status:
+        console.print("[yellow]No realtime connectors configured or running.[/yellow]")
+        return
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Name")
+    table.add_column("Status")
+    table.add_column("PID")
+    table.add_column("Log File")
+
+    for item in status:
+        if item["running"]:
+            state = "[green]running[/green]"
+        elif item["configured"]:
+            state = "[yellow]configured but not running[/yellow]"
+        else:
+            state = "[dim]not configured[/dim]"
+        table.add_row(
+            item["name"],
+            state,
+            str(item["pid"] or "-"),
+            item["log_file"],
+        )
+
+    console.print(table)

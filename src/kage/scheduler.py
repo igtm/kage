@@ -139,6 +139,7 @@ def run_all_scheduled_tasks():
 
     # Run active connectors
     from .connectors.runner import run_connectors
+    from .connectors.realtime_manager import manage_realtime_processes
 
     # Run connectors in a separate thread so it doesn't block if there are many tasks,
     # but since this is at the end, we can just call it synchronously or run it before tasks
@@ -146,3 +147,8 @@ def run_all_scheduled_tasks():
     pass  # We will just run it at the end for simplicity.
 
     run_connectors()
+
+    # Ensure long-lived realtime listeners are running.  `kage cron run` is
+    # invoked every minute, so a newly-enabled realtime connector will start
+    # within one minute of the config change.
+    manage_realtime_processes()

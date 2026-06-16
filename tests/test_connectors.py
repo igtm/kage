@@ -1,4 +1,6 @@
 import json
+import os
+import time
 from unittest.mock import patch, MagicMock
 from kage.connectors.discord import DiscordConnector
 from kage.connectors.slack import SlackConnector
@@ -970,3 +972,358 @@ def test_telegram_prepare_incoming_attachments_downloads_document_and_photo(
     assert preparation.errors == []
     assert "file_id=DOC1" in mock_urlopen.call_args_list[0].args[0].full_url
     assert "file_id=P2" in mock_urlopen.call_args_list[2].args[0].full_url
+
+
+# === Discord Realtime Connector Tests ===
+
+
+def test_discord_connector_realtime_defaults_to_false():
+    config = DiscordConnectorConfig()
+    assert config.realtime is False
+
+
+@patch("kage.connectors.base.BaseConnector._write_delivery_metadata")
+@patch("kage.connectors.discord.urllib.request.urlopen")
+@patch("kage.connectors.discord.generate_logged_chat_reply")
+@patch("kage.connectors.discord.write_run_metadata")
+def test_discord_handle_realtime_message_triggers_typing_and_replies(
+    mock_write_metadata, mock_chat, mock_urlopen, mock_write_delivery, tmp_path
+):
+    from datetime import datetime, timezone
+
+    config = DiscordConnectorConfig(realtime=True, bot_token="token", channel_id="123")
+    connector = DiscordConnector("test_discord_rt", config)
+    connector.state_file = tmp_path / "discord_rt_state.json"
+    connector.history_file = tmp_path / "discord_rt_history.jsonl"
+
+    recent_ts = datetime.now(timezone.utc).isoformat()
+
+    # Mock API responses: typing POST, fetch history, identity, send reply
+    mock_typing_response = MagicMock()
+    mock_typing_response.__enter__.return_value = mock_typing_response
+
+    mock_history_response = MagicMock()
+    mock_history_response.__enter__.return_value = mock_history_response
+    mock_history_response.read.return_value = json.dumps(
+        [
+            {
+                "id": "1",
+                "content": "hello kage",
+                "author": {"bot": False, "id": "42", "username": "human"},
+                "channel_id": "123",
+                "timestamp": recent_ts,
+            }
+        ]
+    ).encode("utf-8")
+
+    mock_identity_response = MagicMock()
+    mock_identity_response.__enter__.return_value = mock_identity_response
+    mock_identity_response.read.return_value = json.dumps(
+        {"id": "999", "username": "kage"}
+    ).encode("utf-8")
+
+    mock_post_response = MagicMock()
+    mock_post_response.__enter__.return_value = mock_post_response
+    mock_post_response.read.return_value = json.dumps({"id": "2"}).encode("utf-8")
+
+    mock_urlopen.side_effect = [
+        mock_typing_response,
+        mock_history_response,
+        mock_identity_response,
+        mock_post_response,
+    ]
+
+    mock_chat.return_value = {
+        "stdout": "hello human",
+        "stderr": "",
+        "returncode": 0,
+        "run_id": "run-discord-rt-1",
+    }
+
+    connector._handle_realtime_message(
+        {
+            "id": "1",
+            "content": "hello kage",
+            "author": {"bot": False, "id": "42", "username": "human"},
+            "channel_id": "123",
+            "timestamp": recent_ts,
+        }
+    )
+
+    # Typing indicator was triggered first
+    typing_request = mock_urlopen.call_args_list[0].args[0]
+    assert typing_request.get_method() == "POST"
+    assert typing_request.full_url.endswith("/channels/123/typing")
+
+    # AI was invoked with realtime execution kind
+    mock_chat.assert_called_once()
+    assert mock_chat.call_args.kwargs.get("execution_kind") == "connector_realtime"
+
+    # Reply was posted
+    assert connector.state_file.exists()
+    state = json.loads(connector.state_file.read_text())
+    assert state["last_message_id"] == "2"
+
+
+@patch("kage.connectors.discord.urllib.request.urlopen")
+def test_discord_handle_realtime_message_skips_other_channels(mock_urlopen, tmp_path):
+    config = DiscordConnectorConfig(realtime=True, bot_token="token", channel_id="123")
+    connector = DiscordConnector("test_discord_rt", config)
+    connector.state_file = tmp_path / "discord_rt_state.json"
+
+    connector._handle_realtime_message(
+        {
+            "id": "1",
+            "content": "hello",
+            "author": {"bot": False, "id": "42", "username": "human"},
+            "channel_id": "999",
+        }
+    )
+
+    assert not connector.state_file.exists()
+    mock_urlopen.assert_not_called()
+
+
+@patch("kage.connectors.discord.urllib.request.urlopen")
+def test_discord_handle_realtime_message_skips_bot_messages(mock_urlopen, tmp_path):
+    config = DiscordConnectorConfig(realtime=True, bot_token="token", channel_id="123")
+    connector = DiscordConnector("test_discord_rt", config)
+    connector.state_file = tmp_path / "discord_rt_state.json"
+
+    connector._handle_realtime_message(
+        {
+            "id": "1",
+            "content": "hello",
+            "author": {"bot": True, "id": "999", "username": "kage"},
+            "channel_id": "123",
+        }
+    )
+
+    # State advances past bot message, but no HTTP calls are made
+    assert connector.state_file.exists()
+    state = json.loads(connector.state_file.read_text())
+    assert state["last_message_id"] == "1"
+    mock_urlopen.assert_not_called()
+
+
+def test_discord_gateway_session_dispatches_message_create(tmp_path):
+    import asyncio
+    from unittest.mock import AsyncMock
+    import websockets
+
+    config = DiscordConnectorConfig(realtime=True, bot_token="token", channel_id="123")
+    connector = DiscordConnector("test_discord_rt", config)
+    connector.state_file = tmp_path / "discord_rt_state.json"
+
+    websocket = AsyncMock(spec=websockets.ClientConnection)
+    websocket.__aiter__.return_value = [
+        json.dumps({"op": 10, "d": {"heartbeat_interval": 45000}}),
+        json.dumps(
+            {
+                "op": 0,
+                "t": "MESSAGE_CREATE",
+                "d": {
+                    "id": "1",
+                    "content": "hello",
+                    "author": {"bot": False, "id": "42", "username": "human"},
+                    "channel_id": "123",
+                },
+            }
+        ),
+    ]
+
+    async def run_session():
+        with (
+            patch.object(connector, "_handle_realtime_message") as mock_handle,
+            patch.object(connector, "_send_identify") as mock_identify,
+        ):
+            task = asyncio.create_task(connector._gateway_session(websocket))
+            await asyncio.sleep(0.2)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            mock_identify.assert_awaited_once()
+            mock_handle.assert_called_once()
+            assert mock_handle.call_args[0][0]["id"] == "1"
+
+    asyncio.run(run_session())
+
+
+# === Realtime Process Manager Tests ===
+
+
+@patch("kage.connectors.realtime_manager.subprocess.Popen")
+@patch("kage.connectors.realtime_manager._is_process_alive", return_value=False)
+def test_start_realtime_connector_spawns_detached_process(
+    mock_alive, mock_popen, tmp_path
+):
+    from kage.connectors.realtime_manager import start_realtime_connector
+
+    run_dir = tmp_path / "run"
+    log_dir = tmp_path / "logs"
+    lock_dir = tmp_path / "run" / "locks"
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+    mock_proc.poll.return_value = None
+    mock_popen.return_value = mock_proc
+
+    with (
+        patch("kage.connectors.realtime_manager.RUN_DIR", run_dir),
+        patch("kage.connectors.realtime_manager.LOG_DIR", log_dir),
+        patch("kage.connectors.realtime_manager.LOCK_DIR", lock_dir),
+    ):
+        started, msg = start_realtime_connector("discord_test")
+
+    assert started is True
+    assert "12345" in msg
+
+    pid_path = run_dir / "connector-realtime-discord_test.pid"
+    assert pid_path.exists()
+    assert pid_path.read_text() == "12345"
+
+
+@patch("kage.connectors.realtime_manager._is_process_alive", return_value=True)
+def test_start_realtime_connector_skips_already_running(mock_alive, tmp_path):
+    from kage.connectors.realtime_manager import start_realtime_connector
+
+    run_dir = tmp_path / "run"
+    lock_dir = tmp_path / "run" / "locks"
+
+    pid_path = run_dir / "connector-realtime-discord_test.pid"
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text("12345")
+
+    with (
+        patch("kage.connectors.realtime_manager.RUN_DIR", run_dir),
+        patch("kage.connectors.realtime_manager.LOCK_DIR", lock_dir),
+    ):
+        started, msg = start_realtime_connector("discord_test")
+
+    assert started is False
+    assert "already running" in msg
+
+
+@patch("kage.connectors.realtime_manager.os.kill")
+@patch("kage.connectors.realtime_manager._is_process_alive")
+def test_stop_realtime_connector_kills_process(mock_alive, mock_kill, tmp_path):
+    from kage.connectors.realtime_manager import stop_realtime_connector
+
+    run_dir = tmp_path / "run"
+    lock_dir = tmp_path / "run" / "locks"
+
+    pid_path = run_dir / "connector-realtime-discord_test.pid"
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text("12345")
+
+    # First call alive, then dead after SIGTERM
+    mock_alive.side_effect = [True, False]
+
+    with (
+        patch("kage.connectors.realtime_manager.RUN_DIR", run_dir),
+        patch("kage.connectors.realtime_manager.LOCK_DIR", lock_dir),
+    ):
+        stopped, msg = stop_realtime_connector("discord_test")
+
+    assert stopped is True
+    assert "Stopped" in msg
+    assert not pid_path.exists()
+    mock_kill.assert_called_once()
+
+
+@patch(
+    "kage.connectors.realtime_manager.get_realtime_connector_names", return_value=["c1"]
+)
+@patch("kage.connectors.realtime_manager.is_realtime_running", return_value=False)
+@patch("kage.connectors.realtime_manager.start_realtime_connector")
+def test_manage_realtime_processes_starts_missing(
+    mock_start, mock_running, mock_names, tmp_path
+):
+    from kage.connectors.realtime_manager import manage_realtime_processes
+
+    run_dir = tmp_path / "run"
+    log_dir = tmp_path / "logs"
+    lock_dir = tmp_path / "run" / "locks"
+
+    mock_start.return_value = (True, "started")
+
+    with (
+        patch("kage.connectors.realtime_manager.RUN_DIR", run_dir),
+        patch("kage.connectors.realtime_manager.LOG_DIR", log_dir),
+        patch("kage.connectors.realtime_manager.LOCK_DIR", lock_dir),
+    ):
+        manage_realtime_processes()
+
+    mock_start.assert_called_once_with("c1")
+
+
+@patch("kage.connectors.realtime_manager.get_realtime_connector_names", return_value=[])
+@patch("kage.connectors.realtime_manager.stop_realtime_connector")
+def test_manage_realtime_processes_stops_unconfigured(mock_stop, mock_names, tmp_path):
+    from kage.connectors.realtime_manager import manage_realtime_processes
+
+    run_dir = tmp_path / "run"
+    lock_dir = tmp_path / "run" / "locks"
+
+    # Stale PID file for a connector that is no longer configured
+    pid_path = run_dir / "connector-realtime-stale.pid"
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text("99999")
+
+    mock_stop.return_value = (True, "stopped")
+
+    with (
+        patch("kage.connectors.realtime_manager.RUN_DIR", run_dir),
+        patch("kage.connectors.realtime_manager.LOCK_DIR", lock_dir),
+    ):
+        manage_realtime_processes()
+
+    mock_stop.assert_called_once_with("stale")
+
+
+def test_rotate_log_rotates_existing_log_and_cleans_old(tmp_path):
+    from kage.connectors.realtime_manager import _rotate_log, _log_file
+
+    run_dir = tmp_path / "run"
+    log_dir = tmp_path / "logs"
+    lock_dir = tmp_path / "run" / "locks"
+
+    with (
+        patch("kage.connectors.realtime_manager.RUN_DIR", run_dir),
+        patch("kage.connectors.realtime_manager.LOG_DIR", log_dir),
+        patch("kage.connectors.realtime_manager.LOCK_DIR", lock_dir),
+    ):
+        log_path = _log_file("discord_test")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("old log content")
+
+        _rotate_log("discord_test")
+
+        assert not log_path.exists()
+        rotated = list(log_path.parent.glob("connector-realtime-discord_test.log.*"))
+        assert len(rotated) == 1
+        assert rotated[0].read_text() == "old log content"
+
+
+def test_cleanup_old_logs_keeps_recent_and_removes_aged(tmp_path):
+    from kage.connectors.realtime_manager import _cleanup_old_logs, _log_file
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    with patch("kage.connectors.realtime_manager.LOG_DIR", log_dir):
+        base = _log_file("discord_test")
+        for index in range(7):
+            rotated = base.with_suffix(f".log.20260101-00000{index}")
+            rotated.write_text("x")
+            # Make the oldest entries older than 7 days
+            age = 10 * 24 * 60 * 60 if index < 2 else 0
+            os.utime(rotated, (time.time() - age, time.time() - age))
+
+        _cleanup_old_logs("discord_test")
+
+        remaining = sorted(base.parent.glob(f"{base.name}.*"))
+        # 2 aged removed, then keep newest 5 of the remaining 5
+        assert len(remaining) == 5
