@@ -128,9 +128,11 @@ def _setup_linux_cron():
 
     kage_path = get_kage_path()
     log_file = Path.home() / ".kage" / "cron.log"
-    new_job = (
-        f"{cron_expr} {_scheduler_command_for_path(kage_path)} >> {log_file} 2>&1\n"
-    )
+    kage_dir = os.path.dirname(kage_path)
+    # Ensure cron's PATH includes the directory containing the kage executable,
+    # so that spawned subprocesses and task commands can find it.
+    path_prefix = f'PATH="$PATH:{kage_dir}" '
+    new_job = f"{cron_expr} {path_prefix}{_scheduler_command_for_path(kage_path)} >> {log_file} 2>&1\n"
 
     new_cron = current_cron
     if current_cron and not current_cron.endswith("\n"):

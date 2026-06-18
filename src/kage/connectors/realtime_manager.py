@@ -111,10 +111,20 @@ class _RealtimeLock:
 
 
 def _kage_command() -> list[str]:
-    """Return the command prefix to invoke kage in a subprocess."""
+    """Return the command prefix to invoke kage in a subprocess.
+
+    When kage is run from cron the subprocess inherits a minimal PATH, so we
+    prefer the executable that started the current process (``sys.argv[0]``)
+    and only fall back to PATH lookup or ``python -m kage``.
+    """
+    invoked = sys.argv[0]
+    if os.path.basename(invoked) == "kage" and os.path.isfile(invoked):
+        return [invoked]
+
     kage_bin = shutil.which("kage")
     if kage_bin:
         return [kage_bin]
+
     return [sys.executable, "-m", "kage"]
 
 
