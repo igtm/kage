@@ -74,6 +74,11 @@ app.add_typer(connector_app, name="connector")
 migrate_app = typer.Typer(help="Run install/data migrations")
 app.add_typer(migrate_app, name="migrate")
 
+quest_app = typer.Typer(
+    help="Manage quests: event-driven, team-based mind-map lifecycles that run alongside cron tasks"
+)
+app.add_typer(quest_app, name="quest")
+
 runs_app = typer.Typer(
     help="View and manage execution runs",
     invoke_without_command=True,
@@ -1169,8 +1174,198 @@ def cron_run():
     run_all_scheduled_tasks()
 
 
+@quest_app.command("new")
+def quest_new(
+    name: str = typer.Argument(..., help="Short quest name"),
+    direction: str = typer.Option(
+        ..., "--direction", "-d", help="Vague direction / goal"
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project path (defaults to current dir)"
+    ),
+    roles: str = typer.Option(
+        "scout,poc,strategist", "--roles", help="Comma-separated role names"
+    ),
+    max_agent_runs: int = typer.Option(
+        50, "--max-agent-runs", help="Hard cap on total agent dispatches"
+    ),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", help="AI provider override (e.g. claude, gemini)"
+    ),
+    solo: bool = typer.Option(
+        False,
+        "--solo",
+        help="Legacy mode: roles spawn children directly without an owner gate",
+    ),
+):
+    """Create a new quest with a root scout node ready to dispatch."""
+    from .quest import QuestMode, create_quest, get_quest
+
+    project_path = Path(project).resolve() if project else Path.cwd().resolve()
+    quest = create_quest(
+        str(project_path),
+        name,
+        direction,
+        roles=[r.strip() for r in roles.split(",") if r.strip()],
+        max_agent_runs=max_agent_runs,
+        provider=provider,
+        mode=QuestMode.SOLO if solo else QuestMode.TEAM,
+    )
+    refreshed = get_quest(quest.id)
+    assert refreshed is not None
+    typer.echo(
+        f"Created quest {refreshed.id}: {refreshed.name} "
+        f"(status={refreshed.status}, max_agent_runs={refreshed.max_agent_runs})"
+    )
+
+
+@quest_app.command("list")
+def quest_list(
+    status_filter: Optional[str] = typer.Option(
+        None, "--status", help="Filter by quest status"
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project path substring filter"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print structured JSON"),
+):
+    """List quests and their progress."""
+    from .quest import list_quests, node_counts
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    quests = list_quests(status_filter=status_filter, project_filter=project)
+    if json_output:
+        payload = [q.to_dict() | {"node_counts": node_counts(q.id)} for q in quests]
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not quests:
+        console.print("[yellow]No quests found.[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("ID", style="bold")
+    table.add_column("Name")
+    table.add_column("Status")
+    table.add_column("Runs", justify="right")
+    table.add_column("Nodes")
+    table.add_column("Direction")
+    for q in quests:
+        counts = node_counts(q.id)
+        node_summary = (
+            f"{counts.get('total', 0)} "
+            f"(exp {counts.get('explored', 0)}/grow {counts.get('growing', 0)}/"
+            f"abort {counts.get('aborted', 0)})"
+        )
+        table.add_row(
+            q.id,
+            q.name,
+            q.status,
+            f"{q.agent_runs}/{q.max_agent_runs}",
+            node_summary,
+            q.direction[:60],
+        )
+    console.print(table)
+
+
+@quest_app.command("show")
+def quest_show(
+    quest_id: str = typer.Argument(..., help="Quest ID"),
+    json_output: bool = typer.Option(False, "--json", help="Print structured JSON"),
+):
+    """Show a quest, its nodes, and edges."""
+    from .quest import get_quest, list_edges, list_nodes
+
+    quest = get_quest(quest_id)
+    if not quest:
+        typer.echo(f"Quest not found: {quest_id}")
+        raise typer.Exit(1)
+    nodes = list_nodes(quest_id)
+    edges = list_edges(quest_id)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "quest": quest.to_dict(),
+                    "nodes": [n.to_dict() for n in nodes],
+                    "edges": [e.__dict__ for e in edges],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    console.print(
+        f"[bold cyan]{quest.id}[/bold cyan] {quest.name} (status={quest.status}, "
+        f"runs={quest.agent_runs}/{quest.max_agent_runs})"
+    )
+    console.print(f"Direction: {quest.direction}")
+    table = Table(show_header=True, header_style="bold", title="Nodes")
+    table.add_column("ID")
+    table.add_column("Role")
+    table.add_column("Status")
+    table.add_column("Verdict")
+    table.add_column("Hypothesis")
+    for n in nodes:
+        table.add_row(n.id, n.role, n.status, n.verdict or "-", n.hypothesis[:80])
+    console.print(table)
+    if edges:
+        edge_table = Table(show_header=True, header_style="bold", title="Edges")
+        edge_table.add_column("From")
+        edge_table.add_column("To")
+        edge_table.add_column("Relation")
+        for e in edges:
+            edge_table.add_row(e.from_node or "-", e.to_node or "-", e.relation)
+        console.print(edge_table)
+
+
+@quest_app.command("stop")
+def quest_stop(
+    quest_id: str = typer.Argument(..., help="Quest ID"),
+):
+    """Stop an active quest (ticks will skip it until resumed)."""
+    from .quest import get_quest, set_quest_status
+
+    if not get_quest(quest_id):
+        typer.echo(f"Quest not found: {quest_id}")
+        raise typer.Exit(1)
+    set_quest_status(quest_id, "stopped")
+    typer.echo(f"Stopped quest {quest_id}")
+
+
+@quest_app.command("resume")
+def quest_resume(
+    quest_id: str = typer.Argument(..., help="Quest ID"),
+):
+    """Resume a stopped quest."""
+    from .quest import get_quest, set_quest_status
+
+    if not get_quest(quest_id):
+        typer.echo(f"Quest not found: {quest_id}")
+        raise typer.Exit(1)
+    set_quest_status(quest_id, "active")
+    typer.echo(f"Resumed quest {quest_id}")
+
+
+@quest_app.command("abort-node")
+def quest_abort_node(
+    node_id: str = typer.Argument(..., help="Quest node ID"),
+):
+    """Force-abort a single quest node."""
+    from .quest import abort_node
+
+    node = abort_node(node_id)
+    if not node:
+        typer.echo(f"Node not found: {node_id}")
+        raise typer.Exit(1)
+    typer.echo(f"Aborted node {node_id}")
+
+
 def _is_ja() -> bool:
-    """LANG 環境変値が ja* で始まっていれば True。"""
     import os
 
     for key in ("LC_ALL", "LANG", "LANGUAGE"):

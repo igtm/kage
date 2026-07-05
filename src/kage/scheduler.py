@@ -152,3 +152,10 @@ def run_all_scheduled_tasks():
     # invoked every minute, so a newly-enabled realtime connector will start
     # within one minute of the config change.
     manage_realtime_processes()
+
+    # Advance the event-driven quest lifecycle. Each tick dispatches at most
+    # one pending node per active quest, reusing the normal executor so quest
+    # runs appear alongside cron runs in `kage runs` / `kage logs`.
+    from .quest import tick as quest_tick
+
+    quest_tick()

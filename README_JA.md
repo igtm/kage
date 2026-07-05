@@ -251,6 +251,11 @@ shell: "bash"
 
 | コマンド | 説明 |
 |---------|-------------|
+| `kage quest new <name> --direction "..."` | event駆動のquestを作成。ロールエージェント(scout→poc→strategist)がマインドマップ状のグラフを形成し、cron tickごとに1ノードをディスパッチ。`--max-agent-runs` で暴走防止予算を設定 |
+| `kage quest list` | quest一覧とノード/実行回数の進捗 |
+| `kage quest show <id>` | questのノード・エッジを表示 |
+| `kage quest stop <id>` / `kage quest resume <id>` | questの一時停止/再開 |
+| `kage quest abort-node <node_id>` | 単一ノードを強制abort |
 | `kage onboard` | グローバルセットアップ |
 | `kage init` | 現在のディレクトリに kage を初期化 |
 | `kage run <task>` | 特定 task を即時実行。停止中 task は `--force` で実行 |

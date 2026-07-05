@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0f14" />
+<title>kage Quest ライフサイクル — 設計レポート</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#121821; --panel2:#0f141b; --line:#1f2a36;
+    --ink:#e8eef6; --dim:#8b9bb0; --faint:#5a6b80;
+    --accent:#5ad1a5; --accent2:#6aa9ff; --warn:#ffb454; --bad:#ff6b6b;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Hiragino Sans,Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:radial-gradient(1200px 800px at 80% -10%, #14202b 0%, var(--bg) 55%) fixed;
+    color:var(--ink); font-family:var(--sans); line-height:1.65;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .wrap{max-width:980px;margin:0 auto;padding:8vw 5vw 14vw}
+  @media(min-width:720px){ .wrap{padding:64px 40px 120px} }
+  header.hero{
+    border:1px solid var(--line); background:linear-gradient(180deg,#0e161f, #0b1119);
+    border-radius:18px; padding:28px 22px; margin-bottom:22px;
+    box-shadow:0 10px 40px -20px #000, inset 0 1px 0 #1a2632;
+  }
+  .eyebrow{color:var(--accent); font:600 12px/1 var(--mono); letter-spacing:.18em; text-transform:uppercase}
+  h1{margin:.4em 0 .2em; font-size:clamp(26px,6vw,44px); line-height:1.1; letter-spacing:-.02em}
+  h1 .kage{color:var(--accent)}
+  .lede{margin:.6em 0 0; color:var(--dim); font-size:clamp(14px,3.4vw,17px)}
+  .pillrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+  .pill{font:600 11px/1 var(--mono); color:var(--ink); border:1px solid var(--line);
+    padding:7px 10px; border-radius:999px; background:#0c1219}
+  .pill b{color:var(--accent2)}
+  section{
+    background:var(--panel); border:1px solid var(--line); border-radius:16px;
+    padding:22px 18px; margin:0 0 18px;
+  }
+  @media(min-width:720px){ section{padding:30px 30px} }
+  h2{font-size:clamp(18px,4vw,24px); margin:0 0 .4em; letter-spacing:-.01em;
+     display:flex;align-items:center;gap:12px}
+  h2 .n{font:700 12px/1 var(--mono); color:var(--bg); background:var(--accent);
+     border-radius:6px; padding:5px 8px}
+  h3{font-size:15px; margin:1.4em 0 .4em; color:var(--accent2)}
+  p{margin:.5em 0; color:#c6d2e0}
+  .dim{color:var(--dim)}
+  code,kbd{font-family:var(--mono); font-size:.92em;
+    background:#0a1018; border:1px solid var(--line); padding:1px 6px; border-radius:6px}
+  pre{background:#0a0f15; border:1px solid var(--line); border-radius:12px;
+    padding:16px; overflow:auto; font-family:var(--mono); font-size:12.5px; line-height:1.55;
+    color:#cfe3d5}
+  pre .k{color:#9be7c4} pre .s{color:#f5c98b} pre .c{color:#566b80}
+  table{border-collapse:collapse; width:100%; font-size:13px}
+  th,td{text-align:left; padding:9px 10px; border-bottom:1px solid var(--line)}
+  th{color:var(--accent2); font-weight:600; font-family:var(--mono); font-size:11px; letter-spacing:.06em}
+  td code{white-space:nowrap}
+  .grid{display:grid; gap:14px}
+  @media(min-width:640px){ .grid.cols-2{grid-template-columns:1fr 1fr} }
+  .card{border:1px solid var(--line); border-radius:12px; background:var(--panel2);
+    padding:16px}
+  .card h4{margin:0 0 6px; font-size:14px; color:var(--accent)}
+  .card p{margin:.3em 0; font-size:13px; color:#b9c6d6}
+  canvas{display:block; width:100%; height:auto; border:1px solid var(--line);
+    border-radius:12px; background:#0a0f15}
+  .legend{display:flex;flex-wrap:wrap; gap:14px; font-size:12px; color:var(--dim);
+    margin-top:10px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+  .badge{display:inline-block;font:600 10px/1 var(--mono);padding:4px 7px;border-radius:5px;border:1px solid var(--line)}
+  .b-accent{color:var(--accent);border-color:#1d4a39} .b-blue{color:var(--accent2);border-color:#1a3a63}
+  .b-warn{color:var(--warn);border-color:#553a17} .b-bad{color:var(--bad);border-color:#4e1f1f}
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:8px 0 4px}
+  .flow .step{flex:1 1 140px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:12px;margin:0 6px 6px 0;position:relative}
+  .flow .step::after{content:"→"; position:absolute; right:-14px; top:50%; transform:translateY(-50%);
+    color:var(--faint); font-size:18px}
+  .flow .step:last-child::after{content:""}
+  .flow .step h5{margin:0 0 4px;font-size:13px;color:var(--accent)}
+  .flow .step p{margin:0;font-size:12px;color:var(--dim)}
+  footer{color:var(--faint);font-size:12px;text-align:center;margin-top:24px}
+  ul{padding-left:1.2em} li{margin:.3em 0;color:#c6d2e0}
+  .tag{font:600 11px/1 var(--mono);color:var(--accent2)}
+  a{color:var(--accent2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">kage 影 · 設計レポート · 2026-06-24</div>
+  <h1><span class="kage">Quest</span> ライフサイクル</h1>
+  <p class="lede">cron の”決まった時間に決まったタスク”を超えて、<b>流動的・セレンディピティがある組織的な AI 探索</b>を 24 時間 自律稼働させるための第2のライフサイクル。マインドマップ状のタスクグラフ、POC 撤退/育成、そして暴走防止の予算。</p>
+  <div class="pillrow">
+    <span class="pill">event-driven · <b>1 cron tick → 1 node</b></span>
+    <span class="pill">team roles · <b>scout / poc / strategist</b></span>
+    <span class="pill">graph · <b>nodes + edges</b></span>
+    <span class="pill">runaway guard · <b>max_agent_runs</b></span>
+    <span class="pill">OS-native · <b>no daemon</b></span>
+  </div>
+</header>
+
+<section>
+  <h2><span class="n">01</span>背景と課題</h2>
+  <p>現在の kage は <b>cron</b> ベースのみ。1タスク=1プロンプトを決まった時刻に起動し、Memory で線形に状態を保つ。人間のリアルな仕事――<span class="dim">"ぼんやりした方向"から 0 で現状を調べ、PoC を回し、ROI で撤退/拡大を繰り返す</span>――とは質が違う。</p>
+  <div class="grid cols-2">
+    <div class="card">
+      <h4>cron ライフサイクル</h4>
+      <p>・固定スケジュール<span class="dim">/線形 checklist</span></p>
+      <p>・1エージェント・1プロンプト</p>
+      <p>・"小さく決まったことを回す"用途</p>
+    </div>
+    <div class="card">
+      <h4>quest ライフサイクル <span class="b-accent">new</span></h4>
+      <p>・方向性だけ与えて継続探索</p>
+      <p>・ロール毎のチーム即時編成</p>
+      <p>・グラフ探索 + 撤退/育成のループ</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">02</span>全体アーキテクチャ</h2>
+  <canvas id="cnvArch" width="940" height="440" aria-label="アーキテクチャ図"></canvas>
+  <div class="legend">
+    <span><i style="background:#4ec9a0"></i>OS ネイティブ (既存)</span>
+    <span><i style="background:#6aa9ff"></i>quest (今回追加)</span>
+    <span><i style="background:#ffb454"></i>共通の executor / runs</span>
+  </div>
+  <p class="dim" style="font-size:12px;margin-top:8px">cron と quest は同じ <code>kage cron run</code> 1分 tick に乗り、<b>新しく常駐プロセスは立たない</b>。quest のノード実行は既存の <code>executor.execute_task</code> を再利用するため、run 履歴 / log / metadata が cron と同一。</p>
+</section>
+
+<section>
+  <h2><span class="n">03</span>4つのロール = 総合力チーム (v2)</h2>
+  <div class="flow">
+    <div class="step"><h5>owner 👑 (NEW)</h5><p><b>唯一のグラフ編集者</b>。証拠が揃わない限り動かない。<span class="tag">promote / abort / spawn / finish</span></p></div>
+    <div class="step"><h5>scout 🧭</h5><p>現状リサーチ。仮説を<b>提案</b>のみ。直接子 spawn はしない。<span class="tag">proposed 留め</span></p></div>
+    <div class="step"><h5>poc 🧪</h5><p>最小検証。verdict は<b>提案</b>。owner 判断待ち。<span class="tag">proposed 留め</span></p></div>
+    <div class="step"><h5>strategist ♟</h5><p>ROI 提案。判断は owner。<span class="tag">proposed 留め</span></p></div>
+  </div>
+  <p class="dim" style="font-size:12px">v2 では ロールは Quest 作成時に宣言。デフォルト (team モード) <code>scout,poc,strategist,owner</code>。各ロールは provider + プロンプト雛形を持ち、実行時に具体化。<code>--solo</code> でv1動作(scout/pocが直接spawn)に戻る。<code>--provider claude</code> 等でチーム単位の AI 指定も可。</p>
+</section>
+
+<section>
+  <h2><span class="n">04</span>マインドマップ = タスクグラフ</h2>
+  <p>直線的なチェックリストではなく、<b>親から子へ枝分かれ</b>し、死んだ枝は <code>aborted</code>、有望な枝は <code>grew_to</code> で延伸。<span class="badge b-blue">SQLite</span> の 3 テーブルで永続化。</p>
+  <canvas id="cnvGraph" width="940" height="380" aria-label="task graph example"></canvas>
+  <div class="legend">
+    <span><i style="background:#5ad1a5"></i>探索済/成長中 (explored/growing)</span>
+    <span><i style="background:#ff6b6b"></i>撤退 (aborted · dead PoC)</span>
+    <span><i style="background:#ffb454"></i>実行中 (running)</span>
+    <span><i style="background:#3a4858"></i>保留 (pending)</span>
+  </div>
+  <h3>ノードのライフサイクル</h3>
+  <pre><span class="c"># pending → run → {explored | growing | aborted}</span>
+pending  → running → explored   <span class="c"># 結論のみ・分岐なし</span>
+pending  → running → growing    <span class="c"># promising → 子 poc を展開</span>
+pending  → running → aborted   <span class="c"># dead → strategist を spawn</span></pre>
+</section>
+
+<section>
+  <h2><span class="n">05</span>1 分 tick の中身</h2>
+  <canvas id="cnvTick" width="940" height="360" aria-label="tick ループ"></canvas>
+  <p>アクティブな quest ごとに <b>最大1ノード</b> を dispatch。実行は同期待ちで <code>execute_task</code> に乗せ、完了後に verdict JSON を parse して子ノード/エッジを生成。<code>agent_runs</code> を +1。</p>
+  <h3>AI との出力契約 (Output contract)</h3>
+  <pre><span class="k">```json</span>
+{ <span class="s">"verdict"</span>: <span class="s">"promising (有望)" | "dead (撤退)"</span>,
+  <span class="s">"evidence"</span>: <span class="s">"&lt;要約&gt;"</span>,
+  <span class="s">"new_directions"</span>: [<span class="s">"&lt;次に試す仮説&gt;"</span>, ...] }
+<span class="k">```</span></pre>
+</section>
+
+<section>
+  <h2><span class="n">06</span>暴走防止 — 終了条件</h2>
+  <table>
+    <thead><tr><th>条件</th><th>既定</th><th>状態</th><th></th></tr></thead>
+    <tbody>
+      <tr><td><code>max_agent_runs</code></td><td>50</td><td>超過で <span class="badge b-bad">terminated</span></td><td><span class="badge b-accent">今回実装</span></td></tr>
+      <tr><td><code>max_wall_minutes</code></td><td>—</td><td>開始からの経過時間上限</td><td><span class="badge">将来 (列は用意済み)</span></td></tr>
+      <tr><td><code>max_token_budget</code></td><td>—</td><td>概算 token / 呼び出し回数</td><td><span class="badge">将来</span></td></tr>
+      <tr><td>人間ゲート</td><td>—</td><td>深度/転換時に connector 経由で承認</td><td><span class="badge">将来</span></td></tr>
+      <tr><td><code>kage quest stop &lt;id&gt;</code></td><td>—</td><td>手動停止 (tick は skip)</td><td><span class="badge b-accent">今回</span></td></tr>
+      <tr><td><code>kage quest abort-node &lt;id&gt;</code></td><td>—</td><td>単一ノード強制 abort</td><td><span class="badge b-accent">今回</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="n">07</span>データモデル</h2>
+  <div class="grid cols-2">
+    <div>
+      <h3>quests</h3>
+      <pre><span class="c">id, project_path, name, direction,
+status <span class="k">(active|done|terminated|stopped)</span>,
+max_agent_runs, agent_runs,
+roles_json, provider, created_at, updated_at</span></pre>
+    </div>
+    <div>
+      <h3>quest_nodes</h3>
+      <pre><span class="c">id, quest_id, parent_id, role,
+hypothesis,
+status <span class="k">(pending|running|explored|
+       aborted|growing)</span>,
+verdict, evidence, run_id,
+created_at, updated_at</span></pre>
+    </div>
+  </div>
+  <h3>quest_edges</h3>
+  <pre><span class="c">id, quest_id, from_node, to_node,
+relation <span class="k">(spawned|aborted_to|grew_to)</span>, created_at</span></pre>
+</section>
+
+<section>
+  <h2><span class="n">08</span>CLI</h2>
+  <pre>kage quest new &lt;name&gt; --direction <span class="s">"..."</span> \
+            [--roles scout,poc,strategist] [--max-agent-runs 50] \
+            [--provider claude] [--project &lt;path&gt;]
+kage quest list        <span class="c"># id / 名前 / 状態 / runs / ノード数</span>
+kage quest show &lt;id&gt;   <span class="c"># ノード + エッジ表で表示</span>
+kage quest stop &lt;id&gt;
+kage quest resume &lt;id&gt;
+kage quest abort-node &lt;node_id&gt;</pre>
+  <p class="dim" style="font-size:12px">quest 実行は既存の <code>kage runs</code> / <code>kage logs</code> にもそのまま載る。task 名は <code>quest:&lt;quest_id&gt;:&lt;node_id&gt;</code>。</p>
+</section>
+
+<section>
+  <h2><span class="n">09</span>ざっくり使ってみる</h2>
+  <pre>kage quest new ocr-hunt \
+  --direction <span class="s">"日本語請求書PDF向けの無料OCRで最大精度を探す"</span> \
+  --max-agent-runs 80 --provider claude
+<span class="c"># あとは寝る。1分ごとに scout→poc→... が回り、</span>
+<span class="c"># 朝には死んだ枝が abort され、有望枝が grow した状態で記録される。</span>
+kage quest list
+kage quest show &lt;id&gt;     <span class="c"># グラフ＋検証結果を一覧</span>
+kage runs                 <span class="c"># quest の各ノードもここに並ぶ</span></pre>
+</section>
+
+<section>
+  <h2><span class="n">15</span>v3.2 設計: Team と工程 (planner→executer→accepter)</h2>
+  <p>ユーザー指摘: scout/poc は「ロール」より<b>Team</b>という上位概念で持て。Team 内で <code>planner → executer → accepter (受け入れテスター)</code> の工程を回し、accepter が ng なら工程へ差し戻し。accept されたら初めて owner へ返せ。</p>
+  <h3>階層構造</h3>
+  <canvas id="cnvTeam" width="940" height="380" aria-label="team hierarchy diagram"></canvas>
+  <p class="dim" style="font-size:12px">Team は1ノード、各工程は子ノード。Teamは<b>編成単位</b>、工程は<b>社内 pipeline</b>。owner は Team に dispatch し、Team は accept されたとき初めて owner に verdict を返す。</p>
+  <h3>工程ごとの役割</h3>
+  <table>
+    <thead><tr><th>工程 (stage)</th><th>役割</th><th>出力</th></tr></thead>
+    <tbody>
+      <tr><td><code>planner</code></td><td>hypothesis を具体タスクに分解・計画</td><td><code>implements_plan</code></td></tr>
+      <tr><td><code>executer</code></td><td>計画に沿って実行・証拠生成</td><td><code>evidence</code></td></tr>
+      <tr><td><code>accepter</code></td><td>受け入れテスト (looper 互換 judge)</td><td><code>{verdict:"accept\|reject", revision_target:"planner\|executer"}</code></td></tr>
+    </tbody>
+  </table>
+  <h3>差し戻しループ</h3>
+  <pre>planner ─▶ executer ─▶ accepter
+   ↑                         │
+   └── <span class="c"># reject (revision_target=planner)</span>
+        ↑
+        └── executer だけ差し戻し (revision_target=executer) も可
+
+accept ─▶ Team 完了 verdict ─▶ owner へ
+reject は <b>max_revisions</b> で暴走防止
+cap 超過 ─▶ Team <code>team_blocked</code> ─▶ owner に fail verdict → 再判断</pre>
+  <p class="dim" style="font-size:12px">accepter は looper の <code>judge</code> と同じ。reviewer は notes のみ。reviewer-only は clean 宣言できない (looper gate rule 互換)。</p>
+  <h3>Team ごとの accept 基準</h3>
+  <table>
+    <thead><tr><th>Team</th><th>accepter が使う検証型</th><th>revision_target 判断</th></tr></thead>
+    <tbody>
+      <tr><td><code>scout</code></td><td>judge (検索カバレッジ + 仮説未解明)</td><td>planner (計画ミス) / executer (実行ミス)</td></tr>
+      <tr><td><code>poc</code></td><td><b>programmatic</b> (exit_zero/指標しきい値) + judge</td><td>planner (コスト設計ミス) / executer (実装ミス)</td></tr>
+      <tr><td><code>strategist</code></td><td>judge (ROI rubric)</td><td>planner (評価軸ミス) / executer (集約ミス)</td></tr>
+    </tbody>
+  </table>
+  <h3>verdict flow</h3>
+  <pre>Team (pending) ← owner.dispatch (stages_into)
+planner (proposed→running→explored) ─makes_plan→ executer
+executer (proposed→running→explored) ─executes→ accepter
+accepter (running) ─ judge
+  ├─ accept ─▶ Team (explored) ─▶ owner へ verdict 返却
+  └─ reject ─▶ revision_target (revising) ─▶ planner/executer 差し戻し
+                max_revisions 超過 → team_blocked → owner に fail</pre>
+  <h3>schema 予約</h3>
+  <pre>quest_nodes.team_kind: scout|poc|strategist|custom
+quest_nodes.stage: plan|exec|accept|revising
+quest_nodes.revision_count, max_revisions
+quest_edges.relation: stages_into, makes_plan, executes,
+                       rejects_to, accepts_to</pre>
+  <h3>4モード階層 (互換性)</h3>
+  <ul>
+    <li><code>--mode solo</code>: v1 (直接 spawn, 工程なし)</li>
+    <li><code>--mode team --council ""</code>: v2 (owner 単独, 工程 skip の簡易)</li>
+    <li><code>--mode team --council "reviewer:2,judge:1"</code>: v3.1 (council)</li>
+    <li><code>--mode team --council "..."</code>: <b>v3.2 (Team + 工程 + council accepter)</b></li>
+  </ul>
+  <h3>デメリット (追加分)</h3>
+  <ul>
+    <li><b>さらに遅い</b>: 1 work で planner+executer+accepter の最低3 tick。revision 含めると 3+3*rev。24h と loop_control で整合必須</li>
+    <li><b>graph が深くなり可視化が煩雑</b>: <code>kage ui /quests</code> で Team 折りたたみ表示が必須</li>
+    <li><b>accepter 判定ミスで無駄 revision</b>: revision_target を誤ると間違った工程に差し戻し。<code>max_revisions</code> キャップ必須</li>
+    <li><b>CLI 設定項目増</b>: <code>--teams / --accept-mode / --council / --max-revisions</code>。preset 化が必要</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">14</span>v3.1 設計: looper から学んだ role 設計</h2>
+  <p>参考: <a href="https://github.com/ksimback/looper" target="_blank">ksimback/looper</a> · <a href="https://x.com/0xCodez/status/2064374643729773029" target="_blank">@0xCodez loop engineering</a> · <a href="https://x.com/shannholmberg/status/2069323309024776456" target="_blank">@shannholmberg looper</a></p>
+  <p>looper は「設計 → 実行」の2層 + council (reviewer/judge) + programmatic検証 で「same model grading its own homework」を排除する。kage v2 の owner 単独はまさにその blind spot で、v3 は区別を取り込む。</p>
+  <h3>reviewer vs judge (council_member を置き換え)</h3>
+  <table>
+    <thead><tr><th>Role</th><th>出力</th><th>verdict_source</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>reviewer</code></td><td><code>{"notes":[...], "dissent":"..."}</code></td><td>❌ なれない</td><td>ブレスト / 視点追加</td></tr>
+      <tr><td><code>judge</code></td><td><code>{"verdict":"pass|revise", "blocking_issues":[...], "confidence":0.82}</code></td><td>⭕ なれる</td><td>gate を block する判定</td></tr>
+      <tr><td><code>owner</code> (chair)</td><td><code>actions[]</code> (merge 後)</td><td>—</td><td>議長として merge のみ</td></tr>
+    </tbody>
+  </table>
+  <p class="dim" style="font-size:12px"><code>--council "reviewer:2,judge:1"</code> 形式で構成。reviewer-only gate は <code>fixed_passes</code> のみ。clean 宣言は禁止。</p>
+  <h3>3つの検証 type (looper 互換)</h3>
+  <pre>programmatic: <span class="c"># 無料・deterministic</span>
+  check: ["pytest", "tests/test_quest.py"], expect: exit_zero
+judge: <span class="c"># rubric + 構造化 verdict</span>
+  rubric: "少なくとも2つの独立 evidence が同方向"
+human: <span class="c"># kage connector 経由で consent</span>
+  prompt: "Discord で 📌 で同意"</pre>
+  <h3>明示 gate (scout/poc/synthesis)</h3>
+  <div class="flow">
+    <div class="step"><h5>scout_gate</h5><p>scout evidence 蓄積後、poc前にreviewer/judgeがquality check</p></div>
+    <div class="step"><h5>poc_gate</h5><p>各poc完了後、成長/撤退判定前にjudgeがverdict</p></div>
+    <div class="step"><h5>synthesis_gate</h5><p>戦略総括前にreviewer/judgeがROI視点</p></div>
+  </div>
+  <h3>loop_control 拡張 (暴走防止)</h3>
+  <pre>max_iterations: 50          <span class="c"># = max_agent_runs 後方互換</span>
+budget:
+  tokens: 2_000_000
+  wall_clock_min: 1440       <span class="c"># 24h (既存 max_wall_minutes 列に統合)</span>
+no_progress:
+  max_stalled_iterations: 3
+  signals: [<span class="s">"同じ issue が繰り返し"</span>, <span class="s">"evidence 3ラウンド不変"</span>]
+  action: stop
+human_checkpoints: [scout_gate]   <span class="c"># connector 経由</span></pre>
+  <p class="dim" style="font-size:12px">v2 の <code>max_agent_runs</code> だけでは「動いている間に実質進んでいない」堂々巡りを検知できない。<code>no_progress</code> が looper 由来でその穴を埋める。</p>
+  <h3>cross-model council (privacy)</h3>
+  <pre>host(owner):  claude     <span class="c"># kage quest.provider</span>
+reviewer-A:   gemini     <span class="c"># 別 family 推奨 (blind spot)</span>
+judge-B:      codex      <span class="c"># gate 判定</span>
+<span class="c"># privacy.egress: 別 vendor CLI 送信を明示 + consent + redact glob</span></pre>
+  <p class="dim" style="font-size:12px">council_members は quest 単位の <code>provider</code> とは<b>個別に provider</b> を持てる。</p>
+  <h3>状態機械 (v3.1)</h3>
+  <pre>work(scout/poc) 完了
+  ↓ owner (pending) — _should_dispatch_owner() gate
+  ↓ design: gate spawn (scout_gate / poc_gate / ...)
+gate (pending)
+  ↓ spawn N× reviewer/judge (relation: council_of)
+member (proposed→running→explored)
+  ↓ verdict / notes
+gate (running) — chair merge
+  ↓ verdict_source "pass" → 次フェーズ work を pending 化
+  ↓ verdict_source "revise" → 前フェーズ work を保持し revision spawn
+gate (explored)
+  ↓ run: owner が merged actions[] → tick 適用
+owner (explored)</pre>
+  <h3>3モード階層 (互換性)</h3>
+  <ul>
+    <li><code>--solo</code>: v1 (scout/poc 直接 spawn)</li>
+    <li><code>--council ""</code>: v2 (owner 単独)</li>
+    <li><code>--council "reviewer:2,judge:1"</code>: v3.1 (council 付き team)</li>
+  </ul>
+  <p class="dim" style="font-size:12px">今回は intent + 本レポートに設計のみ。executor 並列化と connector consent 拡張後に着手。programmatic check / loop_control 拡張は非同期化なしでも実装可能。</p>
+</section>
+
+<section>
+  <h2><span class="n">13</span>v3 設計: design + run 2-phase で owner SPOF 解消</h2>
+  <p>v2 では <b>owner 1出力が曲がればグラフ全体が曲がる</b> SPOF だった。v3 は owner を design (協議) + run (実行) の2フェーズに分け、design phase で <b>council</b> を並列招集して再帰リスクを下げる。</p>
+  <div class="grid cols-2">
+    <div class="card">
+      <h4>design phase (協議)</h4>
+      <p>owner は判断せず council_member N 体を<b>並列</b> spawn</p>
+      <p>各 member が独立 LLM 呼出で plan を提案</p>
+      <p>owner (chair) が複数案を比較し merged plan を1つ統合</p>
+      <p class="dim">過半数一致で採用。分裂時は rationale 記録</p>
+    </div>
+    <div class="card">
+      <h4>run phase (実行)</h4>
+      <p>merged plan を tick が<b>機械的に</b>適用</p>
+      <p>run phase では追加 LLM 呼出なし</p>
+      <p>→ owner LLM 1回分の依存を解消</p>
+      <p class="dim">bad plan を出すには N+1 体が同時に間違える必要</p>
+    </div>
+  </div>
+  <h3>council_member ロール (新)</h3>
+  <pre>Role: council_member   権限: execute + 提案のみ (graf 編集不可)
+入力: 全 evidence + proposed 一覧 (owner と同一)
+出力: { "member_id":"A", "confidence":0.8, "actions":[...], "dissent":"..." }
+既定3体 (--council-size N で変更可)</pre>
+  <h3>2-phase 状態機械</h3>
+  <pre>owner (pending)  ← _should_dispatch_owner() 待機
+   ↓
+owner (running)   ─ design phase ─▶ spawn N × council_member (並列, proposed)
+   ↓                        owner は全 member 完了待ち (status: council_pending)
+owner (running)   ─ chair: merge
+   ↓
+owner (explored)  ─ run phase 出力 → tick 適用 (機械的)</pre>
+  <p class="dim" style="font-size:12px">→ 新 status: <code>council_pending</code> / 新 relation: <code>council_of</code> (owner→member), <code>council_reply</code> (member→owner) / 新列: <code>quest_nodes.phase</code> (design|run) / <code>--council-size 0</code> で v2 単独 owner に戻る</p>
+  <h3>なぜ今回は設計だけか</h3>
+  <ul>
+    <li>並列 council には <b>executor の非同期化</b>が前提。現状は1分・1ノード同期</li>
+    <li>シリアル council だと design→run で N+2 tick かかり、遅さが v2 より悪化</li>
+    <li>そのため intent + 本レポートに設計のみ追記。executor 並列化後に着手</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">11</span>v2: Owner-gated team model</h2>
+  <p>v1 では scout/poc が promising 判定のたびに <b>勝手に子ノードを spawn</b> していた。LLM 1 個のミスが即グラフに漏れる構造で、「1エージェントはまだミスが多い」限界を捨てきれない。</p>
+  <div class="grid cols-2">
+    <div class="card">
+      <h4>v1: solo (勝手に進む)</h4>
+      <p>scout が promising → 直接 poc を spawn</p>
+      <p>poc が dead → 直接 strategist を spawn</p>
+      <p>1エージェント = グラフの所有者</p>
+      <p class="dim">→ 簡単だがミスが直結</p>
+    </div>
+    <div class="card">
+      <h4>v2: team (owner だけ触れる)</h4>
+      <p><b>owner</b> だけがグラフ編集権を持つ (唯一)</p>
+      <p>scout/poc/strategist は <b>proposed</b> ノード(提案)のみ生成。即 spawn しない</p>
+      <p>owner は十分な証拠が溜まるまで<b>動かない</b> (<code>_should_dispatch_owner</code> gate)</p>
+      <p>owner 出力 = <code>actions[]</code>: <code>promote / abort / spawn / finish</code></p>
+      <p>tick が action を権限チェック付きで適用。未知 ID は弾く</p>
+    </div>
+  </div>
+  <h3>proposed ノードのライフ</h3>
+  <pre><span class="c"># scout/poc/strategist が実行 → proposed を残す</span>
+SCOUT POC  ──execute──▶ proposed (by scout)
+                          │
+                          │ owner が promote で pending 化
+                          ▼
+                       pending ──▶ running ──▶ explored/growing/aborted
+                                               │
+                                               └▶ owner が次ラウンドで triage</pre>
+  <p class="dim" style="font-size:12px">→ <code>proposed_by</code> 列 & <code>proposed_from</code> エッジで誰の提案か追跡可能。owner は全 evidence を食べて総合判断。「1人で進めるのはダメ、チームで戦う」を機構として保証。</p>
+</section>
+
+<section>
+  <h2><span class="n">12</span>v2: Web UI — kage ui /quests</h2>
+  <p><code>kage ui</code> に quest 専用ページを追加。PC・スマホ両方で LAN から確認できる。</p>
+  <pre>kage ui --host 0.0.0.0 --port 8771
+<span class="c"># スマホ: http://&lt;raspiのIP&gt;:8771/quests</span></pre>
+  <h3>追加 route</h3>
+  <ul>
+    <li><code>GET /quests</code> — quest 一覧 + 個別グラフ描画 SPA ページ</li>
+    <li><code>GET /api/quests</code> — 全 quest JSON (status / runs / roles / mode / node_counts)</li>
+    <li><code>GET /api/quests/{id}</code> — ノード + エッジ + verdict / evidence 詳細</li>
+  </ul>
+  <p>ページ機能:</p>
+  <ul>
+    <li>クエストカード一覧 (status badge / runs / node 数)</li>
+    <li>クリックで SVG グラフ描画 (layered tree): 色=status, 点線=proposed, 王冠=owner, 矢印=relation 別色</li>
+    <li>Nodes / Edges テーブル (verdict, evidence, proposed_by 表示)</li>
+    <li>5 秒間隔で自動リロード <span class="dim">(進行状況がほぼリアルタイムで見える)</span></li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">10</span>実装スコープ &amp; 残課題</h2>
+  <div class="grid cols-2">
+    <div class="card">
+      <h4>今回やったこと (v1+v2)</h4>
+      <ul>
+        <li>設計 doc: <code>docs/quest/.../intent.md</code> (v1 + v2 section)</li>
+        <li>DB schema (3 テーブル + <code>mode</code>/<code>proposed_by</code> 列)</li>
+        <li><code>src/kage/quest.py</code>: QuestMode, owner-gated spawn, action 適用</li>
+        <li>scheduler 末尾に <code>quest_tick()</code> 接続</li>
+        <li><code>kage quest</code> サブコマンド (<code>--solo</code> 付き)</li>
+        <li>Web UI: <code>/quests</code> + <code>/api/quests</code></li>
+        <li>テスト 9 件 / ruff pass / 162 tests green</li>
+        <li>README / README_JA / SKILL.md / HTML レポート更新</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>将来 (intent に設計済み)</h4>
+      <ul>
+        <li>wall-clock / token 予算の実装</li>
+        <li>connector 経由の人間承認ゲート</li>
+        <li>owner action の厳密 validation</li>
+        <li>proposed 自動間引き (今は上限で間接制御)</li>
+        <li>TUI でのグラフ表示 (現在は Web のみ)</li>
+        <li><code>kage doctor</code> への quest 診断行</li>
+        <li>ロール プロンプトの quest 単位上書き</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  kage · Quest ライフサイクル プロトタイプ · 2026-06-24 · このページは RasPi から LAN 向けに配信
+</footer>
+
+</div>
+
+<script>
+// ---------- tiny canvas helpers ----------
+function fitCanvas(c){
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  const r = c.getBoundingClientRect();
+  c.width = Math.round(r.width*dpr);
+  const H = c.getAttribute('height')|0;
+  c.height = Math.round(H*dpr);
+  c.style.height = H+'px';
+  const ctx = c.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  return ctx;
+}
+function node(ctx,x,y,r,fill,stroke='#1f2a36'){
+  ctx.beginPath(); ctx.arc(x,y,r,0,7); ctx.fillStyle=fill; ctx.fill();
+  ctx.strokeStyle=stroke; ctx.lineWidth=1.5; ctx.stroke();
+}
+function label(ctx,x,y,t,color='#c6d2e0',size=12,align='center'){
+  ctx.fillStyle=color; ctx.font=`${size}px ui-monospace,monospace`;
+  ctx.textAlign=align; ctx.textBaseline='middle'; ctx.fillText(t,x,y);
+}
+function arrow(ctx,x1,y1,x2,y2,color='#3a4858',dash=[]){
+  ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=1.5;
+  ctx.setLineDash(dash); ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  ctx.setLineDash([]);
+  const a=Math.atan2(y2-y1,x2-x1), s=7;
+  ctx.beginPath(); ctx.moveTo(x2,y2);
+  ctx.lineTo(x2-s*Math.cos(a-.4), y2-s*Math.sin(a-.4));
+  ctx.lineTo(x2-s*Math.cos(a+.4), y2-s*Math.sin(a+.4));
+  ctx.closePath(); ctx.fill();
+}
+function box(ctx,x,y,w,h,fill='#0f141b',stroke='#1f2a36',r=10){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+  ctx.fillStyle=fill; ctx.fill(); ctx.strokeStyle=stroke; ctx.lineWidth=1.5; ctx.stroke();
+}
+function multi(ctx,x,y,w,h,lines){
+  box(ctx,x,y,w,h);
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  const lh=16, sy=y+h/2 - (lines.length-1)*lh/2;
+  lines.forEach((ln,i)=>{
+    if(ln.i){ctx.fillStyle=ln.i; ctx.font='600 12px ui-monospace,monospace';}
+    else    {ctx.fillStyle=ln.c||'#e8eef6'; ctx.font='13px -apple-system,sans-serif';}
+    ctx.fillText(ln.t, x+w/2, sy+i*lh);
+  });
+}
+
+// ---------- 02 architecture ----------
+(function(){
+  const c=document.getElementById('cnvArch'); const ctx=fitCanvas(c);
+  const W=c.clientWidth, H=parseInt(c.style.height);
+  // top bar: OS scheduler
+  box(ctx, W*.5-150, 20, 300, 48, '#0c1a22');
+  label(ctx,W*.5,44,'cron / launchd · 1分毎','#5ad1a5',13);
+  // arrow down to kage cron run
+  arrow(ctx,W*.5,68, W*.5,100,'#9fb3c8');
+  box(ctx,W*.5-150,100,300,44); label(ctx,W*.5,122,'kage cron run (1分tick)','#e8eef6',14);
+  // branch to cron + quest
+  arrow(ctx,W*.5-120,144, W*.5-220,200,'#9fb3c8');
+  arrow(ctx,W*.5+120,144, W*.5+220,200,'#6aa9ff');
+  // cron side
+  box(ctx,W*.5-300,200,200,90,'#0e1419');
+  multi(ctx,W*.5-300,200,200,90,[
+    {t:'cron ライフサイクル',i:'#5ad1a5'},
+    {t:'tasks/*.md',c:'#8b9bb0'},
+    {t:'cron式で should_run',c:'#8b9bb0'},
+  ]);
+  // quest side (new)
+  box(ctx,W*.5+100,200,200,90,'#0c1626');
+  multi(ctx,W*.5+100,200,200,90,[
+    {t:'quest ライフサイクル  NEW',i:'#6aa9ff'},
+    {t:'active な quest',c:'#8b9bb0'},
+    {t:'1 tick = 1 ノード',c:'#8b9bb0'},
+  ]);
+  // merge into executor
+  arrow(ctx,W*.5-200,290, W*.5-60,340,'#ffb454');
+  arrow(ctx,W*.5+200,290, W*.5+60,340,'#ffb454');
+  box(ctx,W*.5-160,340,320,52,'#1a1308');
+  multi(ctx,W*.5-160,340,320,52,[
+    {t:'executor.execute_task (共通)',i:'#ffb454'},
+  ]);
+  label(ctx,W*.5,H-14,'runs · logs · metadata · kage runs / kage logs で一元参照','#5a6b80',11);
+})();
+// ---------- 04 graph example ----------
+(function(){
+  const c=document.getElementById('cnvGraph'); const ctx=fitCanvas(c);
+  const W=c.clientWidth, H=parseInt(c.style.height);
+  const C={ok:'#3a6b58',grow:'#1d4a39',bad:'#4e1f1f',pend:'#26323f',run:'#553a17'};
+  // owner at top
+  node(ctx,W*.5,H*.12,26,'#3a2a6e'); label(ctx,W*.5,H*.12-2,'owner 👑','#d2a8ff',12);
+  // scout proposed (violet dashed)
+  node(ctx,W*.22,H*.42,22,'#3a2a6e'); label(ctx,W*.22,H*.42-2,'scout 提案','#d2a8ff',10);
+  // poc grown
+  node(ctx,W*.60,H*.42,22,'#1d4a39'); label(ctx,W*.60,H*.42-2,'poc 有望','#5ad1a5',11);
+  node(ctx,W*.85,H*.42,22,'#4e1f1f'); label(ctx,W*.85,H*.42-2,'poc 撤退','#ff6b6b',11);
+  // grandchildren
+  node(ctx,W*.75,H*.82,20,'#26323f'); label(ctx,W*.75,H*.82-2,'poc 保留','#c6d2e0',10);
+  node(ctx,W*.40,H*.82,20,'#1d4a39'); label(ctx,W*.40,H*.82-2,'poc 成長','#5ad1a5',10);
+  // edges
+  // edges from owner
+  arrow(ctx,W*.5,H*.12+26, W*.22,H*.42-22,'#d2a8ff', [4,4]);
+  arrow(ctx,W*.5,H*.12+26, W*.60,H*.42-22,'#d2a8ff');
+  arrow(ctx,W*.5,H*.12+26, W*.85,H*.42-22,'#d2a8ff', [4,4]);
+  // labels along edges
+  label(ctx,W*.30,H*.28,'grew_to','#5ad1a5',9,'left');
+  label(ctx,W*.66,H*.28,'aborted_to','#ff6b6b',9,'left');
+  label(ctx,W*.12,H*.28,'proposed_from','#d2a8ff',9,'left');
+  // child edges (grew_to)
+  arrow(ctx,W*.60+22,H*.42+10, W*.40-20,H*.82,'#5ad1a5');
+  arrow(ctx,W*.85-22,H*.42+10, W*.75+20,H*.82,'#3a4858', [4,4]);
+  // right column legend text
+  label(ctx,W*.86,H*.5,'保留 (pending)','#8b9bb0',10,'left');
+  label(ctx,W*.86,H*.62,'実行中 (running)','#ffb454',10,'left');
+  label(ctx,W*.86,H*.74,'成長中 (growing)','#5ad1a5',10,'left');
+  label(ctx,W*.86,H*.86,'撤退 (aborted)','#ff6b6b',10,'left');
+  label(ctx,W*.86,H*.98,'owner=黒 crown','#d2a8ff',9,'left');
+})();
+// ---------- v3.2 team hierarchy ----------
+(function(){
+  const c=document.getElementById('cnvTeam'); if(!c) return;
+  const ctx=fitCanvas(c);
+  const W=c.clientWidth, H=parseInt(c.style.height);
+  // Owner at top center
+  box(ctx,W*.5-90,20,180,44,'#0c1626'); label(ctx,W*.5,42,'owner 👑 (graph editor)','#d2a8ff',12);
+  arrow(ctx,W*.5,64, W*.5,100,'#9fb3c8');
+  // Team container box
+  box(ctx,W*.5-340,100,680,250,'#0f141b','#3a4858');
+  label(ctx,W*.5,116,'Team: scout (1ノード, 編成単位)','#6aa9ff',12,'center');
+  // 3 stages inside
+  const stages=[
+    {label:'planner',desc:'計画分解',x:W*.5-220,color:'#5ad1a5'},
+    {label:'executer',desc:'実行',x:W*.5,color:'#ffb454'},
+    {label:'accepter',desc:'受け入れ judge',x:W*.5+220,color:'#d2a8ff'},
+  ];
+  stages.forEach((s,i)=>{
+    box(ctx,s.x-70,150,140,60,'#1a1f2a');
+    label(ctx,s.x,170,s.label,s.color,13);
+    label(ctx,s.x,190,s.desc,'#8b9bb0',10);
+  });
+  // plan → exec → accept arrows
+  arrow(ctx,W*.5-220+70,180, W*.5-70,180,'#5ad1a5');
+  arrow(ctx,W*.5+70,180, W*.5+220-70,180,'#ffb454');
+  label(ctx,W*.5-145,172,'makes_plan','#5ad1a5',9);
+  label(ctx,W*.5+100,172,'executes','#ffb454',9);
+  // reject loop
+  ctx.strokeStyle='#f85149'; ctx.lineWidth=1.6; ctx.setLineDash([5,4]);
+  ctx.beginPath();
+  ctx.moveTo(W*.5+220,210);
+  ctx.bezierCurveTo(W*.5+260,260, W*.5-180,260, W*.5-220,210);
+  ctx.stroke(); ctx.setLineDash([]);
+  arrow(ctx,W*.5-220,212, W*.5-220,210,'#f85149');  // arrowhead pointing up
+  label(ctx,W*.5,255,'reject → revision_target','#ff6b6b',10);
+  // accept to owner (up arrow on side)
+  ctx.strokeStyle='#5ad1a5'; ctx.lineWidth=1.6;
+  ctx.beginPath();
+  ctx.moveTo(W*.5+220,150);
+  ctx.bezierCurveTo(W*.5+380,120, W*.5+380,40, W*.5+90,42);
+  ctx.stroke();
+  arrow(ctx,W*.5+95,42, W*.5+90,42,'#5ad1a5');
+  label(ctx,W*.5+340,70,'accept → owner','#5ad1a5',10);
+  // legend
+  label(ctx,W*.5,H-10,'owner=graph editor / Team=編成単位 / stage=社内工程','#5a6b80',10);
+})();
+// ---------- 05 tick loop ----------
+(function(){
+  const c=document.getElementById('cnvTick'); const ctx=fitCanvas(c);
+  const W=c.clientWidth, H=parseInt(c.style.height);
+  const steps=[
+    "保留ノード選択",
+    "実行中に更新",
+    "ロール毎の\nプロンプト構築",
+    "execute_task\n(共通 executor)",
+    "verdict JSON 解析",
+    "育成 / 撤退 +\n子ノード生成",
+    "agent_runs++\n(予算チェック)",
+  ];
+  const r=24, gap=(W-200)/(steps.length-1), y=H*.32;
+  ctx.strokeStyle='#6aa9ff'; ctx.lineWidth=2;
+  // loop back arc
+  ctx.beginPath(); ctx.moveTo(W-100,y); ctx.bezierCurveTo(W+20,y, W+20,H*.8, W-100,H*.8);
+  ctx.setLineDash([5,5]); ctx.stroke(); ctx.setLineDash([]);
+  arrow(ctx,W-100,H*.8, W-120,H*.8,'#6aa9ff');
+  label(ctx,W-40,H*.56,'次tick','#6aa9ff',10);
+  steps.forEach((s,i)=>{
+    const x=100+i*gap;
+    node(ctx,x,y,r, i===0?'#1d4a39': i===3?'#1a1308':'#0c1626');
+    label(ctx,x,y-1, '0'+(i+1),'#c6d2e0',10);
+    arrow(ctx,x+r,y, x+gap-r,y,'#9fb3c8');
+    // caption
+    const lines=s.split('\n'); lines.forEach((ln,j)=>{
+      label(ctx,x,y+r+16+j*14,ln,'#9fb3c8',10);
+    });
+  });
+  // budget guard
+  box(ctx,W*.5-160,H-54,320,34,'#2a0f0f');
+  label(ctx,W*.5,H-37,'agent_runs ≥ max_agent_runs で terminated','#ff6b6b',11);
+  arrow(ctx,W*.82,y+r+34, W*.82,H-20,'#4e1f1f', [3,3]);
+})();
+</script>
+</body>
+</html>
