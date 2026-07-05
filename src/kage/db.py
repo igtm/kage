@@ -64,7 +64,6 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
-    _ensure_quest_tables(cursor)
     _ensure_agent_immutable_triggers(cursor)
 
     conn.commit()
@@ -92,74 +91,6 @@ def _ensure_agent_immutable_triggers(cursor: sqlite3.Cursor) -> None:
         BEGIN
             SELECT RAISE(ABORT, 'agent_name rows are immutable');
         END
-        """
-    )
-
-
-def _ensure_quest_tables(cursor: sqlite3.Cursor) -> None:
-    """Create the quest lifecycle tables if they do not exist.
-
-    The quest lifecycle is an event-driven, team-based alternative to the cron
-    lifecycle. Tables store quests, their mind-map nodes, and directed edges.
-    """
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS quests (
-            id TEXT PRIMARY KEY,
-            project_path TEXT NOT NULL,
-            name TEXT NOT NULL,
-            direction TEXT NOT NULL,
-            status TEXT NOT NULL,
-            max_agent_runs INTEGER NOT NULL DEFAULT 50,
-            agent_runs INTEGER NOT NULL DEFAULT 0,
-            roles_json TEXT,
-            provider TEXT,
-            mode TEXT NOT NULL DEFAULT 'team',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    # Add the `mode` column to quests created before v2.
-    try:
-        cursor.execute(
-            "ALTER TABLE quests ADD COLUMN mode TEXT NOT NULL DEFAULT 'team'"
-        )
-    except sqlite3.OperationalError:
-        pass
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS quest_nodes (
-            id TEXT PRIMARY KEY,
-            quest_id TEXT NOT NULL,
-            parent_id TEXT,
-            role TEXT NOT NULL,
-            hypothesis TEXT NOT NULL,
-            status TEXT NOT NULL,
-            verdict TEXT,
-            evidence TEXT,
-            proposed_by TEXT,
-            run_id TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    # Add the `proposed_by` column to legacy quest_nodes tables (v1 — missing column).
-    try:
-        cursor.execute("ALTER TABLE quest_nodes ADD COLUMN proposed_by TEXT")
-    except sqlite3.OperationalError:
-        pass
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS quest_edges (
-            id TEXT PRIMARY KEY,
-            quest_id TEXT NOT NULL,
-            from_node TEXT,
-            to_node TEXT,
-            relation TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
         """
     )
 
