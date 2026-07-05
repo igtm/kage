@@ -10,6 +10,7 @@ from ..artifacts import (
     build_connector_incoming_prompt,
     collect_artifacts_from_dir,
     ensure_workspace_artifact_staging_dir,
+    inject_agent_env,
     inject_connector_delivery_env,
     write_artifact_metadata,
     write_incoming_artifact_metadata,
@@ -257,6 +258,8 @@ def _build_chat_invocation(
     artifact_dir: Path | None = None,
     connector_targets: list[tuple[str, str]] | None = None,
     extra_sections: list[str] | None = None,
+    agent_name: str | None = None,
+    run_id: str | None = None,
 ):
     config = get_global_config()
     engine_name = config.default_ai_engine
@@ -304,6 +307,8 @@ def _build_chat_invocation(
         env["PATH"] = config.env_path
     if artifact_dir is not None:
         inject_connector_delivery_env(env, artifact_dir, connector_targets)
+    # agent env 注入（ネスト時は既存の KAGE_RUN_ID を保持＝最外周優先）
+    inject_agent_env(env, agent_name, run_id)
 
     if cmd and cmd[0]:
         exe_path = shutil.which(cmd[0], path=env.get("PATH"))
@@ -320,7 +325,11 @@ def _build_chat_invocation(
 
 
 def generate_chat_reply(
-    message: str, system_prompt: str | None = None, working_dir: str | None = None
+    message: str,
+    system_prompt: str | None = None,
+    working_dir: str | None = None,
+    agent_name: str | None = None,
+    run_id: str | None = None,
 ) -> dict:
     """
     Generate a reply from the default AI engine configured in kage.
@@ -332,6 +341,8 @@ def generate_chat_reply(
         message=message,
         system_prompt=system_prompt,
         working_dir=working_dir,
+        agent_name=agent_name,
+        run_id=run_id,
     )
 
     res = subprocess.run(
@@ -358,6 +369,8 @@ def generate_logged_chat_reply(
     metadata: dict | None = None,
     project_path: str | None = None,
     incoming_attachment_preparer: IncomingAttachmentPreparer | None = None,
+    agent_name: str | None = None,
+    run_id: str | None = None,
 ) -> dict:
     from ..db import set_execution_pid, start_execution, update_execution
     from ..executor import prepare_command_for_execution, run_logged_command
@@ -367,6 +380,8 @@ def generate_logged_chat_reply(
     cwd_path = _resolve_chat_working_dir(config, working_dir)
     effective_project_path = project_path or str(cwd_path)
     base_metadata = dict(metadata or {})
+    if agent_name and "agent_name" not in base_metadata:
+        base_metadata["agent_name"] = agent_name
     connector_meta = base_metadata.get("connector")
     connector_targets = None
     if isinstance(connector_meta, dict):
@@ -380,12 +395,15 @@ def generate_logged_chat_reply(
     attachments: list[ConnectorAttachment] = []
     incoming_preparation = IncomingAttachmentPreparation()
 
+    # run_id が未指定で env にすでに KAGE_RUN_ID があれば最外周優先で維持
+    # （child env 注入は _build_chat_invocation 内で既存値優先ロジックが処理）
     exec_id = start_execution(
         effective_project_path,
         run_name,
         working_dir=str(cwd_path),
         execution_kind=execution_kind,
         provider_name=config.default_ai_engine,
+        agent_name=agent_name,
     )
     artifact_staging_dir = ensure_workspace_artifact_staging_dir(cwd_path, exec_id)
     write_artifact_metadata(exec_id, artifact_staging_dir, [])
@@ -430,6 +448,8 @@ def generate_logged_chat_reply(
             }
 
     try:
+        # 子プロセス env には exec_id を run_id として渡す（既存外周があれば保持）
+        child_run_id = exec_id
         invocation = _build_chat_invocation(
             message=message,
             system_prompt=system_prompt,
@@ -443,6 +463,8 @@ def generate_logged_chat_reply(
                     incoming_preparation.errors,
                 )
             ],
+            agent_name=agent_name,
+            run_id=child_run_id,
         )
     except Exception as exc:
         err = str(exc)

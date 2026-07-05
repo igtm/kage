@@ -15,6 +15,7 @@ from .artifacts import (
     build_connector_delivery_prompt,
     collect_artifacts_from_dir,
     ensure_workspace_artifact_staging_dir,
+    inject_agent_env,
     inject_connector_delivery_env,
     write_artifact_metadata,
 )
@@ -212,14 +213,6 @@ def _resolve_executable_path(executable: str, env: dict[str, str]) -> str | None
     return None
 
 
-def _get_memory_dir(project_dir: Path, task_name: str) -> Path:
-    """タスクのメモリディレクトリパスを返す。ディレクトリがなければ作成する。"""
-    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", task_name)
-    memory_dir = project_dir / ".kage" / "memory" / safe_name
-    memory_dir.mkdir(parents=True, exist_ok=True)
-    return memory_dir
-
-
 def _resolve_task_working_dir(
     project_dir: Path, task: TaskDef, task_file: Optional[Path] = None
 ) -> Path:
@@ -232,46 +225,6 @@ def _resolve_task_working_dir(
 
     base_dir = task_file.parent if task_file else project_dir
     return (base_dir.resolve() / working_dir).resolve()
-
-
-def _load_recent_memories(memory_dir: Path, max_entries: int = 5) -> str:
-    """直近N日分のメモリファイルを読み込み、結合した文字列として返す。"""
-    date_files = sorted(memory_dir.glob("*.json"), reverse=True)
-    # task.json はメモリファイルではないので除外
-    date_files = [f for f in date_files if f.name != "task.json"]
-    date_files = date_files[:max_entries]
-    date_files.reverse()  # 古い順に並べる
-
-    if not date_files:
-        return ""
-
-    parts = []
-    for f in date_files:
-        try:
-            content = f.read_text(encoding="utf-8")
-            date_label = f.stem  # e.g. "2026-02-28"
-            parts.append(f"--- {date_label} ---\n{content}")
-        except Exception:
-            continue
-    return "\n\n".join(parts)
-
-
-def _load_task_json(memory_dir: Path) -> dict:
-    """task.json を読み込む。存在しなければ空dictを返す。"""
-    task_json_path = memory_dir / "task.json"
-    if task_json_path.exists():
-        try:
-            return json.loads(task_json_path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
-
-
-def _compute_prompt_hash(prompt: str) -> str:
-    """プロンプト本文のSHA256ハッシュを返す。"""
-    import hashlib
-
-    return hashlib.sha256(prompt.strip().encode("utf-8")).hexdigest()
 
 
 def _deactivate_task(task_file: Path):
@@ -594,7 +547,6 @@ def execute_task(
                 )
             return TaskExecutionResult.SKIPPED_SUSPENDED
 
-    from .config import get_system_prompt
     from .parser import ConcurrencyPolicy, ExecutionMode
 
     # 多重起動チェック
@@ -617,7 +569,10 @@ def execute_task(
                 pass
 
     global_config = get_global_config(workspace_dir=project_dir)
-    system_prompt = get_system_prompt(workspace_dir=project_dir)
+    from .agent import get_agent_for_project, build_full_system_prompt
+
+    task_agent = get_agent_for_project(global_config, project_dir)
+    system_prompt = build_full_system_prompt(global_config, task_agent)
     execution_dir = _resolve_task_working_dir(project_dir, task, task_file)
 
     exec_id: str | None = None
@@ -628,14 +583,6 @@ def execute_task(
     # ロックファイル作成
     try:
         lock_path.write_text(str(os.getpid()))
-
-        # メモリの読み込み（直近N件）
-        memory_dir = _get_memory_dir(project_dir, task.name)
-        task_plan_file = (memory_dir / "task.json").resolve()
-        memory_dir_hint = memory_dir.resolve()
-        memory_context_str = _load_recent_memories(
-            memory_dir, max_entries=global_config.memory_max_entries
-        )
 
         provider = None
         parser_type = "raw"
@@ -667,45 +614,10 @@ def execute_task(
         if compiled_override_path is not None:
             cmd = ["bash", str(compiled_override_path)]
         elif task.prompt:
-            # タスク管理 (task.json) の読み込みと prompt_hash チェック
-            task_plan = _load_task_json(memory_dir)
-            current_hash = _compute_prompt_hash(task.prompt)
-
-            task_plan_context = ""
-            if task_plan:
-                stored_hash = task_plan.get("prompt_hash", "")
-                plan_json = json.dumps(task_plan, indent=2, ensure_ascii=False)
-                if stored_hash == current_hash:
-                    task_plan_context = (
-                        f"\n\n## Task Plan ({task_plan_file})\n{plan_json}"
-                    )
-                else:
-                    task_plan_context = (
-                        f"\n\n## Task Plan ({task_plan_file})\n"
-                        f"\u26a0 **The task prompt has been updated** (hash mismatch). "
-                        f"Review the previous task plan below and regenerate it based on the new instructions. "
-                        f"Reuse completed work where applicable. Update `prompt_hash` to `{current_hash}`.\n\n"
-                        f"Previous plan:\n{plan_json}"
-                    )
-            else:
-                task_plan_context = (
-                    f"\n\n## Task Plan\n"
-                    f"No task plan found. Create one by writing to `{task_plan_file}`.\n"
-                    f"Use `prompt_hash`: `{current_hash}`"
-                )
-
-            # メモリコンテキスト
-            if memory_context_str:
-                memory_section = f"\n\n## Recent Memory (most recent {global_config.memory_max_entries} entries)\n{memory_context_str}"
-            else:
-                memory_section = (
-                    f"\n\n## Recent Memory\n"
-                    f"No previous memory found. You can write memory files to "
-                    f"`{memory_dir_hint / 'YYYY-MM-DD.json'}`."
-                )
-
             # プロバイダーの解決
-            engine_name = task.provider or global_config.default_ai_engine
+            engine_name = (
+                task.provider or task_agent.provider or global_config.default_ai_engine
+            )
             if not engine_name:
                 msg = "AIエンジンが未指定です。"
                 print(f"[kage] ERROR: {msg}")
@@ -716,14 +628,13 @@ def execute_task(
                     f"Task '{task.name}' is about to use Gemini CLI"
                 )
 
-            # プロンプトの構築: System Prompt + Task Plan + Memory + Task Instructions
+            # プロンプトの構築: System Prompt (agent + ISOLATION + memory headings) + Task Instructions
             thinking_tag = get_thinking_tag(engine_name)
             formatted_system_prompt = system_prompt.replace(
                 "{thinking_tag}", thinking_tag
             )
             base_prompt = (
-                f"{formatted_system_prompt}{task_plan_context}{memory_section}"
-                f"\n\n## Task Instructions\n{task.prompt}"
+                f"{formatted_system_prompt}\n\n## Task Instructions\n{task.prompt}"
             )
 
             provider = global_config.providers.get(engine_name)
@@ -767,6 +678,7 @@ def execute_task(
                     else "command"
                 ),
                 provider_name=engine_name if prompt_execution else None,
+                agent_name=task_agent.name,
             )
 
             if compiled_override_path is not None:
@@ -799,6 +711,8 @@ def execute_task(
             env = os.environ.copy()
             if global_config.env_path:
                 env["PATH"] = global_config.env_path
+            # agent env 注入（KAGE_RUN_ID は最外周優先）
+            inject_agent_env(env, task_agent.name, exec_id)
 
             if task.notify_connectors:
                 artifact_staging_dir = ensure_workspace_artifact_staging_dir(
@@ -879,20 +793,7 @@ def execute_task(
             if get_execution_status(exec_id) == "STOPPED":
                 return TaskExecutionResult.STARTED
 
-            # autostop チェック: task.json の sub_tasks が全て done の場合
-            if prompt_execution and task.mode == ExecutionMode.AUTOSTOP and task_file:
-                should_stop = False
-                # task.json による判定
-                updated_plan = _load_task_json(memory_dir)
-                if updated_plan.get("sub_tasks"):
-                    all_done = all(
-                        t.get("status") == "done" for t in updated_plan["sub_tasks"]
-                    )
-                    if all_done:
-                        should_stop = True
-                if should_stop:
-                    _deactivate_task(task_file)
-
+            # once モードは1回実行で自動停止
             if task.mode == ExecutionMode.ONCE and task_file:
                 _deactivate_task(task_file)
 

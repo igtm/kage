@@ -304,6 +304,58 @@ Realtime logs are written to `~/.kage/logs/connector-realtime-<name>.log` and ro
 
 > **⚠️ Security Warning**: `poll = true` or `realtime = true` allows anyone in the channel to interact with the AI, which has **full access to your PC's file system and tools**. Only enable one chat mode, and only in private/trusted channels.
 
+## Agents & Multi-tenant Isolation
+
+An **Agent** is a top-level concept that owns projects, connectors, memory, and a system prompt. The built-in agent `kage` always exists and cannot be removed; connectors and projects with no explicit agent fall back to it. Define your own agents to give connectors distinct personas and to prevent context from leaking between them — for example a private Discord channel can be bound to agent `private` while a public channel is bound to `public`, and conversations never cross over.
+
+```toml
+[agents.public]
+system_prompt = """
+You are the public-facing assistant. Answer briefly and politely.
+Do not mention private projects or other agents.
+"""
+default_working_dir = "~/projects/public"
+
+[agents.private]
+system_prompt = "You are the user's private assistant. Be terse and direct."
+default_working_dir = "~/projects/private"
+
+[connectors.discord_public]
+type = "discord"
+poll = true
+bot_token = "..."
+channel_id = "..."
+agent = "public"          # binds this connector to the public agent
+
+[connectors.discord_private]
+type = "discord"
+poll = true
+bot_token = "..."
+channel_id = "..."
+agent = "private"
+```
+
+When kage spawns the AI provider, it injects two environment variables:
+
+- `KAGE_RUN_ID` — the authoritative execution id. The CLI looks up `executions.agent_name` in the SQLite database to decide which agent you run as. This column is protected by a SQLite trigger and cannot be updated or deleted.
+- `KAGE_AGENT_NAME` — display hint only. Tampering with it has no effect: the database always wins.
+
+From inside the spawned shell, `kage *` commands are scoped to the agent. You cannot list, show, or operate on connectors, tasks, or memory bound to another agent. Human shells (no `KAGE_RUN_ID` set) act as superusers and bypass the scope filter — use `kage doctor` to see the warning if you accidentally left these set in your shell environment.
+
+### Agent Memory
+
+Each agent owns a topic-keyed memory space at `~/.kage/agents/<agent_name>/memory/<slug>.md`. At the start of every run kage injects the list of available memories into the system prompt using an `<available_memories>` block (one entry per memory, with `<name>`, `<description>`, and `<updated_at>` — file paths are intentionally hidden). When the AI needs the body of a memory it calls the CLI:
+
+```bash
+kage memory list                              # show available memories of the current agent
+kage memory show <slug>                       # print the body
+kage memory write <slug> --description "..."  # create/overwrite; body is read from stdin
+kage memory delete <slug>                     # remove
+kage memory search <query>                    # substring search across bodies
+```
+
+Memory is scoped per agent (not per task), overwrite-style (latest state only, `updated_at` is refreshed), and `kage memory` commands are themselves scoped to the current agent when run from within an agent context. The previous per-task memory system (`.kage/memory/<task>/YYYY-MM-DD.json` and `task.json`) has been removed; the install migration backs up and replaces legacy `system_prompt.md` files and archives legacy memory directories.
+
 ### macOS launchd Specific Settings
 On macOS, `kage` uses `launchd` instead of `cron`. You can further customize its behavior in `config.toml`:
 

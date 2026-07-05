@@ -9,6 +9,9 @@ KAGE_CONFIG_PATH = KAGE_GLOBAL_DIR / "config.toml"
 KAGE_PROJECTS_LIST = KAGE_GLOBAL_DIR / "projects.list"
 KAGE_DB_PATH = KAGE_GLOBAL_DIR / "kage.db"
 KAGE_LOGS_DIR = KAGE_GLOBAL_DIR / "logs"
+KAGE_AGENTS_DIR = KAGE_GLOBAL_DIR / "agents"
+
+DEFAULT_AGENT_NAME = "kage"
 
 
 class CommandDef(BaseModel):
@@ -27,6 +30,16 @@ class ProviderConfig(BaseModel):
     model_flag: Optional[str] = "--model"
 
 
+class AgentConfig(BaseModel):
+    """Agent（トップ概念）設定: project / connector / memory / system_prompt を所有する独立人格。"""
+
+    name: str
+    system_prompt: Optional[str] = None
+    default_working_dir: Optional[str] = None
+    extra_project_dirs: list[str] = []
+    provider: Optional[str] = None
+
+
 class DiscordConnectorConfig(BaseModel):
     type: str = "discord"
     poll: bool = False
@@ -38,6 +51,7 @@ class DiscordConnectorConfig(BaseModel):
     max_age_seconds: int = 600
     system_prompt: Optional[str] = None
     working_dir: Optional[str] = None
+    agent: Optional[str] = None
 
 
 class SlackConnectorConfig(BaseModel):
@@ -51,15 +65,7 @@ class SlackConnectorConfig(BaseModel):
     max_age_seconds: int = 600
     system_prompt: Optional[str] = None
     working_dir: Optional[str] = None
-    type: str = "slack"
-    poll: bool = False
-    realtime: bool = False
-    bot_token: str = ""
-    channel_id: str = ""
-    user_id: Optional[str] = None
-    history_limit: int = 10
-    max_age_seconds: int = 600
-    system_prompt: Optional[str] = None
+    agent: Optional[str] = None
 
 
 class TelegramConnectorConfig(BaseModel):
@@ -73,6 +79,7 @@ class TelegramConnectorConfig(BaseModel):
     max_age_seconds: int = 600
     system_prompt: Optional[str] = None
     working_dir: Optional[str] = None
+    agent: Optional[str] = None
 
 
 class GlobalConfig(BaseModel):
@@ -92,11 +99,12 @@ class GlobalConfig(BaseModel):
     timezone: str = "UTC"  # cron式のタイムゾーン評価基準
     env_path: Optional[str] = None  # cron実行時に復元するPATH環境変数
     system_prompt: str = ""  # デフォルトのシステムプロンプト
-    memory_max_entries: int = 5  # プロンプトに注入する直近メモリの最大件数
     run_retention_count: int = 100  # 保持する実行履歴数
+    default_agent: str = DEFAULT_AGENT_NAME
     commands: dict[str, CommandDef] = {}
     providers: dict[str, ProviderConfig] = {}
     connectors: dict[str, dict] = {}
+    agents: dict[str, AgentConfig] = {}
 
 
 PROMPT_PLACEHOLDER = "{prompt}"
@@ -166,6 +174,13 @@ def get_global_config(workspace_dir: Optional[Path] = None) -> GlobalConfig:
     ws_local_config_path = ws_dir / ".kage" / "config.local.toml"
     ws_local_config = _load_toml_file(ws_local_config_path)
     merged = _deep_merge(merged, ws_local_config)
+
+    # 5. agents.<name> に `name` が未設定なら TOML 表名で補完（安全網）
+    agents_raw = merged.get("agents")
+    if isinstance(agents_raw, dict):
+        for key, agent_cfg in list(agents_raw.items()):
+            if isinstance(agent_cfg, dict) and "name" not in agent_cfg:
+                agent_cfg["name"] = str(key)
 
     try:
         return GlobalConfig(**merged)

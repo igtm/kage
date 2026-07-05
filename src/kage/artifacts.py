@@ -8,6 +8,8 @@ from .runs import load_run_metadata, write_run_metadata
 
 ARTIFACT_ENV_VAR = "KAGE_ARTIFACT_DIR"
 CONNECTOR_TARGETS_ENV_VAR = "KAGE_CONNECTOR_TARGETS_JSON"
+AGENT_NAME_ENV_VAR = "KAGE_AGENT_NAME"
+RUN_ID_ENV_VAR = "KAGE_RUN_ID"
 ARTIFACT_STAGING_DIRNAME = "connector-artifacts"
 INCOMING_ARTIFACT_DIRNAME = "incoming"
 _INVALID_ARTIFACT_NAME_RE = re.compile(r"[\\/\r\n\t]+")
@@ -173,6 +175,21 @@ def inject_connector_delivery_env(
         normalize_connector_targets(connector_targets),
         ensure_ascii=False,
     )
+
+
+def inject_agent_env(
+    env: dict[str, str],
+    agent_name: str | None,
+    run_id: str | None,
+) -> None:
+    """agent 実行環境を子プロセスに伝える env を注入。
+    - KAGE_RUN_ID は最外周優先（既存値があれば上書きしない）。
+    - KAGE_AGENT_NAME は表示用ヒント。run_id が DB で権威を持つため偽装無効。
+    """
+    if run_id and env.get(RUN_ID_ENV_VAR) is None:
+        env[RUN_ID_ENV_VAR] = run_id
+    if agent_name and env.get(AGENT_NAME_ENV_VAR) is None:
+        env[AGENT_NAME_ENV_VAR] = agent_name
 
 
 def collect_artifacts_from_dir(

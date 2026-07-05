@@ -1,10 +1,16 @@
 from abc import ABC, abstractmethod
 import json
+import os
 import time
 from pathlib import Path
 import urllib.request
 
+from ..agent import (
+    build_full_system_prompt,
+    get_agent_for_connector,
+)
 from ..artifacts import write_incoming_attachment_bytes
+from ..config import get_global_config
 from ..connector_payload import (
     ConnectorAttachment,
     ConnectorDelivery,
@@ -31,6 +37,53 @@ class BaseConnector(ABC):
         self.history_file = (
             Path.home() / ".kage" / "connectors" / f"{self.name}_history.jsonl"
         )
+
+    def _resolve_agent_and_compose_system_prompt(self) -> str:
+        """connector に bind された agent を解決し、
+        ISOLATION + agent system_prompt + memory headings XML を結合した
+        system_prompt を返す。connector.system_prompt は呼び出し側で後置する。
+        """
+        config = get_global_config()
+        c_dict = {
+            k: getattr(self.config, k)
+            for k in dir(self.config)
+            if not k.startswith("_")
+        }
+        # pydantic model の dict 表現を取得（fieldsのみ）
+        c_dict = self._config_dict()
+        agent = get_agent_for_connector(config, self.name, c_dict)
+        return build_full_system_prompt(config, agent), agent
+
+    def _config_dict(self) -> dict:
+        # pydantic v2 BaseModel 系か plain object 兼務
+        if hasattr(self.config, "model_dump"):
+            return self.config.model_dump()
+        if hasattr(self.config, "dict"):
+            try:
+                return self.config.dict()
+            except Exception:
+                pass
+        return {
+            k: getattr(self.config, k)
+            for k in getattr(self.config, "__fields__", {}).keys()
+        }
+
+    def _resolve_agent_name(self) -> str:
+        config = get_global_config()
+        agent = get_agent_for_connector(config, self.name, self._config_dict())
+        return agent.name
+
+    def _resolve_working_dir(self) -> str | None:
+        work_dir = getattr(self.config, "working_dir", None)
+        if work_dir:
+            return work_dir
+        config = get_global_config()
+        agent = get_agent_for_connector(config, self.name, self._config_dict())
+        return agent.default_working_dir
+
+    def inherit_parent_run_env(self) -> str | None:
+        """ネスト実行時に最外周 KAGE_RUN_ID を維持。無ければ None（新規 run 扱い）。"""
+        return os.environ.get("KAGE_RUN_ID")
 
     def _load_state(self):
         if self.state_file.exists():

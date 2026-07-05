@@ -19,6 +19,50 @@ app.add_typer(cron_app, name="cron")
 task_app = typer.Typer(help="Manage kage tasks")
 app.add_typer(task_app, name="task")
 
+
+@task_app.callback()
+def task_app_callback():
+    """Task commands are scoped to the current agent (if running inside one)."""
+    pass
+
+
+def _guard_task_command_for_project(project_path: Optional[str | Path]) -> None:
+    """現 agent が想定 project を所有するか検証。人間は skip。"""
+    from .agent import assert_task_command_allowed
+    from .config import get_global_config
+
+    config = get_global_config()
+    p = Path(project_path).resolve() if project_path else Path.cwd().resolve()
+    assert_task_command_allowed(config, p)
+
+
+def _guard_task_command_by_name(task_name: str | None) -> None:
+    """task 名から属する project を解決し agent 配下か検証。"""
+    if task_name is None:
+        return
+    from .config import KAGE_PROJECTS_LIST, get_global_config
+
+    config = get_global_config()
+    for line in (
+        KAGE_PROJECTS_LIST.read_text(encoding="utf-8").splitlines()
+        if KAGE_PROJECTS_LIST.exists()
+        else []
+    ):
+        proj = Path(line.strip())
+        if not proj.exists():
+            continue
+        tasks_dir = proj / ".kage" / "tasks"
+        if not tasks_dir.exists():
+            continue
+        # task 名でファイルを探索
+        candidates = list(tasks_dir.glob(f"{task_name}.*"))
+        if candidates:
+            from .agent import assert_task_command_allowed
+
+            assert_task_command_allowed(config, proj.resolve())
+            return
+
+
 project_app = typer.Typer(help="Manage registered projects")
 app.add_typer(project_app, name="project")
 
@@ -40,6 +84,16 @@ completion_app = typer.Typer(
     help="Shell completion helpers, including task and run ID suggestions"
 )
 app.add_typer(completion_app, name="completion")
+
+agent_app = typer.Typer(
+    help="Manage agents (independent personas bound to connectors and projects)"
+)
+app.add_typer(agent_app, name="agent")
+
+memory_app = typer.Typer(
+    help="Manage agent memory: durable topic-keyed notes scoped per agent"
+)
+app.add_typer(memory_app, name="memory")
 
 
 def _completion_script(shell: str) -> str:
@@ -588,9 +642,11 @@ def project_remove(
 ):
     """Unregister a project from kage."""
     from .config import KAGE_PROJECTS_LIST
+    from .agent import assert_not_in_agent_run
     from rich.console import Console
     from pathlib import Path
 
+    assert_not_in_agent_run("remove a project")
     console = Console()
     if path:
         target_path = Path(path).resolve()
@@ -1114,6 +1170,7 @@ def cron_run():
 
 
 def _is_ja() -> bool:
+    """LANG 環境変値が ja* で始まっていれば True。"""
     import os
 
     for key in ("LC_ALL", "LANG", "LANGUAGE"):
@@ -1706,7 +1763,8 @@ def doctor():
             "commands",
             "providers",
             "connectors",
-            "memory_max_entries",
+            "agents",
+            "default_agent",
             "run_retention_count",
             "working_dir",
         }
@@ -1723,7 +1781,7 @@ def doctor():
             "timezone": (str,),
             "env_path": (str,),
             "system_prompt": (str,),
-            "memory_max_entries": (int,),
+            "default_agent": (str,),
             "run_retention_count": (int,),
             "working_dir": (str,),
         }
@@ -2282,6 +2340,9 @@ def doctor():
 
     console.print(table)
 
+    # --- agent / RLS diagnostics ---
+    _agent_doctor_checks(console, ok, warn, fail, is_ja=is_ja)
+
     fails = [c for c in checks if "✘" in c[0]]
     warns = [c for c in checks if "⚠" in c[0]]
     console.print(
@@ -2289,6 +2350,145 @@ def doctor():
     )
     if fails:
         raise typer.Exit(code=1)
+
+
+def _agent_doctor_checks(console, ok, warn, fail, *, is_ja=False):
+    """agent / RLS 系の診断を追加で実行し、別テーブルで表示."""
+    import os
+    import sqlite3
+
+    from rich.table import Table
+
+    from .agent import BUILTIN_AGENTS, RUN_ID_ENV_VAR, AGENT_NAME_ENV_VAR
+    from .config import (
+        KAGE_DB_PATH,
+        KAGE_PROJECTS_LIST,
+        KAGE_CONFIG_PATH,
+        get_global_config,
+    )
+
+    config = get_global_config()
+    local_checks: list[tuple[str, str, str]] = []
+
+    def lok(label, detail=""):
+        local_checks.append(("[green]✔[/green]", label, detail))
+
+    def lwarn(label, detail=""):
+        local_checks.append(("[yellow]⚠[/yellow]", label, detail))
+
+    def lfail(label, detail=""):
+        local_checks.append(("[red]✘[/red]", label, detail))
+
+    # 1. trigger 存在チェック
+    if KAGE_DB_PATH.exists():
+        try:
+            conn = sqlite3.connect(KAGE_DB_PATH)
+            triggers = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='trigger'"
+                    " AND name IN ('trg_exec_agent_no_update','trg_exec_agent_no_delete')"
+                )
+            }
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(executions)")}
+            conn.close()
+            if "agent_name" not in cols:
+                lfail("executions.agent_name column", "missing")
+            elif len(triggers) < 2:
+                lwarn(
+                    "agent immutable triggers",
+                    f"{len(triggers)}/2 present; run `kage migrate install`",
+                )
+            else:
+                lok("agent_isolation_triggers", "agent_name immutable")
+        except Exception as e:
+            lwarn("agent_isolation_triggers", f"failed: {e}")
+    else:
+        lok("agent_isolation_triggers", "db not initialized (clean install)")
+
+    # 2. default_agent 解決チェック
+    if config.default_agent in BUILTIN_AGENTS:
+        lok("default_agent", f"default_agent='{config.default_agent}' (builtin)")
+    elif config.default_agent in config.agents:
+        lok("default_agent", f"default_agent='{config.default_agent}' (user)")
+    else:
+        lwarn(
+            "default_agent",
+            f"'{config.default_agent}' is not defined; falling back to 'kage'",
+        )
+
+    # 3. 各 connector の bound agent 表示 / 共有警告
+    bound_counts: dict[str, int] = {}
+    for _name, c_dict in config.connectors.items():
+        bound = c_dict.get("agent")
+        if hasattr(bound, "unwrap"):
+            bound = bound.unwrap()
+        bound = bound or config.default_agent
+        bound_counts[bound] = bound_counts.get(bound, 0) + 1
+
+    default_share = bound_counts.get(config.default_agent, 0)
+    if default_share > 1 and config.default_agent == "kage":
+        lwarn(
+            "agent sharing",
+            f"{default_share} connectors share the default agent '{config.default_agent}'; "
+            f"set distinct 'agent' fields to isolate contexts",
+        )
+    elif bound_counts:
+        for name, count in sorted(bound_counts.items()):
+            lok("agent binding", f"agent '{name}': {count} connector(s)")
+    else:
+        lok("agent binding", "no connectors configured")
+
+    # 4. shell env の KAGE_RUN_ID / KAGE_AGENT_NAME 残留検知
+    if os.environ.get(RUN_ID_ENV_VAR) or os.environ.get(AGENT_NAME_ENV_VAR):
+        lwarn(
+            "agent env in shell",
+            "KAGE_RUN_ID or KAGE_AGENT_NAME is set in your shell; kage commands "
+            "will be agent-scoped. Unset it for full administrative access.",
+        )
+
+    # 5. memory_max_entries 残留
+    import tomlkit
+
+    if KAGE_CONFIG_PATH.exists():
+        try:
+            with open(KAGE_CONFIG_PATH, "r", encoding="utf-8") as f:
+                doc = tomlkit.load(f)
+            if "memory_max_entries" in doc:
+                lwarn(
+                    "legacy config",
+                    "memory_max_entries is still present; migration 0004 should remove it",
+                )
+        except Exception:
+            pass
+
+    # 6. project ごとの legacy memory dir 発見
+    legacy_count = 0
+    if KAGE_PROJECTS_LIST.exists():
+        try:
+            with open(KAGE_PROJECTS_LIST, "r", encoding="utf-8") as f:
+                lines = [ln.strip() for ln in f if ln.strip()]
+        except Exception:
+            lines = []
+        for ln in lines:
+            mem = Path(ln) / ".kage" / "memory"
+            if mem.exists() and mem.is_dir():
+                legacy_count += 1
+    if legacy_count:
+        lok(
+            "legacy memory dirs",
+            f"{legacy_count} legacy `.kage/memory/` dirs detected (migration 0004 archives them)",
+        )
+
+    # 表示
+    title = "Agent / Isolation" if not is_ja else "Agent / 分離"
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    table.add_column("", width=2)
+    table.add_column(f"{title}", style="bold")
+    table.add_column("", style="dim")
+    for icon, lbl, detail in local_checks:
+        table.add_row(icon, lbl, detail)
+    console.print(table)
 
 
 @app.command("version")
@@ -2414,6 +2614,7 @@ poll = true      # 1-minute polling (simpler, no Gateway required)
 bot_token = "YOUR_BOT_TOKEN"
 channel_id = "YOUR_CHANNEL_ID"
 system_prompt = "Optional additional instructions for this connector"
+agent = "kage"            # bind to an [agents.<name>] table to isolate context
 ```
 
 > **⚠️ Security**: `poll = true` or `realtime = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Only enable one of them, and only in private/trusted channels. Task notifications (via `notify_connectors`) work even with both flags set to `false`.
@@ -2452,6 +2653,7 @@ poll = true   # ⚠️ Only enable in private/trusted channels (grants AI access
 bot_token = "xoxb-YOUR_TOKEN"
 channel_id = "YOUR_CHANNEL_ID"
 system_prompt = "Optional additional instructions for this connector"
+agent = "kage"            # bind to an [agents.<name>] table to isolate context
 ```
 
 > **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
@@ -2478,6 +2680,7 @@ poll = true   # ⚠️ Only enable in private/trusted chats (grants AI access to
 bot_token = "YOUR_BOT_TOKEN"
 chat_id = "YOUR_CHAT_ID"
 system_prompt = "Optional additional instructions for this connector"
+agent = "kage"            # bind to an [agents.<name>] table to isolate context
 ```
 
 > **⚠️ Security**: `poll = true` allows anyone in the chat to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
@@ -2513,8 +2716,13 @@ def connector_list():
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("Name", style="bold")
     table.add_column("Type")
+    table.add_column("Agent")
     table.add_column("Status")
     table.add_column("Details")
+
+    from .agent import get_current_agent_name
+
+    current_agent = get_current_agent_name()
 
     for name, c_dict in config.connectors.items():
         c_type = c_dict.get("type", "unknown")
@@ -2525,6 +2733,15 @@ def connector_list():
             is_polling = is_polling.unwrap()
         if hasattr(is_realtime, "unwrap"):
             is_realtime = is_realtime.unwrap()
+
+        # agent 名の解決
+        bound = c_dict.get("agent")
+        if hasattr(bound, "unwrap"):
+            bound = bound.unwrap()
+        agent_name = bound or config.default_agent
+        # AI 実行中かつ自 agent でなければ名前のみマスク
+        if current_agent is not None and agent_name != current_agent:
+            agent_name = "[dim]<other agent>[/dim]"
 
         status_parts = []
         if is_polling:
@@ -2547,7 +2764,7 @@ def connector_list():
             if c_dict.get("user_id"):
                 details.append(f"User Filter: {str(c_dict.get('user_id'))}")
 
-        table.add_row(name, c_type, status, ", ".join(details))
+        table.add_row(name, c_type, agent_name, status, ", ".join(details))
 
     console.print(table)
 
@@ -2565,6 +2782,7 @@ def connector_poll():
         console.print("[green]✔ Polling completed.[/green]")
     except Exception as e:
         console.print(f"[red]✘ Polling failed: {e}[/red]")
+    # run_connectors 内部で agent filter 済み
 
 
 realtime_app = typer.Typer(
@@ -2591,7 +2809,34 @@ def _resolve_realtime_names(name: Optional[str]) -> list[str]:
             print(f"[kage] Connector '{name}' does not have realtime=true.")
             raise typer.Exit(1)
         return [name]
-    return get_realtime_connector_names()
+    names = get_realtime_connector_names()
+    return names
+
+
+def _guard_realtime_for_agent(names: list[str]) -> list[str]:
+    """現 agent 配下の connector だけ残す。人間は全件。"""
+    from .agent import get_current_agent_name
+    from .config import get_global_config
+
+    config = get_global_config()
+    current = get_current_agent_name()
+    if current is None:
+        return names
+    kept: list[str] = []
+    for n in names:
+        c_dict = config.connectors.get(n, {})
+        bound = c_dict.get("agent")
+        if hasattr(bound, "unwrap"):
+            bound = bound.unwrap()
+        bound = bound or config.default_agent
+        if bound == current:
+            kept.append(n)
+        else:
+            print(
+                f"[kage] Skipping connector '{n}' (bound to agent '{bound}', "
+                f"current agent '{current}')."
+            )
+    return kept
 
 
 @realtime_app.command("run")
@@ -2726,3 +2971,375 @@ def realtime_status():
         )
 
     console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# kage agent: list / show / create
+# ---------------------------------------------------------------------------
+
+
+def _all_agent_metas(config):
+    """既知の agent 一覧を (name, source) 形式で返す。BUILTIN ('kage') を含む。"""
+    from .agent import BUILTIN_AGENTS
+
+    metas = []
+    for name in BUILTIN_AGENTS:
+        metas.append((name, "builtin"))
+    for name, agent in config.agents.items():
+        if name in {m[0] for m in metas}:
+            continue
+        metas.append((name, "user"))
+    return metas
+
+
+@agent_app.command("list")
+def agent_list():
+    """List configured agents. AI runs only see the current agent; humans see all."""
+    from .agent import get_current_agent_name
+    from .config import get_global_config
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    config = get_global_config()
+    current = get_current_agent_name()
+
+    # connector → agent binding count
+    binding_counts: dict[str, int] = {}
+    for conn_name, c_dict in config.connectors.items():
+        bound = c_dict.get("agent")
+        if hasattr(bound, "unwrap"):
+            bound = bound.unwrap()
+        bound = bound or config.default_agent
+        binding_counts[bound] = binding_counts.get(bound, 0) + 1
+
+    metas = _all_agent_metas(config)
+    if current is not None:
+        metas = [m for m in metas if m[0] == current]
+
+    if not metas:
+        console.print(
+            f"[yellow]No agents visible (current agent: '{current}').[/yellow]"
+        )
+        return
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Name", style="bold")
+    table.add_column("Source")
+    table.add_column("Connectors")
+    table.add_column("Projects")
+
+    for name, source in metas:
+        agent = config.agents.get(name)
+        projects = 0
+        if agent:
+            projects = len(agent.extra_project_dirs) + (
+                1 if agent.default_working_dir else 0
+            )
+        table.add_row(
+            name,
+            source,
+            str(binding_counts.get(name, 0)),
+            str(projects),
+        )
+
+    console.print(table)
+
+
+@agent_app.command("show")
+def agent_show(
+    name: str = typer.Argument(..., help="Agent name to inspect."),
+):
+    """Show an agent's persona, system_prompt, projects and connectors."""
+    from .agent import assert_agent_command_allowed
+    from .config import get_global_config
+    from rich.console import Console
+
+    console = Console()
+    config = get_global_config()
+    assert_agent_command_allowed(config, name)
+
+    from .agent import BUILTIN_AGENTS
+
+    builtin = BUILTIN_AGENTS.get(name)
+    agent = config.agents.get(name)
+    if not builtin and not agent:
+        console.print(f"[red]Unknown agent: {name}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]Agent:[/bold] {name}")
+    console.print(
+        "[dim]Source:[/dim] "
+        + ("builtin (immutable)" if builtin and not agent else "user config")
+    )
+    if agent:
+        if agent.system_prompt:
+            console.print("\n[bold]system_prompt:[/bold]")
+            console.print(agent.system_prompt)
+        if agent.default_working_dir:
+            console.print(
+                f"\n[bold]default_working_dir:[/bold] {agent.default_working_dir}"
+            )
+        if agent.extra_project_dirs:
+            console.print("\n[bold]extra_project_dirs:[/bold]")
+            for p in agent.extra_project_dirs:
+                console.print(f"  - {p}")
+        if agent.provider:
+            console.print(f"\n[bold]provider:[/bold] {agent.provider}")
+    connectors = []
+    for conn_name, c_dict in config.connectors.items():
+        bound = c_dict.get("agent")
+        if hasattr(bound, "unwrap"):
+            bound = bound.unwrap()
+        if (bound or config.default_agent) == name:
+            connectors.append(conn_name)
+    if connectors:
+        console.print("\n[bold]Bound connectors:[/bold]")
+        for c in connectors:
+            console.print(f"  - {c}")
+
+
+@agent_app.command("create")
+def agent_create(
+    name: str = typer.Argument(..., help="Agent name (lowercase, hyphens)."),
+    system_prompt: Optional[str] = typer.Option(
+        None, "--system-prompt", help="Inline systemPrompt text."
+    ),
+    system_prompt_file: Optional[str] = typer.Option(
+        None,
+        "--system-prompt-file",
+        help="Read system_prompt from this file (use '-' for stdin).",
+    ),
+    working_dir: Optional[str] = typer.Option(
+        None, "--working-dir", help="Default working directory (project root)."
+    ),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", help="Override provider name for this agent."
+    ),
+    extra_project_dir: Optional[list[str]] = typer.Option(
+        None,
+        "--extra-project-dir",
+        help="Additional project dir owned by this agent (repeatable).",
+    ),
+    scope_choice: Optional[str] = typer.Option(
+        "project",
+        "--scope",
+        help="Where to write the agent config: 'global' or 'project'.",
+    ),
+):
+    """Create a new agent entry in config.toml. Refuses 'kage' (builtin)."""
+    from .agent import BUILTIN_AGENTS, assert_not_in_agent_run
+    from .config import set_config_value
+
+    assert_not_in_agent_run("create an agent")
+    if name in BUILTIN_AGENTS:
+        typer.echo(f"Error: '{name}' is a built-in agent and cannot be created.")
+        raise typer.Exit(1)
+    if not name.replace("-", "").isalnum() or not name.lower() == name:
+        typer.echo("Error: agent name must be lowercase [a-z0-9-].")
+        raise typer.Exit(1)
+
+    sp = system_prompt
+    if system_prompt_file:
+        if system_prompt_file == "-":
+            import sys
+
+            sp = sys.stdin.read()
+        else:
+            sp = Path(system_prompt_file).read_text(encoding="utf-8")
+
+    scope = "global" if scope_choice == "global" else "project"
+    key_prefix = f"agents.{name}"
+    # 表名を AgentConfig.name に明示保存（後方互換の安全網）
+    set_config_value(f"{key_prefix}.name", name, scope=scope)
+    if sp is not None:
+        set_config_value(f"{key_prefix}.system_prompt", sp, scope=scope)
+    if working_dir:
+        set_config_value(f"{key_prefix}.default_working_dir", working_dir, scope=scope)
+    if provider:
+        set_config_value(f"{key_prefix}.provider", provider, scope=scope)
+    for extra in extra_project_dir or []:
+        set_config_value(f"{key_prefix}.extra_project_dirs", extra, scope=scope)
+    typer.echo(
+        f"Created agent '{name}' in {scope} config. "
+        f'Bind a connector with `agent = "{name}"`.'
+    )
+
+
+# ---------------------------------------------------------------------------
+# kage memory: list / show / write / delete / search
+# ---------------------------------------------------------------------------
+
+
+def _resolve_memory_agent() -> str:
+    """memory CLI で操作対象となる agent を解決。
+    AI 実行中なら現 agent、それ以外は引数 --agent 必須 or 'kage'。
+    """
+    from .agent import get_current_agent_name
+
+    current = get_current_agent_name()
+    if current:
+        return current
+    return "kage"  # 人間実行時のデフォルト
+
+
+@memory_app.command("list")
+def memory_list(
+    agent: Optional[str] = typer.Option(
+        None, "--agent", help="Agent name (human use only). Defaults to current agent."
+    ),
+):
+    """List memory topics of an agent."""
+    from .agent import get_current_agent_name
+    from .memory import list_memories
+    from rich.console import Console
+    from rich.table import Table
+
+    current = get_current_agent_name()
+    if agent and current and agent != current:
+        typer.echo(
+            f"Error: cannot list memory of agent '{agent}' from within '{current}'."
+        )
+        raise typer.Exit(1)
+    target = agent or current or "kage"
+
+    metas = list_memories(target)
+    console = Console()
+    if not metas:
+        console.print(f"[yellow]No memories for agent '{target}'.[/yellow]")
+        return
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Slug", style="bold")
+    table.add_column("Description")
+    table.add_column("Updated", style="dim")
+    for m in metas:
+        table.add_row(m.slug, m.description, m.updated_at)
+    console.print(table)
+
+
+@memory_app.command("show")
+def memory_show(
+    slug: str = typer.Argument(..., help="Memory slug to read."),
+    agent: Optional[str] = typer.Option(
+        None, "--agent", help="Agent name (human use only)."
+    ),
+):
+    """Print the body of a memory."""
+    from .agent import get_current_agent_name
+    from .memory import read_memory
+
+    current = get_current_agent_name()
+    if agent and current and agent != current:
+        typer.echo(
+            "Error: cannot access other agents' memory from within an agent run."
+        )
+        raise typer.Exit(1)
+    target = agent or current or "kage"
+
+    body = read_memory(target, slug)
+    if body is None:
+        typer.echo(f"Memory '{slug}' not found for agent '{target}'.")
+        raise typer.Exit(1)
+    typer.echo(body)
+
+
+@memory_app.command("write")
+def memory_write(
+    slug: str = typer.Argument(..., help="Memory slug (lowercase, hyphens)."),
+    description: str = typer.Option(..., "--description", help="Short summary."),
+    file: Optional[str] = typer.Option(
+        None, "--file", help="Read body from this file ('-' for stdin)."
+    ),
+    agent: Optional[str] = typer.Option(
+        None, "--agent", help="Agent name (human use only)."
+    ),
+):
+    """Create or overwrite a memory. Body is read from stdin unless --file."""
+    import sys
+
+    from .agent import get_current_agent_name
+    from .memory import write_memory
+
+    current = get_current_agent_name()
+    if agent and current and agent != current:
+        typer.echo(
+            "Error: cannot write to another agent's memory from within an agent run."
+        )
+        raise typer.Exit(1)
+    target = agent or current or "kage"
+
+    if file:
+        if file == "-":
+            content = sys.stdin.read()
+        else:
+            content = Path(file).read_text(encoding="utf-8")
+    else:
+        try:
+            content = sys.stdin.read()
+        except Exception:
+            typer.echo("Error: body must be provided via --file or stdin.")
+            raise typer.Exit(1)
+
+    path = write_memory(target, slug, description, content)
+    typer.echo(f"Wrote memory '{slug}' for agent '{target}' -> {path}")
+
+
+@memory_app.command("delete")
+def memory_delete(
+    slug: str = typer.Argument(..., help="Memory slug to delete."),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation."),
+    agent: Optional[str] = typer.Option(
+        None, "--agent", help="Agent name (human use only)."
+    ),
+):
+    """Delete a memory."""
+    from .agent import get_current_agent_name
+    from .memory import delete_memory
+
+    current = get_current_agent_name()
+    if agent and current and agent != current:
+        typer.echo(
+            "Error: cannot delete another agent's memory from within an agent run."
+        )
+        raise typer.Exit(1)
+    target = agent or current or "kage"
+
+    if not force:
+        confirm = typer.confirm(f"Delete memory '{slug}' of agent '{target}'?")
+        if not confirm:
+            raise typer.Abort()
+    if delete_memory(target, slug):
+        typer.echo(f"Deleted memory '{slug}' of agent '{target}'.")
+    else:
+        typer.echo(f"Memory '{slug}' not found for agent '{target}'.")
+        raise typer.Exit(1)
+
+
+@memory_app.command("search")
+def memory_search(
+    query: str = typer.Argument(..., help="Substring to search (case-insensitive)."),
+    agent: Optional[str] = typer.Option(
+        None, "--agent", help="Agent name (human use only)."
+    ),
+):
+    """Search memory bodies for a substring."""
+    from .agent import get_current_agent_name
+    from .memory import search_memories
+    from rich.console import Console
+
+    current = get_current_agent_name()
+    if agent and current and agent != current:
+        typer.echo(
+            "Error: cannot search another agent's memory from within an agent run."
+        )
+        raise typer.Exit(1)
+    target = agent or current or "kage"
+
+    hits = search_memories(target, query)
+    console = Console()
+    if not hits:
+        console.print(f"[yellow]No hits for '{query}' in agent '{target}'.[/yellow]")
+        return
+    for slug, lineno, line in hits:
+        console.print(f"[bold]{slug}[/bold]:{lineno}: {line}")

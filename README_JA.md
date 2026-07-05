@@ -304,6 +304,58 @@ kage connector realtime run [name]     # foreground 実行（デバッグ用）
 
 > **⚠️ セキュリティ警告**: `poll = true` または `realtime = true` を有効にすると、チャンネルの参加者が PC 上の AI と対話できるようになります。必ず一方だけを有効にし、プライベート/信頼できるチャンネルでのみ使用してください。
 
+## Agents と マルチテナント分離
+
+**Agent** はプロジェクト・コネクター・memory・system_prompt を所有するトップ概念です。組込みの agent `kage` は常に存在し削除できません。明示的な `agent` が無い connector / project は `kage` にフォールバックします。独自 agent を定義すれば、connnector に別人格を与え、コンテキストが漏れないようにできます。例えばプライベート Discord を agent `private` に、公開 Discord を agent `public` に bind すれば、会話が cross-over することはありません。
+
+```toml
+[agents.public]
+system_prompt = """
+あなたは公開用アシスタントです。簡潔丁寧に答えてください。
+プライベートプロジェクトや他 agent の内容には言及しないでください。
+"""
+default_working_dir = "~/projects/public"
+
+[agents.private]
+system_prompt = "ユーザーのプライベートアシスタント。簡潔に。"
+default_working_dir = "~/projects/private"
+
+[connectors.discord_public]
+type = "discord"
+poll = true
+bot_token = "..."
+channel_id = "..."
+agent = "public"          # この connector を public agent に bind
+
+[connectors.discord_private]
+type = "discord"
+poll = true
+bot_token = "..."
+channel_id = "..."
+agent = "private"
+```
+
+kage が AI provider を spawn する際、以下の環境変数を注入します。
+
+- `KAGE_RUN_ID` — 権威となる実行 ID。CLI は SQLite の `executions.agent_name` から自分がどの agent かを判断します。この列は SQLite trigger で UPDATE/DELETE 不可能です。
+- `KAGE_AGENT_NAME` — 表示用ヒントのみ。偽装しても無効で、常に DB が優先されます。
+
+spawn されたシェル内で `kage *` コマンドを実行すると、その agent に紐づく connector / task / memory しか操作できません。他 agent のリソースには触れません。一方で、`KAGE_RUN_ID` が未設定の人間のシェルはスーパーユーザー扱いとなり scope の filter を bypass します（残留していると `kage doctor` で警告されます）。
+
+### Agent Memory
+
+各 agent は `~/.kage/agents/<agent_name>/memory/<slug>.md` に topic 単位の memory 空間を持ちます。実行開始時に kage は `<available_memories>` ブロックで memory の一覧を system prompt に注入します（`<name>` / `<description>` / `<updated_at>` のみで file path は隠蔽）。AI は本文が必要な時に CLI で取り出します。
+
+```bash
+kage memory list                              # 現 agent の memory 一覧
+kage memory show <slug>                       # 本文を表示
+kage memory write <slug> --description "..."  # 作成・上書き（本文は stdin から）
+kage memory delete <slug>                      # 削除
+kage memory search <query>                     # 本文の部分一致検索
+```
+
+memory は task ごとではなく agent 単位、上書き式（最新 state のみ保持、`updated_at` を更新）、agent 実行中は `kage memory` 自体も自 agent 配下に scope されます。かつての task memory（`.kage/memory/<task>/YYYY-MM-DD.json` や `task.json`）は廃止され、install migration が旧 `system_prompt.md` を backup 差替え、旧 memory dir を退避します。
+
 ### macOS launchd 独自設定
 macOS では `cron` の代わりに `launchd` が使用されます。`config.toml` で以下の独自設定が可能です：
 

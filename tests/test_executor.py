@@ -725,6 +725,8 @@ def test_config_default_loaded():
         "agy",
         "--dangerously-skip-permissions",
         "{model_args}",
+        "--print-timeout",
+        "15m",
         "--print",
         "{prompt}",
     ]

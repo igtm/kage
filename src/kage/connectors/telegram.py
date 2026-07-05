@@ -284,6 +284,19 @@ class TelegramConnector(BaseConnector):
                 "[Current Instruction]\n"
                 f"{content or self._build_attachment_only_instruction()}"
             )
+            # agent 解決 + system_prompt 合成
+            from ..config import get_global_config
+            from ..agent import get_agent_for_connector, build_full_system_prompt
+
+            config = get_global_config()
+            agent = get_agent_for_connector(config, self.name, self._config_dict())
+            composed_system = build_full_system_prompt(config, agent)
+            if self.config.system_prompt:
+                composed_system = (
+                    f"{composed_system}\n\n[Connector Instructions]\n"
+                    f"{self.config.system_prompt.strip()}"
+                )
+            working_dir = self.config.working_dir or agent.default_working_dir
             from_user = target_msg.get("from", {})
             connector_meta = {
                 "connector": {
@@ -301,14 +314,17 @@ class TelegramConnector(BaseConnector):
                     "input_attachment_names": attachment_names,
                     "input_attachment_count": len(attachment_names),
                     "history_snapshot": history_context,
-                }
+                },
+                "agent_name": agent.name,
             }
             reply_data = generate_logged_chat_reply(
                 prompt_with_history,
-                system_prompt=self.config.system_prompt,
-                working_dir=self.config.working_dir,
+                system_prompt=composed_system,
+                working_dir=working_dir,
                 run_name=self._build_run_name(),
                 metadata=connector_meta,
+                agent_name=agent.name,
+                run_id=self.inherit_parent_run_env(),
                 incoming_attachment_preparer=lambda artifact_dir: (
                     self._prepare_incoming_attachments(
                         artifact_dir,
