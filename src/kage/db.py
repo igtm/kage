@@ -54,6 +54,7 @@ def init_db():
         "working_dir": "TEXT",
         "execution_kind": "TEXT",
         "provider_name": "TEXT",
+        "agent_name": "TEXT",
     }
     for column_name, column_type in migrations.items():
         try:
@@ -63,8 +64,104 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    _ensure_quest_tables(cursor)
+    _ensure_agent_immutable_triggers(cursor)
+
     conn.commit()
     conn.close()
+
+
+def _ensure_agent_immutable_triggers(cursor: sqlite3.Cursor) -> None:
+    """executions.agent_name の改竄・削除を禁止する trigger。
+    legacy 行（agent_name IS NULL）は DELETE を許可し互換維持。
+    """
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_exec_agent_no_update
+        BEFORE UPDATE OF agent_name ON executions
+        BEGIN
+            SELECT RAISE(ABORT, 'agent_name is immutable');
+        END
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS trg_exec_agent_no_delete
+        BEFORE DELETE ON executions
+        WHEN OLD.agent_name IS NOT NULL
+        BEGIN
+            SELECT RAISE(ABORT, 'agent_name rows are immutable');
+        END
+        """
+    )
+
+
+def _ensure_quest_tables(cursor: sqlite3.Cursor) -> None:
+    """Create the quest lifecycle tables if they do not exist.
+
+    The quest lifecycle is an event-driven, team-based alternative to the cron
+    lifecycle. Tables store quests, their mind-map nodes, and directed edges.
+    """
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quests (
+            id TEXT PRIMARY KEY,
+            project_path TEXT NOT NULL,
+            name TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            status TEXT NOT NULL,
+            max_agent_runs INTEGER NOT NULL DEFAULT 50,
+            agent_runs INTEGER NOT NULL DEFAULT 0,
+            roles_json TEXT,
+            provider TEXT,
+            mode TEXT NOT NULL DEFAULT 'team',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    # Add the `mode` column to quests created before v2.
+    try:
+        cursor.execute(
+            "ALTER TABLE quests ADD COLUMN mode TEXT NOT NULL DEFAULT 'team'"
+        )
+    except sqlite3.OperationalError:
+        pass
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quest_nodes (
+            id TEXT PRIMARY KEY,
+            quest_id TEXT NOT NULL,
+            parent_id TEXT,
+            role TEXT NOT NULL,
+            hypothesis TEXT NOT NULL,
+            status TEXT NOT NULL,
+            verdict TEXT,
+            evidence TEXT,
+            proposed_by TEXT,
+            run_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    # Add the `proposed_by` column to legacy quest_nodes tables (v1 — missing column).
+    try:
+        cursor.execute("ALTER TABLE quest_nodes ADD COLUMN proposed_by TEXT")
+    except sqlite3.OperationalError:
+        pass
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quest_edges (
+            id TEXT PRIMARY KEY,
+            quest_id TEXT NOT NULL,
+            from_node TEXT,
+            to_node TEXT,
+            relation TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
 
 
 def start_execution(
@@ -74,8 +171,9 @@ def start_execution(
     working_dir: str | None = None,
     execution_kind: str | None = None,
     provider_name: str | None = None,
+    agent_name: str | None = None,
 ) -> str:
-    """実行開始を記録し、実行IDを返す。"""
+    """実行開始を記録し、実行IDを返す。agent_name は INSERT 時に固定され trigger で保護される。"""
     init_db()
     conn = sqlite3.connect(KAGE_DB_PATH)
     cursor = conn.cursor()
@@ -88,9 +186,9 @@ def start_execution(
             id, project_path, task_name, run_at, status, stdout, stderr, finished_at,
             pid, log_dir, stdout_path, stderr_path, events_path, exit_code,
             output_summary, stdout_bytes, stderr_bytes, last_output_at, working_dir,
-            execution_kind, provider_name
+            execution_kind, provider_name, agent_name
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
         (
             exec_id,
@@ -114,11 +212,28 @@ def start_execution(
             working_dir,
             execution_kind,
             provider_name,
+            agent_name,
         ),
     )
     conn.commit()
     conn.close()
     return exec_id
+
+
+def get_execution_agent(run_id: str) -> str | None:
+    """run_id から agent_name を権威的に取得。"""
+    if not KAGE_DB_PATH.exists():
+        return None
+    conn = sqlite3.connect(KAGE_DB_PATH)
+    try:
+        row = conn.execute(
+            "SELECT agent_name FROM executions WHERE id = ?", (run_id,)
+        ).fetchone()
+        return str(row[0]) if row and row[0] else None
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
 
 
 def get_execution_pid(exec_id: str) -> int | None:

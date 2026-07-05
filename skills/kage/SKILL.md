@@ -21,6 +21,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 
 ## CLI
 
+- `kage quest new <name> --direction "..."` — Create a new event-driven quest. A quest dispatches a team of role agents (scout → poc → strategist) as a mind-map graph, one node per cron tick, with a `--max-agent-runs` runaway budget. `kage cron run` advances active quests automatically; `kage quest list/show/stop/resume/abort-node` manage them. Quest state lives in SQLite (`quests`, `quest_nodes`, `quest_edges`), not `.kage/tasks/`. Runs flow through the normal executor, so `kage runs` / `kage logs` show quest work too.
 - `kage onboard` — Setup global directories and `kage cron`.
 - `kage init` — Initialize in current directory.
 - `kage run <task>` — Execute a specific task immediately; add `--force` to bypass suspension.
@@ -136,6 +137,42 @@ If you already have `kage cron run` installed in your crontab, realtime listener
 Realtime logs are written to `~/.kage/logs/connector-realtime-<name>.log` and rotated on each start. Rotated logs older than 7 days or beyond the newest 5 files are cleaned up automatically.
 
 > **⚠️ Security Warning**: Setting `poll = true` or `realtime = true` allows anyone in the channel to interact with the AI, which has **full access to your PC's file system and tools**. Only enable one chat mode, and only in private/trusted channels.
+
+## Agents & Multi-tenant Isolation
+
+An **Agent** is the top-level concept in kage. Each agent owns its projects, connectors, memory, and a system prompt, so conversations and state never cross between agents. The built-in agent `kage` always exists; connectors and projects with no explicit `agent` fall back to it.
+
+```toml
+[agents.public]
+system_prompt = """
+You are the public-facing assistant. Be brief and polite.
+Never mention private projects or other agents.
+"""
+default_working_dir = "~/projects/public"
+
+[connectors.discord_public]
+type = "discord"
+poll = true
+bot_token = "..."
+channel_id = "..."
+agent = "public"
+```
+
+When kage spawns the AI provider it injects `KAGE_RUN_ID` (authoritative, DB-anchored — the `executions.agent_name` column is locked by a SQLite trigger) and `KAGE_AGENT_NAME` (display hint only). Inside the spawned shell, every `kage *` command is scoped to the running agent: a connector bound to a different agent cannot be polled, listed with details, or controlled. Human shells (no `KAGE_RUN_ID`) act as superusers and bypass the scope filter.
+
+### Agent Memory
+
+Each agent owns a topic-keyed memory space at `~/.kage/agents/<agent_name>/memory/<slug>.md`. kage injects an `<available_memories>` block (entries with `<name>`, `<description>`, `<updated_at>`) into the system prompt at the start of every run. File paths are hidden — use the CLI to read details.
+
+```bash
+kage memory list                              # list memories of the current agent
+kage memory show <slug>                       # print the body
+kage memory write <slug> --description "..."  # create/overwrite; body from stdin
+kage memory delete <slug>                     # remove
+kage memory search <query>                    # substring search across bodies
+```
+
+Memory is per-agent (not per-task), overwrite-style (latest state only, `updated_at` refreshed). The previous per-task memory system (`.kage/memory/<task>/YYYY-MM-DD.json` and `task.json`) is removed; install migration 0004 backs up and replaces legacy `system_prompt.md` files and archives legacy memory directories.
 
 ## Configuration Hierarchy
 

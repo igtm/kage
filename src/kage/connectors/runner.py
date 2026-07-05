@@ -1,4 +1,5 @@
 import threading
+from ..agent import get_current_agent_name
 from ..config import get_global_config
 from .base import BaseConnector
 from .discord import DiscordConnector
@@ -9,6 +10,18 @@ from ..config import (
     SlackConnectorConfig,
     TelegramConnectorConfig,
 )
+
+
+def _agent_filter(config, current_agent: str | None) -> bool:
+    """現 agent 配下以外の connector を除外するかどうか。config は未使用だが可視化用。"""
+    return current_agent is not None
+
+
+def _connector_agent_name(config, c_dict: dict) -> str:
+    agent_name = c_dict.get("agent")
+    if hasattr(agent_name, "unwrap"):
+        agent_name = agent_name.unwrap()
+    return agent_name or config.default_agent
 
 
 def _build_connector(name: str, c_dict: dict) -> BaseConnector | None:
@@ -47,14 +60,34 @@ def get_connector(name: str) -> BaseConnector | None:
     return _build_connector(name, c_dict)
 
 
+def _filter_for_agent(config, items):
+    """現 agent 配下の (name, c_dict) のみに絞る。人間（None）は全件。"""
+    current = get_current_agent_name(config)
+    if current is None:
+        return items
+    filtered = []
+    for name, c_dict in items:
+        bound = _connector_agent_name(config, c_dict)
+        if bound == current:
+            filtered.append((name, c_dict))
+        else:
+            print(
+                f"[kage] Skipping connector '{name}' (bound to agent '{bound}', "
+                f"current agent '{current}')."
+            )
+    return filtered
+
+
 def run_connectors():
     """
     Run all connectors with poll=True concurrently and wait for them to finish polling and replying.
     """
     config = get_global_config()
-    poll_connectors = []
+    poll_candidates = [(name, c_dict) for name, c_dict in config.connectors.items()]
+    scoped = _filter_for_agent(config, poll_candidates)
 
-    for name, c_dict in config.connectors.items():
+    poll_connectors = []
+    for name, c_dict in scoped:
         connector = _build_connector(name, c_dict)
         if connector and connector.config.poll:
             poll_connectors.append(connector)
@@ -75,9 +108,11 @@ def run_realtime_connectors():
     This function blocks until all realtime listeners exit (normally never).
     """
     config = get_global_config()
-    realtime_connectors: list[BaseConnector] = []
+    realtime_candidates = list(config.connectors.items())
+    scoped = _filter_for_agent(config, realtime_candidates)
 
-    for name, c_dict in config.connectors.items():
+    realtime_connectors: list[BaseConnector] = []
+    for name, c_dict in scoped:
         connector = _build_connector(name, c_dict)
         if connector and connector.config.realtime:
             realtime_connectors.append(connector)

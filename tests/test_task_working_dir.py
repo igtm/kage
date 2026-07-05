@@ -81,14 +81,8 @@ def test_execute_task_uses_relative_working_dir_from_task_file(
 
     cmd = popen.call_args.args[0]
     assert Path(popen.call_args.kwargs["cwd"]) == (project_dir / "workspace").resolve()
-    assert (
-        str(
-            (
-                project_dir / ".kage" / "memory" / "Nightly_Research" / "task.json"
-            ).resolve()
-        )
-        in cmd[-1]
-    )
+    # task memory 廃止: prompt に ISOLATION RULE と Task Instructions が含まれること
+    assert "Task Instructions" in cmd[-1]
 
 
 def test_execute_task_uses_absolute_working_dir_as_is(

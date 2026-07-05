@@ -136,7 +136,7 @@ def _format_global_config(is_ja: bool) -> str:
         f"log_level: {cfg.log_level}",
         f"cron_interval_minutes: {cfg.cron_interval_minutes}",
         f"run_retention_count: {cfg.run_retention_count}",
-        f"memory_max_entries: {cfg.memory_max_entries}",
+        f"default_agent: {cfg.default_agent}",
         f"{'コマンド' if is_ja else 'Commands'}: {', '.join(sorted(cfg.commands.keys())) or '-'}",
         f"{'Provider' if not is_ja else 'Providers'}: {', '.join(sorted(cfg.providers.keys())) or '-'}",
         f"{'コネクタ' if is_ja else 'Connectors'}: {', '.join(sorted(cfg.connectors.keys())) or '-'}",

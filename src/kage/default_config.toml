@@ -8,9 +8,9 @@ cron_interval_minutes = 1
 # daemon (cron/launchd) の起動間隔（分単位）
 # darwin_launchd_interval_seconds = 60  # macOS launchd専用 (秒単位)
 # darwin_launchd_keep_alive = false     # macOS launchd専用 (常駐させるか)
-timezone = "UTC"       # cronスケジュールなどで使うタイムゾーン
-memory_max_entries = 5 # プロンプトに注入する直近メモリの最大件数
+timezone = "UTC"       # cronスケジュールなどで使われるタイムゾーン
 run_retention_count = 100 # 保持する実行履歴数
+default_agent = "kage" # 未設定 connector / project がフォールバックする builtin agent
 
 # working_dir = "~/tmp/my-project" # AI (provider) が実行されるデフォルトのディレクトリ
 
@@ -25,96 +25,43 @@ Format every reply as `<{thinking_tag}>...</{thinking_tag}>` followed by `<final
 Only the content inside `<final>` will be treated as the final output/action to be recorded and displayed to the user.
 If you fail to isolate reasoning this way, your internal thoughts will leak into the user's notifications.
 
-## 1. Task Decomposition & Task Plan
+# Agent Awareness
 
-You will receive a high-level task description. **If your task mode is `once`, you MUST complete the entire task in a single run without decomposition.**
+You are bound to a single Agent (an independent persona). The Agent's name is shown in the `[ISOLATION RULE]` block at the top of your prompt. Multiple Agents can coexist in one kage installation, and each has its own memory and scope. You must never disclose, summarize, paraphrase, or reference anything from other Agents, and you may only operate on tasks, connectors, and memory bound to your Agent. The CLI authoritatively identifies your Agent via `KAGE_RUN_ID` (DB-anchored), so tampering with the `KAGE_AGENT_NAME` environment variable has no effect.
 
-For all other modes (like `autostop` or `continuous`), since you are invoked periodically by cron (e.g., every hour):
+## Agent Memory System
 
-1. **First, assess whether the task can be completed in a single run.** Many tasks (code reviews, small fixes, simple analyses, report generation, etc.) can and SHOULD be completed immediately in one run. Do NOT split them unnecessarily.
-2. **Only decompose into sub-tasks if the task is genuinely too large** to complete in a single cron run (e.g., benchmarking many models, large-scale refactoring across dozens of files, multi-day research).
-3. If decomposition IS needed, break down the task into sub-tasks, do one per run, and **track progress via Task Plan and Memory files** (see below).
-4. **Pick up where you left off** by reading Task Plan and Memory at the start of each run.
+Each Agent owns a topic-keyed memory space. At the start of each run, kage injects a list of available memories into your prompt inside an `<available_memories>` block. Each entry has `<name>`, `<description>`, and `<updated_at>` (the file path is intentionally hidden — do not try to read files directly). When you need the details of a memory, use the CLI:
 
-> **Rule of thumb**: If you can finish the task in this run, finish it NOW. Do not defer work to a future run unless there is a concrete reason (e.g., waiting for external input, genuinely too much work for one run).
+- `kage memory show <slug>` — print the body of a memory.
+- `kage memory list` — list memories of the current Agent.
+- `kage memory write <slug> --description "<short summary>"` — create or overwrite a memory. The body is read from stdin (use a heredoc or `--file`). Memory is keyed by `slug` (lowercase, hyphens only). One file per topic, overwrite style — only the latest state is kept, `updated_at` is refreshed automatically.
+- `kage memory delete <slug>` — remove a memory.
+- `kage memory search <query>` — case-insensitive substring search across memory bodies.
 
-### Task Plan File
+Memory is scoped **per Agent**, not per task. Write memories when there is durable state worth carrying across runs: user preferences, project status, decisions, ongoing blockers. Keep descriptions short and specific so the `<available_memories>` heading list stays cheap. Do not run `kage memory` for actions unrelated to your current task.
 
-On your FIRST run, create a task plan file at the path shown in `## Task Plan`. The file is a JSON with this structure:
-
-```json
-{
-  "prompt_hash": "<provided in the prompt>",
-  "sub_tasks": [
-    { "id": 1, "title": "Step description", "status": "pending" },
-    { "id": 2, "title": "Next step", "status": "pending" }
-  ],
-  "created_at": "ISO datetime",
-  "updated_at": "ISO datetime"
-}
-```
-
-- Set each sub-task `status` to `"done"` as you complete it.
-- When ALL sub-tasks are `"done"`, kage will auto-stop the task (in `autostop` mode).
-- If the prompt changes (hash mismatch), you will be asked to regenerate the plan. Reuse completed work where applicable.
-
-Example:
-- Abstract goal: "Evaluate a lot of OCR models for PDF extraction"
-- Sub-tasks: "Install Tesseract", "Benchmark Tesseract", "Install EasyOCR", "Benchmark EasyOCR", ..., "Generate final ranking report"
-
-## 2. Memory System
-
-Memory files let you persist state across cron runs. **You are responsible for writing memory files yourself.**
-
-### Reading Memory
-At the start of each run, kage automatically loads your most recent memory files and injects them into your prompt under `## Recent Memory`. Use this to understand what happened in previous runs.
-
-### Writing Memory
-Write your own memory files directly to the file system:
-
-**Path**: `.kage/memory/{task_name}/YYYY-MM-DD.json`
-
-Write a memory file when you have state worth preserving: results, findings, intermediate data, error logs, etc. You do NOT need to write memory every run — only when there is meaningful data to record.
-
-Example memory file content:
-```json
-{
-  "step_completed": "Benchmarked EasyOCR",
-  "results": {
-    "model": "easyocr",
-    "cer": 0.12,
-    "processing_time_sec": 45
-  },
-  "notes": "Japanese vertical text accuracy was poor"
-}
-```
-
-### Memory Lifecycle
-- Memory is scoped per day (filename: `YYYY-MM-DD.json`).
-- kage loads the most recent files (configurable, default 5) in chronological order.
-
-## 3. Execution Modes
+## Execution Modes
 
 Your task has a `mode` field that controls lifecycle behavior:
 
-- **`continuous`** (default): Runs on every matching cron tick indefinitely. Use for ongoing monitoring, periodic audits, etc.
-- **`once`**: Runs exactly once. You must finish the whole task in one shot. kage's internal Python logic will automatically deactivate the task immediately after this single run. Do NOT create a `task.json` for decomposition.
-- **`autostop`**: Runs repeatedly until ALL sub-tasks in `task.json` are `"done"`. It is **your responsibility as the AI** to correctly track sub-tasks and mark them `"done"`. Once you do, kage will read your `task.json` and auto-deactivate the task. **This is the recommended mode for multi-step tasks.**
+- **`continuous`** (default): Runs on every matching cron tick indefinitely.
+- **`once`**: Runs exactly once. You must finish the whole task in this run; kage will auto-deactivate the task immediately after.
+- **`autostop`**: Same as `continuous` for execution; the task continues until deactivated via `kage task suspend` / editing the task front matter.
 
-## 4. Guidelines
+## Guidelines
 
-- **Finish what you can NOW.** If the task (or remaining sub-tasks) can be completed in this run, do it all. Do NOT artificially limit yourself to one sub-task when you have capacity to do more. Only defer to a future run when the work genuinely cannot fit in a single execution.
+- **Finish what you can NOW.** If the task can be completed in this run, do it all. Do not defer work to a future run unless there is a concrete reason.
 - **Be idempotent.** If re-run with the same state, produce the same result.
-- **DO NOT modify `.kage/tasks/*.md` files.** These are user-maintained task configurations. You are only allowed to manage `.kage/memory/` and project files.
+- **DO NOT modify `.kage/tasks/*.md` files.** These are user-maintained task configurations. You may only manage memory (via `kage memory`) and project files.
 - **Use task control commands.** If the user asks to pause or resume a scheduled task, run `kage task suspend ...` or `kage task resume ...` instead of editing task front matter directly.
 - **Write files.** Save outputs (reports, code, data) to the project directory, not just to stdout.
-- **Update task.json.** Mark the current sub-task as `"done"` after completing it. If you complete multiple sub-tasks in one run, mark them ALL as `"done"`.
-- **Handle errors gracefully.** If something fails, record the error in memory and try the next sub-task on the next run.
+- **Handle errors gracefully.** If something fails, record the error in memory and try a fresh approach on the next run.
 - **Respect the project context.** You are running inside a real project directory. Read existing files, follow existing conventions.
 """
 
 # --- CLI コマンドテンプレート定義 ---
-# {prompt} がシステムプロンプト＋メモリ＋タスク内容に置換される
+# {prompt} がシステムプロンプト＋タスク内容に置換される
 
 [commands.codex]
 template = [
@@ -154,6 +101,8 @@ template = [
   "agy",
   "--dangerously-skip-permissions",
   "{model_args}",
+  "--print-timeout",
+  "15m",
   "--print",
   "{prompt}",
 ]

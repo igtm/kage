@@ -22,6 +22,8 @@ def migration_env(tmp_path: Path, mocker):
     db_path = tmp_path / "kage.db"
     logs_dir = tmp_path / "logs"
     global_dir = tmp_path / ".kage"
+    config_path = global_dir / "config.toml"
+    projects_list = global_dir / "projects.list"
     mocker.patch("kage.db.KAGE_DB_PATH", db_path)
     mocker.patch("kage.config.KAGE_DB_PATH", db_path)
     mocker.patch("kage.runs.KAGE_DB_PATH", db_path)
@@ -30,6 +32,9 @@ def migration_env(tmp_path: Path, mocker):
     mocker.patch("kage.migrations.runner.KAGE_DB_PATH", db_path)
     mocker.patch("kage.migrations.runner.KAGE_LOGS_DIR", logs_dir)
     mocker.patch("kage.migrations.runner.KAGE_GLOBAL_DIR", global_dir)
+    # agent / 0004 migration が実環境の config に触れないように隔離
+    mocker.patch("kage.config.KAGE_CONFIG_PATH", config_path)
+    mocker.patch("kage.config.KAGE_PROJECTS_LIST", projects_list)
     mocker.patch("kage.daemon.get_platform", return_value="linux")
     mocker.patch("kage.daemon.subprocess.check_output", return_value="")
     db.init_db()
