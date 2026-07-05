@@ -175,6 +175,13 @@ def get_global_config(workspace_dir: Optional[Path] = None) -> GlobalConfig:
     ws_local_config = _load_toml_file(ws_local_config_path)
     merged = _deep_merge(merged, ws_local_config)
 
+    # 5. agents.<name> に `name` が未設定なら TOML 表名で補完（安全網）
+    agents_raw = merged.get("agents")
+    if isinstance(agents_raw, dict):
+        for key, agent_cfg in list(agents_raw.items()):
+            if isinstance(agent_cfg, dict) and "name" not in agent_cfg:
+                agent_cfg["name"] = str(key)
+
     try:
         return GlobalConfig(**merged)
     except Exception:

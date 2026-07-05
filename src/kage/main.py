@@ -3345,6 +3345,8 @@ def agent_create(
 
     scope = "global" if scope_choice == "global" else "project"
     key_prefix = f"agents.{name}"
+    # 表名を AgentConfig.name に明示保存（後方互換の安全網）
+    set_config_value(f"{key_prefix}.name", name, scope=scope)
     if sp is not None:
         set_config_value(f"{key_prefix}.system_prompt", sp, scope=scope)
     if working_dir:
