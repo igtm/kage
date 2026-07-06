@@ -46,6 +46,7 @@ def test_scheduler_skips_current_and_invalid_suspensions(mocker, tmp_path: Path)
     )
     execute_task = mocker.patch("kage.scheduler.execute_task")
     mocker.patch("kage.connectors.runner.run_connectors")
+    mocker.patch("kage.quest.tick")
 
     run_all_scheduled_tasks()
 
@@ -88,6 +89,7 @@ def test_scheduler_uses_project_timezone_for_date_only_suspension(
     )
     execute_task = mocker.patch("kage.scheduler.execute_task")
     mocker.patch("kage.connectors.runner.run_connectors")
+    mocker.patch("kage.quest.tick")
 
     run_all_scheduled_tasks()
 

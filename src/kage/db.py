@@ -64,6 +64,7 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    _ensure_quest_tables(cursor)
     _ensure_agent_immutable_triggers(cursor)
 
     conn.commit()
@@ -95,6 +96,74 @@ def _ensure_agent_immutable_triggers(cursor: sqlite3.Cursor) -> None:
     )
 
 
+def _ensure_quest_tables(cursor: sqlite3.Cursor) -> None:
+    """Create the quest lifecycle tables if they do not exist.
+
+    The quest lifecycle is an event-driven, team-based alternative to the cron
+    lifecycle. Tables store quests, their mind-map nodes, and directed edges.
+    """
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quests (
+            id TEXT PRIMARY KEY,
+            project_path TEXT NOT NULL,
+            name TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            status TEXT NOT NULL,
+            max_agent_runs INTEGER NOT NULL DEFAULT 50,
+            agent_runs INTEGER NOT NULL DEFAULT 0,
+            roles_json TEXT,
+            provider TEXT,
+            mode TEXT NOT NULL DEFAULT 'team',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    # Add the `mode` column to quests created before v2.
+    try:
+        cursor.execute(
+            "ALTER TABLE quests ADD COLUMN mode TEXT NOT NULL DEFAULT 'team'"
+        )
+    except sqlite3.OperationalError:
+        pass
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quest_nodes (
+            id TEXT PRIMARY KEY,
+            quest_id TEXT NOT NULL,
+            parent_id TEXT,
+            role TEXT NOT NULL,
+            hypothesis TEXT NOT NULL,
+            status TEXT NOT NULL,
+            verdict TEXT,
+            evidence TEXT,
+            proposed_by TEXT,
+            run_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    # Add the `proposed_by` column to legacy quest_nodes tables (v1 — missing column).
+    try:
+        cursor.execute("ALTER TABLE quest_nodes ADD COLUMN proposed_by TEXT")
+    except sqlite3.OperationalError:
+        pass
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quest_edges (
+            id TEXT PRIMARY KEY,
+            quest_id TEXT NOT NULL,
+            from_node TEXT,
+            to_node TEXT,
+            relation TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 def start_execution(
     project_path: str,
     task_name: str,
@@ -111,43 +180,45 @@ def start_execution(
     run_at = datetime.now().astimezone().isoformat()
     exec_id = str(uuid.uuid4())
     log_paths = ensure_run_log_files(exec_id)
-    cursor.execute(
-        """
-        INSERT INTO executions (
-            id, project_path, task_name, run_at, status, stdout, stderr, finished_at,
-            pid, log_dir, stdout_path, stderr_path, events_path, exit_code,
-            output_summary, stdout_bytes, stderr_bytes, last_output_at, working_dir,
-            execution_kind, provider_name, agent_name
+    try:
+        cursor.execute(
+            """
+            INSERT INTO executions (
+                id, project_path, task_name, run_at, status, stdout, stderr, finished_at,
+                pid, log_dir, stdout_path, stderr_path, events_path, exit_code,
+                output_summary, stdout_bytes, stderr_bytes, last_output_at, working_dir,
+                execution_kind, provider_name, agent_name
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                exec_id,
+                project_path,
+                task_name,
+                run_at,
+                "RUNNING",
+                "",
+                "",
+                None,
+                pid,
+                str(log_paths["log_dir"]),
+                str(log_paths["stdout_path"]),
+                str(log_paths["stderr_path"]),
+                str(log_paths["events_path"]),
+                None,
+                "",
+                0,
+                0,
+                None,
+                working_dir,
+                execution_kind,
+                provider_name,
+                agent_name,
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """,
-        (
-            exec_id,
-            project_path,
-            task_name,
-            run_at,
-            "RUNNING",
-            "",
-            "",
-            None,
-            pid,
-            str(log_paths["log_dir"]),
-            str(log_paths["stdout_path"]),
-            str(log_paths["stderr_path"]),
-            str(log_paths["events_path"]),
-            None,
-            "",
-            0,
-            0,
-            None,
-            working_dir,
-            execution_kind,
-            provider_name,
-            agent_name,
-        ),
-    )
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
     return exec_id
 
 
@@ -196,8 +267,9 @@ def _prune_runs(cursor: sqlite3.Cursor):
         """
         SELECT id, log_dir
         FROM executions
-        WHERE id NOT IN (
+        WHERE agent_name IS NULL AND id NOT IN (
             SELECT id FROM executions
+            WHERE agent_name IS NULL
             ORDER BY run_at DESC
             LIMIT ?
         )
@@ -217,8 +289,9 @@ def _prune_runs(cursor: sqlite3.Cursor):
     cursor.execute(
         """
         DELETE FROM executions
-        WHERE id NOT IN (
+        WHERE agent_name IS NULL AND id NOT IN (
             SELECT id FROM executions
+            WHERE agent_name IS NULL
             ORDER BY run_at DESC
             LIMIT ?
         )
@@ -249,32 +322,34 @@ def update_execution(
     if status != "STOPPED":
         where += " AND status != 'STOPPED'"
 
-    cursor.execute(
-        f"""
-        UPDATE executions
-        SET status = ?, stdout = ?, stderr = ?, finished_at = ?, exit_code = ?,
-            output_summary = ?, stdout_bytes = ?, stderr_bytes = ?,
-            last_output_at = ?
-        {where}
-    """,
-        (
-            status,
-            stdout,
-            stderr,
-            finished_at,
-            exit_code,
-            output_summary,
-            stdout_bytes,
-            stderr_bytes,
-            last_output_at,
-            exec_id,
-        ),
-    )
-    updated = cursor.rowcount > 0
-    _prune_runs(cursor)
+    try:
+        cursor.execute(
+            f"""
+            UPDATE executions
+            SET status = ?, stdout = ?, stderr = ?, finished_at = ?, exit_code = ?,
+                output_summary = ?, stdout_bytes = ?, stderr_bytes = ?,
+                last_output_at = ?
+            {where}
+        """,
+            (
+                status,
+                stdout,
+                stderr,
+                finished_at,
+                exit_code,
+                output_summary,
+                stdout_bytes,
+                stderr_bytes,
+                last_output_at,
+                exec_id,
+            ),
+        )
+        updated = cursor.rowcount > 0
+        _prune_runs(cursor)
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
     return updated
 
 

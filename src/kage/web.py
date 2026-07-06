@@ -1791,6 +1791,265 @@ class ToggleTaskRequest(BaseModel):
     file: str | None = None
 
 
+QUESTS_HTML = """<!DOCTYPE html>
+<html lang=\"ja\">
+<head>
+<meta charset=\"UTF-8\" />
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+<title>kage Quests</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#0f141b; --line:#30363d;
+  --ink:#c9d1d9; --dim:#8b949e; --faint:#484f58;
+  --accent:#58a6ff; --accent2:#5ad1a5; --warn:#d29922; --bad:#f85149;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.bar{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:center;background:#010409;position:sticky;top:0;z-index:5}
+.bar h1{font-size:16px;margin:0;letter-spacing:-.01em}
+.bar .link{color:var(--accent);text-decoration:none;font-size:13px;margin-left:auto}
+.btn{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer;font-size:13px}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
+.wrap{max-width:1200px;margin:0 auto;padding:20px}
+.section{margin-bottom:18px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px}
+.section h2{margin:0 0 12px;font-size:15px;color:var(--accent2);letter-spacing:-.01em}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.qcard{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px;cursor:pointer;transition:border-color .15s}
+.qcard:hover{border-color:var(--accent)}
+.qcard .name{font-weight:600;font-size:14px}
+.qcard .id{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.qcard .dir{color:var(--dim);font-size:12px;margin-top:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.stat{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;font-size:11px;color:var(--dim)}
+.badge{font-family:var(--mono);font-size:10px;padding:3px 7px;border-radius:5px;border:1px solid var(--line)}
+.badge.active{color:var(--accent2);border-color:#1d4a39;background:rgba(90,209,165,.06)}
+.badge.done{color:var(--faint)}
+.badge.terminated,.badge.aborted{color:var(--bad);border-color:#4e1f1f;background:rgba(248,81,73,.06)}
+.badge.stopped{color:var(--warn);border-color:#553a17}
+.badge.proposed{color:#d2a8ff;border-color:#3a2a6e;background:rgba(210,168,255,.06)}
+.badge.pending{color:var(--dim)}
+.badge.growing{color:var(--accent2);border-color:#1d4a39}
+.badge.explored{color:var(--accent2);border-color:#1d4a39}
+.badge.running{color:var(--warn);border-color:#553a17}
+.bar.local{color:var(--accent2)}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--dim);font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.04em}
+svg.graph{width:100%;height:520px;background:#010409;border:1px solid var(--line);border-radius:8px;display:block}
+.legend{display:flex;flex-wrap:wrap;gap:14px;color:var(--dim);font-size:11px;margin-top:8px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+.empty{color:var(--faint);font-size:13px;padding:20px;text-align:center}
+.node-tooltip{font-size:11px}
+</style>
+</head>
+<body>
+<div class=\"bar\">
+  <h1>kage Quests</h1>
+  <span class=\"badge local\">event-driven · team mind-map</span>
+  <button class=\"btn ghost\" onclick=\"refresh()\">Refresh</button>
+  <a class=\"link\" href=\"/\">← Dashboard</a>
+</div>
+<div class=\"wrap\">
+  <div class=\"section\">
+    <h2>Quests</h2>
+    <div id=\"quest-list\" class=\"cards\"><div class=\"empty\">Loading…</div></div>
+  </div>
+  <div id=\"detail\" style=\"display:none\">
+    <div class=\"section\">
+      <h2 id=\"d-title\">…</h2>
+      <div id=\"d-meta\" class=\"stat\"></div>
+      <div id=\"d-graph\"></div>
+      <div class=\"legend\">
+        <span><i style=\"background:#d2a8ff\"></i>proposed (提案)</span>
+        <span><i style=\"background:#8b949e\"></i>pending</span>
+        <span><i style=\"background:#d29922\"></i>running</span>
+        <span><i style=\"background:#5ad1a5\"></i>explored/growing</span>
+        <span><i style=\"background:#f85149\"></i>aborted</span>
+        <span>&nbsp;\">spawned/promoted/grew_to/aborted_to\" edges</span>
+      </div>
+    </div>
+    <div class=\"section\">
+      <h2>Nodes</h2>
+      <div id=\"d-nodes\"></div>
+    </div>
+    <div class=\"section\">
+      <h2>Edges</h2>
+      <div id=\"d-edges\"></div>
+    </div>
+  </div>
+</div>
+<script>
+const STATUS = {
+  proposed:{label:'提案',cls:'proposed',fill:'#d2a8ff'},
+  pending:{label:'保留',cls:'pending',fill:'#8b949e'},
+  running:{label:'実行中',cls:'running',fill:'#d29922'},
+  explored:{label:'探索済',cls:'explored',fill:'#5ad1a5'},
+  growing:{label:'成長',cls:'growing',fill:'#5ad1a5'},
+  aborted:{label:'撤退',cls:'aborted',fill:'#f85149'},
+};
+const REL_COLOR = {
+  spawned:'#3a4858', promoted:'#5ad1a5', grew_to:'#7ee787',
+  aborted_to:'#f85149', proposed_from:'#d2a8ff',
+};
+let current = null;
+
+function escapeHtml(t){return t==null?'':String(t).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+async function refresh(){
+  const list = document.getElementById('quest-list');
+  try {
+    const res = await fetch('/api/quests');
+    const quests = await res.json();
+    if (!quests.length){ list.innerHTML = '<div class=\"empty\">No quests · <code>kage quest new …</code></div>'; return; }
+    list.innerHTML = quests.map(q=>{
+      const st = q.status;
+      const progress = q.runs ? `runs ${q.runs}/${q.max_agent_runs||'∞'}` : '';
+      return `<div class=\"qcard\" onclick=\"selectQuest('${q.id}')\">
+        <div class=\"name\">${escapeHtml(q.name)}</div>
+        <div class=\"id\">${q.id} · mode=${q.mode||'team'} ${q.provider?('· '+escapeHtml(q.provider)):''}</div>
+        <div class=\"dir\">${escapeHtml(q.direction)}</div>
+        <div class=\"stat\">
+          <span class=\"badge ${st}\">${st}</span>
+          ${progress?`<span>${progress}</span>`:''}
+          <span>nodes: ${q.node_total||0}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e){ list.innerHTML = '<div class=\"empty\">Failed to load. kage ui running?</div>'; }
+}
+
+async function selectQuest(id){
+  current = id;
+  const res = await fetch(`/api/quests/${id}`);
+  const q = await res.json();
+  document.getElementById('detail').style.display = 'block';
+  document.getElementById('d-title').textContent = `${q.name} · ${q.status}`;
+  const meta = document.getElementById('d-meta');
+  meta.innerHTML = `<span class=\"badge ${q.status}\">${q.status}</span>
+    <span>方向: ${escapeHtml(q.direction)}</span>
+    <span>runs ${q.agent_runs}/${q.max_agent_runs}</span>
+    <span>mode: ${q.mode||'team'}</span>
+    ${q.provider?`<span>provider: ${escapeHtml(q.provider)}</span>`:''}
+    <span>roles: ${(q.roles||[]).map(r=>escapeHtml(r)).join(', ')}</span>`;
+  renderGraph(q);
+  renderNodes(q);
+  renderEdges(q);
+}
+
+function renderGraph(q){
+  const nodes = q.nodes||[];
+  const edges = q.edges||[];
+  const W=1180,H=520,padX=40,padY=40;
+  const tiers = {};
+  const byId = {};
+  nodes.forEach(n=>{ byId[n.id]=n; });
+  function tierOf(n){
+    if (n.parent_id && byId[n.parent_id]) return tierOf(byId[n.parent_id])+1;
+    return 0;
+  }
+  nodes.forEach(n=>{ const t=tierOf(n); (tiers[t]=tiers[t]||[]).push(n); });
+  const maxTier = Math.max(0,...Object.keys(tiers).map(Number));
+  const positions = {};
+  Object.entries(tiers).forEach(([t,ns])=>{
+    const x = (W-padX*2)/(Math.max(1,ns.length))*0 + padX;
+    ns.forEach((n,i)=>{ positions[n.id] = { x: padX + (i+0.5)*(W-padX*2)/ns.length, y: padY + Number(t)*(H-padY*2)/Math.max(1,maxTier) }; });
+  });
+  const svg = [`<svg class=\"graph\" viewBox=\"0 0 ${W} ${H}\" xmlns=\"http://www.w3.org/2000/svg\">`,
+    `<defs><marker id=\"arrow\" markerWidth=\"10\" markerHeight=\"10\" refX=\"8\" refY=\"3\" orient=\"auto\"><path d=\"M0,0 L6,3 L0,6 Z\" fill=\"${'#3a4858'}\"/></marker></defs>`];
+  edges.forEach(e=>{
+    const a = positions[e.from_node], b = positions[e.to_node];
+    if (!a||!b) return;
+    const color = REL_COLOR[e.relation]||'#3a4858';
+    svg.push(`<line x1=\"${a.x}\" y1=\"${a.y}\" x2=\"${b.x}\" y2=\"${b.y}\" stroke=\"${color}\" stroke-width=\"1.5\" stroke-dasharray=\"${e.relation==='proposed_from'?'4 4':'none'}\" marker-end=\"url(#arrow)\"/>`);
+  });
+  nodes.forEach(n=>{
+    const p = positions[n.id]; if(!p) return;
+    const st = STATUS[n.status]||{fill:'#8b949e',label:n.status};
+    const isOwner = n.role==='owner';
+    svg.push(`<g transform=\"translate(${p.x},${p.y})\">`);
+    svg.push(`<circle r=\"14\" fill=\"${st.fill}\" fill-opacity=\"0.18\" stroke=\"${st.fill}\" stroke-width=\"${n.status==='proposed'?'1':'2'}\" stroke-dasharray=\"${n.status==='proposed'?'3 3':'none'}\"/>`);
+    if (isOwner){ svg.push(`<path d=\"M0,-20 -5,-14 0,-17 5,-14 Z\" fill=\"#5ad1a5\"/>`); }
+    svg.push(`<text text-anchor=\"middle\" y=\"32\" fill=\"${st.fill}\" font-size=\"10\" font-family=\"ui-monospace,monospace\">${n.role}:${n.status}</text>`);
+    svg.push(`<title>${escapeHtml(n.role+' / '+n.hypothesis)}</title>`);
+    svg.push(`</g>`);
+  });
+  svg.push('</svg>');
+  document.getElementById('d-graph').innerHTML = svg.join('');
+}
+
+function renderNodes(q){
+  const nodes = q.nodes||[];
+  if(!nodes.length){ document.getElementById('d-nodes').innerHTML='<div class=\"empty\">no nodes</div>'; return; }
+  const rows = nodes.map(n=>`<tr>
+    <td><code>${n.id}</code></td>
+    <td><span class=\"badge ${n.status}\">${n.status}</span></td>
+    <td>${n.role}</td>
+    <td>${n.parent_id?`<code>${n.parent_id}</code>`:'-'}</td>
+    <td>${n.proposed_by?escapeHtml(n.proposed_by):'-'}</td>
+    <td>${n.verdict||'-'}</td>
+    <td>${n.run_id||'-'}</td>
+    <td>${escapeHtml((n.evidence||'').slice(0,80))}</td>
+    <td>${escapeHtml((n.hypothesis||'').slice(0,120))}</td>
+  </tr>`).join('');
+  document.getElementById('d-nodes').innerHTML = `<table><thead><tr>
+    <th>id</th><th>status</th><th>role</th><th>parent</th><th>proposed_by</th><th>verdict</th><th>run_id</th><th>evidence</th><th>hypothesis</th>
+  </tr></thead><tbody>${rows}</tbody></table>`;
+}
+function renderEdges(q){
+  const edges = q.edges||[];
+  if(!edges.length){ document.getElementById('d-edges').innerHTML='<div class=\"empty\">no edges</div>'; return; }
+  const rows = edges.map(e=>`<tr><td><code>${e.id}</code></td><td>${e.from_node||'-'}</td><td>${e.to_node||'-'}</td><td>${e.relation}</td><td>${e.created_at||''}</td></tr>`).join('');
+  document.getElementById('d-edges').innerHTML = `<table><thead><tr><th>id</th><th>from</th><th>to</th><th>relation</th><th>created_at</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+refresh();
+setInterval(()=>{ refresh(); if(current) selectQuest(current); }, 5000);
+</script>
+</body>
+</html>"""
+
+
+def _quest_to_public_dict(q) -> dict:
+    from .quest import list_nodes, list_edges, node_counts
+
+    nodes = list_nodes(q.id)
+    edges = list_edges(q.id)
+    counts = node_counts(q.id)
+    payload = q.to_dict()
+    payload["node_total"] = counts.get("total", 0)
+    payload["node_counts"] = counts
+    payload["runs"] = counts.get("total", 0)
+    payload["nodes"] = [n.to_dict() for n in nodes]
+    payload["edges"] = [e.__dict__ for e in edges]
+    return payload
+
+
+@app.get("/api/quests")
+def api_quests_list(status: str | None = None, project: str | None = None):
+    from .quest import list_quests, node_counts
+
+    quests = list_quests(status_filter=status, project_filter=project)
+    out = []
+    for q in quests:
+        counts = node_counts(q.id)
+        d = q.to_dict()
+        d["node_total"] = counts.get("total", 0)
+        d["node_counts"] = counts
+        d["runs"] = counts.get("total", 0)
+        out.append(d)
+    return out
+
+
+@app.get("/api/quests/{quest_id}")
+def api_quest_detail(quest_id: str):
+    from .quest import get_quest
+
+    q = get_quest(quest_id)
+    if not q:
+        return JSONResponse(status_code=404, content={"error": "Quest not found."})
+    return _quest_to_public_dict(q)
+
+
 @app.get("/", response_class=HTMLResponse)
 @app.get("/runs", response_class=HTMLResponse)
 @app.get("/logs", response_class=HTMLResponse)
@@ -1798,6 +2057,11 @@ class ToggleTaskRequest(BaseModel):
 @app.get("/chat", response_class=HTMLResponse)
 def root():
     return INDEX_HTML
+
+
+@app.get("/quests", response_class=HTMLResponse)
+def quests_page():
+    return QUESTS_HTML
 
 
 @app.get("/api/runs")

@@ -251,6 +251,11 @@ Cleanup old logs every midnight.
 
 | Command | Description |
 |---------|-------------|
+| `kage quest new <name> --direction "..."` | Create an event-driven quest: a team of role agents (scout → poc → strategist) explores a vague direction as a mind-map graph, one node per cron tick, with a `--max-agent-runs` runaway budget |
+| `kage quest list` | List quests and their node/run progress |
+| `kage quest show <id>` | Show a quest, its nodes, and edges |
+| `kage quest stop <id>` / `kage quest resume <id>` | Pause/resume a quest |
+| `kage quest abort-node <node_id>` | Force-abort a single quest node |
 | `kage onboard` | Global setup (cron, directories, DB) |
 | `kage init` | Initialize kage in the current directory |
 | `kage run <task>` | Run a specific task immediately; add `--force` to bypass suspension |
