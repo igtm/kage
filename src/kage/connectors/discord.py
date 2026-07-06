@@ -18,6 +18,12 @@ from ..connector_payload import (
 from ..runs import write_run_metadata
 from .base import BaseConnector
 
+DEFAULT_DISCORD_SYSTEM_PROMPT = """You are communicating with the user via Discord.
+Please adhere to the following formatting rules:
+- Discord does NOT support Markdown tables natively. If you need to present tabular data, you MUST use an ASCII table inside a code block (```).
+- Use standard Markdown for bold (**text**), italics (*text*), and code blocks (```).
+- Do not use HTML tags."""
+
 
 class DiscordConnector(BaseConnector):
     GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
@@ -189,10 +195,15 @@ class DiscordConnector(BaseConnector):
 
         agent = get_agent_for_connector(config, self.name, self._config_dict())
         composed_system = build_full_system_prompt(config, agent)
-        if self.config.system_prompt:
+
+        system_prompt = self.config.system_prompt
+        if not system_prompt:
+            system_prompt = DEFAULT_DISCORD_SYSTEM_PROMPT
+
+        if system_prompt:
             composed_system = (
                 f"{composed_system}\n\n[Connector Instructions]\n"
-                f"{self.config.system_prompt.strip()}"
+                f"{system_prompt.strip()}"
             )
         connector_meta = {
             "connector": {

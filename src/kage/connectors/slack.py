@@ -16,6 +16,12 @@ from ..connector_payload import (
 from ..runs import write_run_metadata
 from .base import BaseConnector
 
+DEFAULT_SLACK_SYSTEM_PROMPT = """You are communicating with the user via Slack.
+Please adhere to the following formatting rules:
+- Slack does NOT support Markdown tables natively. If you need to present tabular data, you MUST use an ASCII table inside a code block (```).
+- Slack does NOT support standard Markdown headers (like # Header). Use bold text (*text*) for emphasis instead.
+- Do not use HTML tags."""
+
 
 class SlackConnector(BaseConnector):
     def __init__(self, name: str, config):
@@ -214,10 +220,15 @@ class SlackConnector(BaseConnector):
             config = get_global_config()
             agent = get_agent_for_connector(config, self.name, self._config_dict())
             composed_system = build_full_system_prompt(config, agent)
-            if self.config.system_prompt:
+
+            system_prompt = self.config.system_prompt
+            if not system_prompt:
+                system_prompt = DEFAULT_SLACK_SYSTEM_PROMPT
+
+            if system_prompt:
                 composed_system = (
                     f"{composed_system}\n\n[Connector Instructions]\n"
-                    f"{self.config.system_prompt.strip()}"
+                    f"{system_prompt.strip()}"
                 )
             working_dir = self.config.working_dir or agent.default_working_dir
             connector_meta = {
