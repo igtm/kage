@@ -16,6 +16,12 @@ from ..connector_payload import (
 from ..runs import write_run_metadata
 from .base import BaseConnector
 
+DEFAULT_TELEGRAM_SYSTEM_PROMPT = """You are communicating with the user via Telegram.
+Please adhere to the following formatting rules:
+- Telegram does NOT support standard Markdown tables. If you need to present tabular data, you MUST use an ASCII table inside a code block (```).
+- Telegram's Markdown parsing is strict. Stick to basic formatting like bold (**text**), italics (*text*), and code blocks (```).
+- Do not use HTML tags."""
+
 
 class TelegramConnector(BaseConnector):
     def __init__(self, name: str, config):
@@ -291,10 +297,15 @@ class TelegramConnector(BaseConnector):
             config = get_global_config()
             agent = get_agent_for_connector(config, self.name, self._config_dict())
             composed_system = build_full_system_prompt(config, agent)
-            if self.config.system_prompt:
+
+            system_prompt = self.config.system_prompt
+            if not system_prompt:
+                system_prompt = DEFAULT_TELEGRAM_SYSTEM_PROMPT
+
+            if system_prompt:
                 composed_system = (
                     f"{composed_system}\n\n[Connector Instructions]\n"
-                    f"{self.config.system_prompt.strip()}"
+                    f"{system_prompt.strip()}"
                 )
             working_dir = self.config.working_dir or agent.default_working_dir
             from_user = target_msg.get("from", {})
