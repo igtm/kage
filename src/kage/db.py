@@ -180,43 +180,45 @@ def start_execution(
     run_at = datetime.now().astimezone().isoformat()
     exec_id = str(uuid.uuid4())
     log_paths = ensure_run_log_files(exec_id)
-    cursor.execute(
-        """
-        INSERT INTO executions (
-            id, project_path, task_name, run_at, status, stdout, stderr, finished_at,
-            pid, log_dir, stdout_path, stderr_path, events_path, exit_code,
-            output_summary, stdout_bytes, stderr_bytes, last_output_at, working_dir,
-            execution_kind, provider_name, agent_name
+    try:
+        cursor.execute(
+            """
+            INSERT INTO executions (
+                id, project_path, task_name, run_at, status, stdout, stderr, finished_at,
+                pid, log_dir, stdout_path, stderr_path, events_path, exit_code,
+                output_summary, stdout_bytes, stderr_bytes, last_output_at, working_dir,
+                execution_kind, provider_name, agent_name
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                exec_id,
+                project_path,
+                task_name,
+                run_at,
+                "RUNNING",
+                "",
+                "",
+                None,
+                pid,
+                str(log_paths["log_dir"]),
+                str(log_paths["stdout_path"]),
+                str(log_paths["stderr_path"]),
+                str(log_paths["events_path"]),
+                None,
+                "",
+                0,
+                0,
+                None,
+                working_dir,
+                execution_kind,
+                provider_name,
+                agent_name,
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """,
-        (
-            exec_id,
-            project_path,
-            task_name,
-            run_at,
-            "RUNNING",
-            "",
-            "",
-            None,
-            pid,
-            str(log_paths["log_dir"]),
-            str(log_paths["stdout_path"]),
-            str(log_paths["stderr_path"]),
-            str(log_paths["events_path"]),
-            None,
-            "",
-            0,
-            0,
-            None,
-            working_dir,
-            execution_kind,
-            provider_name,
-            agent_name,
-        ),
-    )
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
     return exec_id
 
 
@@ -265,8 +267,9 @@ def _prune_runs(cursor: sqlite3.Cursor):
         """
         SELECT id, log_dir
         FROM executions
-        WHERE id NOT IN (
+        WHERE agent_name IS NULL AND id NOT IN (
             SELECT id FROM executions
+            WHERE agent_name IS NULL
             ORDER BY run_at DESC
             LIMIT ?
         )
@@ -286,8 +289,9 @@ def _prune_runs(cursor: sqlite3.Cursor):
     cursor.execute(
         """
         DELETE FROM executions
-        WHERE id NOT IN (
+        WHERE agent_name IS NULL AND id NOT IN (
             SELECT id FROM executions
+            WHERE agent_name IS NULL
             ORDER BY run_at DESC
             LIMIT ?
         )
@@ -318,32 +322,34 @@ def update_execution(
     if status != "STOPPED":
         where += " AND status != 'STOPPED'"
 
-    cursor.execute(
-        f"""
-        UPDATE executions
-        SET status = ?, stdout = ?, stderr = ?, finished_at = ?, exit_code = ?,
-            output_summary = ?, stdout_bytes = ?, stderr_bytes = ?,
-            last_output_at = ?
-        {where}
-    """,
-        (
-            status,
-            stdout,
-            stderr,
-            finished_at,
-            exit_code,
-            output_summary,
-            stdout_bytes,
-            stderr_bytes,
-            last_output_at,
-            exec_id,
-        ),
-    )
-    updated = cursor.rowcount > 0
-    _prune_runs(cursor)
+    try:
+        cursor.execute(
+            f"""
+            UPDATE executions
+            SET status = ?, stdout = ?, stderr = ?, finished_at = ?, exit_code = ?,
+                output_summary = ?, stdout_bytes = ?, stderr_bytes = ?,
+                last_output_at = ?
+            {where}
+        """,
+            (
+                status,
+                stdout,
+                stderr,
+                finished_at,
+                exit_code,
+                output_summary,
+                stdout_bytes,
+                stderr_bytes,
+                last_output_at,
+                exec_id,
+            ),
+        )
+        updated = cursor.rowcount > 0
+        _prune_runs(cursor)
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
     return updated
 
 
