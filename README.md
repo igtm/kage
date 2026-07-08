@@ -390,21 +390,23 @@ Install-time migrations are discovered automatically from `src/kage/migrations/i
 | `.kage/config.local.toml` | Local overrides (git-ignored) |
 | `.kage/system_prompt.md` | Project-specific AI instructions |
 
-Provider-specific model selection can be layered in the same files:
+Provider-specific model selection can be layered in the same files. You can set a single `model` or a fallback list with `models`:
 
 ```toml
 [providers.codex]
 model = "gpt-5-codex"
 
 [providers.claude]
-model = "claude-sonnet-4-5"
+models = ["claude-sonnet-4-5", "claude-haiku-4-5"]
 
 [providers.antigravity]
 model = "Gemini 3.5 Flash"
 
 [providers.opencode]
-model = "openai/gpt-5-codex"
+models = ["openai/gpt-5-codex", "openai/gpt-5-mini"]
 ```
+
+When `models` is set, kage tries each model in order and falls back to the next one only when the previous hits a rate or usage limit. If all models fail, the run fails.
 
 Built-in providers use `--model` by default. You can also set nested keys via CLI:
 
@@ -412,6 +414,7 @@ Built-in providers use `--model` by default. You can also set nested keys via CL
 kage config default_ai_engine antigravity --global
 kage config providers.antigravity.model "Gemini 3.5 Flash" --global
 kage config providers.codex.model gpt-5-codex --global
+kage config providers.claude.models '["claude-sonnet-4-5","claude-haiku-4-5"]' --global
 kage config providers.codex.model gpt-5-mini --local
 ```
 

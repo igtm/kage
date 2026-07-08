@@ -26,6 +26,7 @@ from .config import (
     get_global_config,
     render_command_template,
 )
+from .model_fallback import run_with_model_fallback
 from .db import (
     get_execution_status,
     get_execution_pid,
@@ -726,8 +727,33 @@ def execute_task(
                 )
                 write_artifact_metadata(exec_id, artifact_staging_dir, [])
 
+            # タイムアウト設定 (デフォルトなし)
+            timeout = task.timeout_minutes * 60 if task.timeout_minutes else None
+
             if compiled_override_path is not None:
-                cmd = ["bash", str(compiled_override_path)]
+                cmd = prepare_command_for_execution(
+                    ["bash", str(compiled_override_path)], env
+                )
+                try:
+                    result_data = run_logged_command(
+                        cmd=cmd,
+                        cwd=execution_dir,
+                        env=env,
+                        exec_id=exec_id,
+                        timeout=timeout,
+                    )
+                    command_started = True
+                except subprocess.TimeoutExpired:
+                    command_started = True
+                    if artifact_staging_dir is not None:
+                        attachments = collect_artifacts_from_dir(
+                            artifact_staging_dir,
+                        )
+                        write_artifact_metadata(
+                            exec_id, artifact_staging_dir, attachments
+                        )
+                    # タイムアウト時はプロセスグループごと終了させる
+                    raise
             elif task.prompt:
                 full_prompt = base_prompt or ""
                 if artifact_staging_dir is not None:
@@ -736,49 +762,114 @@ def execute_task(
                         artifact_staging_dir,
                     )
 
-                if resolved_template:
-                    cmd = render_command_template(
-                        resolved_template,
-                        full_prompt,
-                        provider=provider,
-                        extra_args=extra_args,
-                        auto_inject_model=not bool(task.command_template),
-                    )
+                if provider is not None:
+
+                    def _build_cmd_for_model(model: Optional[str]) -> list[str]:
+                        if resolved_template:
+                            raw_cmd = render_command_template(
+                                resolved_template,
+                                full_prompt,
+                                provider=provider,
+                                extra_args=extra_args,
+                                auto_inject_model=not bool(task.command_template),
+                                selected_model=model,
+                            )
+                        else:
+                            raw_cmd = [
+                                engine_name,
+                                *build_model_args(provider, selected_model=model),
+                                full_prompt,
+                                *extra_args,
+                            ]
+                        return prepare_command_for_execution(raw_cmd, env)
+
+                    def _run_cmd(cmd: list[str]) -> dict:
+                        nonlocal command_started
+                        command_started = True
+                        data = run_logged_command(
+                            cmd=cmd,
+                            cwd=execution_dir,
+                            env=env,
+                            exec_id=exec_id,
+                            timeout=timeout,
+                        )
+                        data["_cmd"] = cmd
+                        return data
+
+                    command_started = True
+                    try:
+                        result_data = run_with_model_fallback(
+                            engine_name,
+                            provider,
+                            _build_cmd_for_model,
+                            _run_cmd,
+                        )
+                    except subprocess.TimeoutExpired:
+                        if artifact_staging_dir is not None:
+                            attachments = collect_artifacts_from_dir(
+                                artifact_staging_dir,
+                            )
+                            write_artifact_metadata(
+                                exec_id, artifact_staging_dir, attachments
+                            )
+                        raise
                 else:
-                    cmd = [
-                        engine_name,
-                        *build_model_args(provider),
-                        full_prompt,
-                        *extra_args,
-                    ]
+                    if resolved_template:
+                        cmd = render_command_template(
+                            resolved_template,
+                            full_prompt,
+                            provider=None,
+                            extra_args=extra_args,
+                            auto_inject_model=not bool(task.command_template),
+                        )
+                    else:
+                        cmd = [engine_name, full_prompt, *extra_args]
+                    cmd = prepare_command_for_execution(cmd, env)
+                    try:
+                        result_data = run_logged_command(
+                            cmd=cmd,
+                            cwd=execution_dir,
+                            env=env,
+                            exec_id=exec_id,
+                            timeout=timeout,
+                        )
+                        command_started = True
+                    except subprocess.TimeoutExpired:
+                        command_started = True
+                        if artifact_staging_dir is not None:
+                            attachments = collect_artifacts_from_dir(
+                                artifact_staging_dir,
+                            )
+                            write_artifact_metadata(
+                                exec_id, artifact_staging_dir, attachments
+                            )
+                        raise
             elif task.command:
-                cmd = [shell_cmd, "-c", task.command]
-
-            cmd = prepare_command_for_execution(cmd, env)
-
-            # タイムアウト設定 (デフォルトなし)
-            timeout = task.timeout_minutes * 60 if task.timeout_minutes else None
-
-            try:
-                result_data = run_logged_command(
-                    cmd=cmd,
-                    cwd=execution_dir,
-                    env=env,
-                    exec_id=exec_id,
-                    timeout=timeout,
+                cmd = prepare_command_for_execution(
+                    [shell_cmd, "-c", task.command], env
                 )
-                command_started = True
-            except subprocess.TimeoutExpired:
-                command_started = True
-                if artifact_staging_dir is not None:
-                    attachments = collect_artifacts_from_dir(
-                        artifact_staging_dir,
+                try:
+                    result_data = run_logged_command(
+                        cmd=cmd,
+                        cwd=execution_dir,
+                        env=env,
+                        exec_id=exec_id,
+                        timeout=timeout,
                     )
-                    write_artifact_metadata(exec_id, artifact_staging_dir, attachments)
-                # タイムアウト時はプロセスグループごと終了させる
-                raise
+                    command_started = True
+                except subprocess.TimeoutExpired:
+                    command_started = True
+                    if artifact_staging_dir is not None:
+                        attachments = collect_artifacts_from_dir(
+                            artifact_staging_dir,
+                        )
+                        write_artifact_metadata(
+                            exec_id, artifact_staging_dir, attachments
+                        )
+                    raise
+
             result = subprocess.CompletedProcess(
-                cmd,
+                result_data.get("_cmd", []),
                 result_data["returncode"],
                 result_data["stdout"],
                 result_data["stderr"],

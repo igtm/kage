@@ -1066,6 +1066,10 @@ def task_show(
             f"[bold]Prompt Hash:[/bold]    {(compiled or {}).get('prompt_hash', prompt_hash(task.prompt or ''))}"
         )
         details.append(f"[bold]Provider:[/bold]       {provider_label}")
+        if effective_provider and merged_cfg.providers.get(effective_provider):
+            models = merged_cfg.providers[effective_provider].effective_models
+            model_list = ", ".join(m or "(none)" for m in models)
+            details.append(f"[bold]Models:[/bold]         {model_list}")
         if compiled:
             if compiled["exists"]:
                 freshness = (
@@ -1699,7 +1703,7 @@ def tui():
 def config(
     key: str = typer.Argument(
         ...,
-        help="Setting key (e.g., 'default_ai_engine' or 'providers.antigravity.model')",
+        help="Setting key (e.g., 'default_ai_engine', 'providers.antigravity.model', or 'providers.codex.models')",
     ),
     value: str = typer.Argument(..., help="New value"),
     is_global: bool = typer.Option(
@@ -1789,6 +1793,7 @@ def config_show(
     provider_table.add_column("name", style="bold")
     provider_table.add_column("command")
     provider_table.add_column("model")
+    provider_table.add_column("models")
     provider_table.add_column("model_flag")
     provider_table.add_column("parser")
     provider_table.add_column("parser_args")
@@ -1798,6 +1803,7 @@ def config_show(
             name,
             p.command,
             p.model or "",
+            ", ".join(p.models) if p.models else "",
             p.model_flag or "",
             p.parser,
             p.parser_args or "",
@@ -2021,6 +2027,7 @@ def doctor():
                             "parser",
                             "parser_args",
                             "model",
+                            "models",
                             "model_flag",
                         }:
                             warn(scope, f"providers.{name}: unknown key {k}")
@@ -2038,6 +2045,17 @@ def doctor():
                         and not isinstance(prov["model"], str)
                     ):
                         fail(scope, f"providers.{name}.model must be string")
+                    if "models" in prov and not isinstance(prov["models"], list):
+                        fail(
+                            scope, f"providers.{name}.models must be a list of strings"
+                        )
+                    if "models" in prov:
+                        for i, m in enumerate(prov["models"]):
+                            if not isinstance(m, str):
+                                fail(
+                                    scope,
+                                    f"providers.{name}.models[{i}] must be string",
+                                )
                     if (
                         "model_flag" in prov
                         and prov["model_flag"] is not None
