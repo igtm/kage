@@ -181,3 +181,12 @@ Memory is per-agent (not per-task), overwrite-style (latest state only, `updated
 3. `~/.kage/config.toml` (User-global)
 4. Library Defaults
 - **Background Loop**: Runs via `kage cron install` (cron/launchd).
+
+## Provider Model Fallback
+
+Providers support a `models` array for automatic fallback when a model hits a rate or usage limit. kage tries each model in order and only falls back when the failure looks like a rate/usage limit. If every model fails, the run fails. Reset hints from the provider (e.g. "resets in 2 hours" or "resets Jan 29 at 1pm (Asia/Tokyo)") are parsed and stored so the next run can skip still-limited models and reduce overhead.
+
+```toml
+[providers.claude]
+models = ["claude-sonnet-4-5", "claude-haiku-4-5"]
+```

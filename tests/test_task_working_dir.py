@@ -48,6 +48,9 @@ def mock_executor_env(tmp_path: Path, mocker):
     mocker.patch("kage.executor._notify_connectors")
     mocker.patch("kage.executor.shutil.which", side_effect=lambda cmd, path=None: cmd)
     mocker.patch("kage.executor.set_execution_pid")
+    mocker.patch(
+        "kage.rate_limit.RATE_LIMIT_STATE_PATH", tmp_path / ".rate_limit_state.json"
+    )
     mocker.patch("kage.executor.KAGE_GLOBAL_DIR", tmp_path / ".global")
     mocker.patch("kage.runs.KAGE_LOGS_DIR", tmp_path / ".logs")
 

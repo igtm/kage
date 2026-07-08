@@ -129,6 +129,9 @@ def mock_executor_env(tmp_path: Path, executor_config, mocker):
     mocker.patch("kage.executor._notify_connectors")
     mocker.patch("kage.executor.shutil.which", side_effect=lambda cmd, path=None: cmd)
     mocker.patch("kage.executor.set_execution_pid")
+    mocker.patch(
+        "kage.rate_limit.RATE_LIMIT_STATE_PATH", tmp_path / ".rate_limit_state.json"
+    )
     mocker.patch("kage.executor.KAGE_GLOBAL_DIR", tmp_path / ".global")
     mocker.patch("kage.runs.KAGE_LOGS_DIR", tmp_path / ".logs")
 
@@ -778,3 +781,152 @@ def test_set_config_value_supports_nested_keys_for_local_scope(tmp_path: Path):
         data = tomlkit.load(f).unwrap()
 
     assert data["providers"]["codex"]["model"] == "gpt-5-mini"
+
+
+def test_set_config_value_accepts_json_array_for_models(tmp_path: Path):
+    """CLI から providers.codex.models に配列を保存できる"""
+    workspace_dir = tmp_path / "workspace"
+    (workspace_dir / ".kage").mkdir(parents=True)
+
+    set_config_value(
+        "providers.codex.models",
+        '["gpt-5-codex","gpt-5-mini"]',
+        is_global=False,
+        workspace_dir=workspace_dir,
+        scope="local",
+    )
+
+    config_path = workspace_dir / ".kage" / "config.local.toml"
+    with open(config_path, "r", encoding="utf-8") as f:
+        data = tomlkit.load(f).unwrap()
+
+    assert data["providers"]["codex"]["models"] == ["gpt-5-codex", "gpt-5-mini"]
+
+
+def test_provider_config_effective_models_prefers_models():
+    from kage.config import ProviderConfig
+
+    p = ProviderConfig(command="codex", model="gpt-5-codex", models=["a", "b"])
+    assert p.effective_models == ["a", "b"]
+
+    p2 = ProviderConfig(command="codex", model="gpt-5-codex")
+    assert p2.effective_models == ["gpt-5-codex"]
+
+    p3 = ProviderConfig(command="codex")
+    assert p3.effective_models == [None]
+
+
+def test_execute_task_fallback_on_rate_limit(
+    tmp_path: Path, executor_config, mock_executor_env, mocker
+):
+    """1つ目のモデルがレート制限、2つ目が成功する場合フォールバックする"""
+    from kage.config import ProviderConfig
+    from kage.parser import TaskDef
+
+    executor_config.providers["codex"] = ProviderConfig(
+        command="codex",
+        parser="raw",
+        models=["gpt-5-codex", "gpt-5-mini"],
+        model_flag="--model",
+    )
+
+    procs = [
+        DummyProc(
+            stdout="",
+            stderr="Rate limit exceeded. Try again in 5 minutes.",
+            returncode=1,
+        ),
+        DummyProc(stdout="done", stderr="", returncode=0),
+    ]
+    mocker.patch("kage.executor.subprocess.Popen", side_effect=procs)
+    update_execution = mocker.patch("kage.executor.update_execution")
+
+    task = TaskDef(
+        name="fallback_test",
+        cron="* * * * *",
+        prompt="test",
+        provider="codex",
+    )
+    task_file = tmp_path / "task.md"
+    task_file.write_text(
+        "---\nname: fallback_test\ncron: '* * * * *'\n---\ntest prompt"
+    )
+    execute_task(tmp_path, task, task_file)
+
+    assert update_execution.call_count >= 1
+    call_args = update_execution.call_args
+    assert call_args.args[1] == "SUCCESS"
+
+
+def test_execute_task_fails_when_all_models_rate_limited(
+    tmp_path: Path, executor_config, mock_executor_env, mocker
+):
+    """すべてのモデルがレート制限なら FAILED になる"""
+    from kage.config import ProviderConfig
+    from kage.parser import TaskDef
+
+    executor_config.providers["codex"] = ProviderConfig(
+        command="codex",
+        parser="raw",
+        models=["gpt-5-codex", "gpt-5-mini"],
+        model_flag="--model",
+    )
+
+    procs = [
+        DummyProc(stdout="", stderr="Rate limit exceeded.", returncode=1),
+        DummyProc(stdout="", stderr="Usage limit reached.", returncode=1),
+    ]
+    mocker.patch("kage.executor.subprocess.Popen", side_effect=procs)
+    update_execution = mocker.patch("kage.executor.update_execution")
+
+    task = TaskDef(
+        name="fallback_test",
+        cron="* * * * *",
+        prompt="test",
+        provider="codex",
+    )
+    task_file = tmp_path / "task.md"
+    task_file.write_text(
+        "---\nname: fallback_test\ncron: '* * * * *'\n---\ntest prompt"
+    )
+    execute_task(tmp_path, task, task_file)
+
+    call_args = update_execution.call_args
+    assert call_args.args[1] == "FAILED"
+
+
+def test_execute_task_no_fallback_on_regular_error(
+    tmp_path: Path, executor_config, mock_executor_env, mocker
+):
+    """通常のエラーではフォールバックしない"""
+    from kage.config import ProviderConfig
+    from kage.parser import TaskDef
+
+    executor_config.providers["codex"] = ProviderConfig(
+        command="codex",
+        parser="raw",
+        models=["gpt-5-codex", "gpt-5-mini"],
+        model_flag="--model",
+    )
+
+    popen = mocker.patch(
+        "kage.executor.subprocess.Popen",
+        return_value=DummyProc(stdout="", stderr="Some random failure", returncode=1),
+    )
+    update_execution = mocker.patch("kage.executor.update_execution")
+
+    task = TaskDef(
+        name="fallback_test",
+        cron="* * * * *",
+        prompt="test",
+        provider="codex",
+    )
+    task_file = tmp_path / "task.md"
+    task_file.write_text(
+        "---\nname: fallback_test\ncron: '* * * * *'\n---\ntest prompt"
+    )
+    execute_task(tmp_path, task, task_file)
+
+    assert popen.call_count == 1
+    call_args = update_execution.call_args
+    assert call_args.args[1] == "FAILED"

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from importlib import resources
 import tomlkit
@@ -27,7 +28,17 @@ class ProviderConfig(BaseModel):
     parser: str = "raw"
     parser_args: str = ""
     model: Optional[str] = None
+    models: list[str] = []
     model_flag: Optional[str] = "--model"
+
+    @property
+    def effective_models(self) -> list[Optional[str]]:
+        """フォールバック用のモデル候補を返す。models があればそれを優先。"""
+        if self.models:
+            return self.models
+        if self.model:
+            return [self.model]
+        return [None]
 
 
 class AgentConfig(BaseModel):
@@ -226,13 +237,21 @@ def get_user_overrides(workspace_dir: Optional[Path] = None) -> dict:
     return _deep_merge(merged, ws_local_config)
 
 
-def build_model_args(provider: Optional[ProviderConfig]) -> list[str]:
+def build_model_args(
+    provider: Optional[ProviderConfig],
+    selected_model: Optional[str] = None,
+) -> list[str]:
     """Provider設定から model 用 CLI 引数列を組み立てる。"""
-    if not provider or not provider.model:
+    model = (
+        selected_model
+        if selected_model is not None
+        else (provider.model if provider else None)
+    )
+    if not model:
         return []
-    if provider.model_flag:
-        return [provider.model_flag, provider.model]
-    return [provider.model]
+    if provider and provider.model_flag:
+        return [provider.model_flag, model]
+    return [model]
 
 
 def render_command_template(
@@ -241,10 +260,15 @@ def render_command_template(
     provider: Optional[ProviderConfig] = None,
     extra_args: Optional[list[str]] = None,
     auto_inject_model: bool = True,
+    selected_model: Optional[str] = None,
 ) -> list[str]:
     """テンプレート内の {prompt}/{model}/{model_args} を展開する。"""
-    model = provider.model if provider and provider.model else None
-    model_args = build_model_args(provider)
+    model = (
+        selected_model
+        if selected_model is not None
+        else (provider.model if provider and provider.model else None)
+    )
+    model_args = build_model_args(provider, selected_model=selected_model)
     rendered: list[str] = []
     model_consumed = False
     has_explicit_model_placeholder = any(
@@ -311,6 +335,13 @@ def _infer_toml_value(value: str):
         return False
     if value.isdigit():
         return int(value)
+    if value.startswith("[") and value.endswith("]"):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
     return value
 
 

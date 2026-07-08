@@ -9,12 +9,14 @@ from pathlib import Path
 
 from .ai.chat import clean_ai_reply, get_thinking_tag
 from .config import (
+    ProviderConfig,
     build_model_args,
     get_global_config,
     get_system_prompt,
     render_command_template,
 )
 from .gemini_transition import emit_gemini_transition_warning, is_gemini_provider_name
+from .model_fallback import run_with_model_fallback
 from .parser import TaskDef
 
 COMPILED_SCRIPT_SUFFIX = ".lock.sh"
@@ -172,6 +174,7 @@ def _build_compile_request(
     project_dir: Path,
     task: TaskDef,
     task_file: Path,
+    selected_model: str | None = None,
 ) -> tuple[list[str], Path, dict[str, str], str]:
     global_config = get_global_config(workspace_dir=project_dir)
     execution_dir = _resolve_task_working_dir(project_dir, task, task_file)
@@ -222,9 +225,15 @@ def _build_compile_request(
             provider=provider,
             extra_args=extra_args,
             auto_inject_model=not bool(task.command_template),
+            selected_model=selected_model,
         )
     else:
-        cmd = [engine_name, *build_model_args(provider), compile_prompt, *extra_args]
+        cmd = [
+            engine_name,
+            *build_model_args(provider, selected_model=selected_model),
+            compile_prompt,
+            *extra_args,
+        ]
 
     env = os.environ.copy()
     if global_config.env_path:
@@ -250,18 +259,40 @@ def compile_prompt_task(project_dir: Path, task: TaskDef, task_file: Path) -> Pa
         raise ValueError("Compilation is only supported for prompt tasks.")
 
     cmd, cwd, env, engine_name = _build_compile_request(project_dir, task, task_file)
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        cwd=str(cwd),
-        env=env,
-    )
-    if result.returncode != 0:
-        stderr = result.stderr.strip() or "unknown error"
+    global_config = get_global_config(workspace_dir=project_dir)
+    provider: ProviderConfig | None = global_config.providers.get(engine_name)
+
+    def _build_cmd_for_model(model: str | None) -> list[str]:
+        return _build_compile_request(
+            project_dir, task, task_file, selected_model=model
+        )[0]
+
+    def _run_cmd(cmd: list[str]) -> dict:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(cwd),
+            env=env,
+        )
+        return {
+            "stdout": res.stdout,
+            "stderr": res.stderr,
+            "returncode": res.returncode,
+        }
+
+    if provider is not None:
+        result = run_with_model_fallback(
+            engine_name, provider, _build_cmd_for_model, _run_cmd
+        )
+    else:
+        result = _run_cmd(cmd)
+
+    if result["returncode"] != 0:
+        stderr = result["stderr"].strip() or "unknown error"
         raise RuntimeError(f"Compilation failed via {engine_name}: {stderr}")
 
-    script_body = _strip_script_wrappers(result.stdout)
+    script_body = _strip_script_wrappers(result["stdout"])
     if not script_body:
         raise RuntimeError("Compilation returned an empty script.")
 
@@ -278,6 +309,7 @@ def compile_prompt_task(project_dir: Path, task: TaskDef, task_file: Path) -> Pa
         f"# kage-source-file: {task_file}",
         f"# kage-prompt-hash: {fingerprints['prompt_hash']}",
         f"# kage-provider: {engine_name}",
+        f"# kage-model: {(result.get('_used_model') or provider.model) if provider else ''}",
         f"# kage-compiled-at: {datetime.now().astimezone().isoformat()}",
         "",
     ]

@@ -15,7 +15,8 @@ from ..artifacts import (
     write_artifact_metadata,
     write_incoming_artifact_metadata,
 )
-from ..config import get_global_config, render_command_template
+from ..config import ProviderConfig, get_global_config, render_command_template
+from ..model_fallback import run_with_model_fallback
 from ..connector_payload import ConnectorAttachment
 from ..gemini_transition import (
     emit_gemini_transition_warning,
@@ -260,6 +261,7 @@ def _build_chat_invocation(
     extra_sections: list[str] | None = None,
     agent_name: str | None = None,
     run_id: str | None = None,
+    selected_model: str | None = None,
 ):
     config = get_global_config()
     engine_name = config.default_ai_engine
@@ -299,7 +301,9 @@ def _build_chat_invocation(
     parts.append(f"[User Message]\n{message}")
     system_context = "\n\n".join(parts)
 
-    cmd = render_command_template(template, system_context, provider=provider)
+    cmd = render_command_template(
+        template, system_context, provider=provider, selected_model=selected_model
+    )
     cmd = _normalize_antigravity_print_order(cmd)
 
     env = os.environ.copy()
@@ -320,6 +324,7 @@ def _build_chat_invocation(
         "cwd": _resolve_chat_working_dir(config, working_dir),
         "env": env,
         "provider_name": engine_name,
+        "provider": provider,
         "system_context": system_context,
     }
 
@@ -344,18 +349,45 @@ def generate_chat_reply(
         agent_name=agent_name,
         run_id=run_id,
     )
+    provider: ProviderConfig = invocation["provider"]
 
-    res = subprocess.run(
-        invocation["cmd"],
-        capture_output=True,
-        text=True,
-        cwd=str(invocation["cwd"]),
-        env=invocation["env"],
+    def _build_cmd_for_model(model: str | None) -> list[str]:
+        inv = _build_chat_invocation(
+            message=message,
+            system_prompt=system_prompt,
+            working_dir=working_dir,
+            agent_name=agent_name,
+            run_id=run_id,
+            selected_model=model,
+        )
+        return inv["cmd"]
+
+    def _run_cmd(cmd: list[str]) -> dict:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(invocation["cwd"]),
+            env=invocation["env"],
+        )
+        return {
+            "stdout": res.stdout,
+            "stderr": res.stderr,
+            "returncode": res.returncode,
+        }
+
+    result = run_with_model_fallback(
+        invocation["provider_name"],
+        provider,
+        _build_cmd_for_model,
+        _run_cmd,
     )
     return {
-        "stdout": res.stdout,
-        "stderr": res.stderr,
-        "returncode": res.returncode,
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "returncode": result["returncode"],
+        "_fallback_attempts": result.get("_fallback_attempts", []),
+        "_used_model": result.get("_used_model"),
     }
 
 
@@ -495,11 +527,42 @@ def generate_logged_chat_reply(
                 "prompt": invocation["system_context"],
             },
         )
-        result = run_logged_command(
-            cmd=prepare_command_for_execution(invocation["cmd"], invocation["env"]),
-            cwd=invocation["cwd"],
-            env=invocation["env"],
-            exec_id=exec_id,
+
+        provider: ProviderConfig = invocation["provider"]
+
+        def _build_cmd_for_model(model: str | None) -> list[str]:
+            inv = _build_chat_invocation(
+                message=message,
+                system_prompt=system_prompt,
+                working_dir=str(cwd_path),
+                artifact_dir=artifact_staging_dir,
+                connector_targets=connector_targets,
+                extra_sections=[
+                    build_connector_incoming_prompt(
+                        artifact_staging_dir,
+                        incoming_preparation.attachments,
+                        incoming_preparation.errors,
+                    )
+                ],
+                agent_name=agent_name,
+                run_id=child_run_id,
+                selected_model=model,
+            )
+            return prepare_command_for_execution(inv["cmd"], inv["env"])
+
+        def _run_cmd(cmd: list[str]) -> dict:
+            return run_logged_command(
+                cmd=cmd,
+                cwd=invocation["cwd"],
+                env=invocation["env"],
+                exec_id=exec_id,
+            )
+
+        result = run_with_model_fallback(
+            invocation["provider_name"],
+            provider,
+            _build_cmd_for_model,
+            _run_cmd,
         )
         attachments = collect_artifacts_from_dir(
             artifact_staging_dir,
@@ -518,14 +581,16 @@ def generate_logged_chat_reply(
             stderr_bytes=result["stderr_bytes"],
             last_output_at=result["last_output_at"],
         )
-        write_run_metadata(
-            exec_id,
-            {
-                **base_metadata,
-                "provider_name": invocation["provider_name"],
-                "prompt": invocation["system_context"],
-            },
-        )
+        metadata = {
+            **base_metadata,
+            "provider_name": invocation["provider_name"],
+            "prompt": invocation["system_context"],
+        }
+        if result.get("_used_model"):
+            metadata["model"] = result["_used_model"]
+        if result.get("_fallback_attempts"):
+            metadata["fallback_attempts"] = result["_fallback_attempts"]
+        write_run_metadata(exec_id, metadata)
         return {
             "stdout": clean_stdout,
             "stderr": result["stderr"],
