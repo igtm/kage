@@ -106,6 +106,27 @@ def test_rate_limit_state_skip_and_clear(tmp_path, monkeypatch):
     assert is_model_rate_limited("codex", "gpt-5", now=now) is False
 
 
+def test_detects_individual_quota_reached_with_compact_duration():
+    now = _make_now()
+    stderr = (
+        "Error generating reply: Error: Individual quota reached. "
+        "Please upgrade your subscription to increase your limits. "
+        "Resets in 122h48m19s."
+    )
+    info = parse_rate_limit_info("", stderr, now=now)
+    assert info.is_limited is True
+    expected = now + timedelta(hours=122, minutes=48, seconds=19)
+    assert abs(info.reset_at - expected) < timedelta(seconds=1)
+
+
+def test_detects_single_letter_duration_units():
+    now = _make_now()
+    info = parse_rate_limit_info("", "Quota reached. Resets in 1w2d3h4m5s.", now=now)
+    assert info.is_limited is True
+    expected = now + timedelta(weeks=1, days=2, hours=3, minutes=4, seconds=5)
+    assert abs(info.reset_at - expected) < timedelta(seconds=1)
+
+
 def test_rate_limit_info_defaults():
     info = RateLimitInfo()
     assert info.is_limited is False

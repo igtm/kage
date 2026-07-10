@@ -17,14 +17,17 @@ _LIMIT_KEYWORDS = [
     "rate limit",
     "usage limit",
     "usage limit reached",
+    "quota exceeded",
+    "quota reached",
+    "individual quota",
     "too many requests",
     "resource exhausted",
-    "quota exceeded",
     "you've hit your limit",
     "you have hit your limit",
     "you've hit your usage limit",
     "you have hit your usage limit",
     "refreshes in",
+    "resets in",
 ]
 
 _MONTHS = {
@@ -42,9 +45,10 @@ _MONTHS = {
     "dec": 12,
 }
 
-# e.g. "2 days", "17 hours", "14 minutes", "30 seconds", "1 week"
+# e.g. "2 days", "17 hours", "14 minutes", "30 seconds", "1 week",
+# "122h48m19s"
 _DURATION_TOKEN_RE = re.compile(
-    r"(~?\d+)\s*(weeks?|w|days?|hours?|hrs?|hr|minutes?|mins?|min|seconds?|secs?|sec)",
+    r"(~?\d+)\s*(weeks?|w|days?|d|hours?|hrs?|hr|h|minutes?|mins?|min|m|seconds?|secs?|sec|s)",
     re.IGNORECASE,
 )
 
@@ -111,13 +115,13 @@ def _parse_duration_tokens(segment: str) -> Optional[timedelta]:
         unit = match.group(2).lower()
         if unit.startswith("week") or unit == "w":
             total += timedelta(weeks=value)
-        elif unit.startswith("day"):
+        elif unit.startswith("day") or unit == "d":
             total += timedelta(days=value)
-        elif unit.startswith("hour") or unit.startswith("hr"):
+        elif unit.startswith("hour") or unit.startswith("hr") or unit == "h":
             total += timedelta(hours=value)
-        elif unit.startswith("minute") or unit.startswith("min"):
+        elif unit.startswith("minute") or unit.startswith("min") or unit == "m":
             total += timedelta(minutes=value)
-        elif unit.startswith("second") or unit.startswith("sec"):
+        elif unit.startswith("second") or unit.startswith("sec") or unit == "s":
             total += timedelta(seconds=value)
     return total if found else None
 
