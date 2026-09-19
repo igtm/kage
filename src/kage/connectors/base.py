@@ -203,7 +203,7 @@ class BaseConnector(ABC):
         pass
 
     @abstractmethod
-    def send_message(self, payload: str | ConnectorMessage):
+    def send_message(self, payload: str | ConnectorMessage) -> ConnectorDelivery:
         """
         Send a notification message to the external chat service.
         """

@@ -274,6 +274,7 @@ shell: "bash"
 | `kage task resume <name>` | task を即時実行せず suspension metadata だけ削除 |
 | `kage connector list` | 設定済みのコネクター一覧を表示 |
 | `kage connector setup <type>` | コネクター（discord, slack, telegram）のセットアップガイドを表示 |
+| `kage connector send <name> -m <text> [-f <file>]` | detached background job を含む任意の処理から即時送信 |
 | `kage connector poll` | `poll = true` のコネクターを即座にポーリング |
 | `kage connector realtime start [name]` | デタッチされたリアルタイムリスナーを開始 |
 | `kage connector realtime stop [name]` | リアルタイムリスナーを停止 |
@@ -289,6 +290,14 @@ shell: "bash"
 ## Connectors
 
 コネクターは Discord / Slack / Telegram といった外部チャットサービスと連携します。`notify_connectors` によるタスク通知は、認証情報さえ設定されていれば **常に有効** です。
+
+親 run 終了後に完了する detached 処理は、完了時に自分で通知します。child process には `KAGE_RUN_ID`、`KAGE_AGENT_NAME`、`KAGE_ARTIFACT_DIR` が引き継がれるため、例えば次のように送信できます。
+
+```bash
+kage connector send discord_igtm --message "動画生成が完了しました" --file "$KAGE_ARTIFACT_DIR/output.mp4"
+```
+
+agent run 内では、`KAGE_RUN_ID` からDBで権威的に解決した agent と connector に bind された `agent` が一致する場合だけ送信できます。cross-agent 送信は拒否され、添付はその run の `KAGE_ARTIFACT_DIR` 直下の file に限定されます。agent 環境変数がない人間の shell は管理者 context として、設定済みの全 connector を操作できます。
 
 双方向チャットを有効にする場合、各コネクターで **どちらか一方だけ** を選んでください。
 

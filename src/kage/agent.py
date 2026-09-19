@@ -214,7 +214,28 @@ def assert_task_command_allowed(
 
 def assert_connector_command_allowed(config: GlobalConfig, connector_name: str) -> None:
     """connector の bound agent が現 agent と一致するか検証。"""
-    current = get_current_agent_name()
+    run_id = os.environ.get(RUN_ID_ENV_VAR)
+    if run_id:
+        # Connector 送信は情報漏洩に直結するため、run ID がある場合は
+        # KAGE_AGENT_NAME への後方互換 fallback を使わず DB のみを権威とする。
+        try:
+            conn = sqlite3.connect(KAGE_DB_PATH)
+            try:
+                row = conn.execute(
+                    "SELECT agent_name FROM executions WHERE id = ?", (run_id,)
+                ).fetchone()
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            row = None
+        if not row or not row[0]:
+            import typer
+
+            typer.echo("Error: KAGE_RUN_ID does not identify a valid agent-scoped run.")
+            raise typer.Exit(1)
+        current = str(row[0])
+    else:
+        current = get_current_agent_name()
     if current is None:
         return
     c_dict = config.connectors.get(connector_name)
@@ -233,6 +254,36 @@ def assert_connector_command_allowed(config: GlobalConfig, connector_name: str) 
             f"'{bound or DEFAULT_AGENT_NAME}', not to current agent '{current}'."
         )
         raise typer.Exit(1)
+
+
+def get_current_run_artifact_dir() -> Path | None:
+    """DB の run working_dir から権威的な artifact directory を解決。"""
+    run_id = os.environ.get(RUN_ID_ENV_VAR)
+    if not run_id:
+        return None
+    try:
+        conn = sqlite3.connect(KAGE_DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT working_dir, project_path FROM executions WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    base_dir = row[0] or row[1]
+    if not base_dir:
+        return None
+    return (
+        Path(str(base_dir)).expanduser().resolve()
+        / ".kage"
+        / "tmp"
+        / "connector-artifacts"
+        / run_id
+    )
 
 
 def assert_agent_command_allowed(config: GlobalConfig, name: str) -> None:
