@@ -39,6 +39,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage task resume <name>` — Remove suspension metadata without starting the task.
 - `kage connector list` — List all configured connectors.
 - `kage connector setup <type>` — Show setup guide for a connector (discord, slack, telegram).
+- `kage connector send <name> -m <text> [-f <file>]` — Send immediately, including from detached background work.
 - `kage connector poll` — Manually trigger polling for all connectors.
 - `kage connector realtime start [name]` — Start detached realtime listeners.
 - `kage connector realtime stop [name]` — Stop realtime listeners.
@@ -110,6 +111,8 @@ working_dir: ../../workspace
 Connectors integrate with external chat services. Sending (task notifications via `notify_connectors`) is **always enabled** as long as credentials are configured. Bi-directional chat is controlled by the `poll` flag (1-minute polling) or the `realtime` flag (WebSocket-based instant replies).
 
 Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that run and mentioned in the prompt so the provider can decide whether to use them. Discord, Slack, and Telegram upload every top-level file left in `KAGE_ARTIFACT_DIR` with the text reply, so leave only the intended final deliverables in that directory and delete unwanted Markdown/Marp/HTML, downloaded images, and other intermediate assets before the run ends.
+
+If detached work will finish after the parent run, it must call `kage connector send <name> --message <text> [--file "$KAGE_ARTIFACT_DIR/<file>"]` on completion. Agent runs may send only through connectors bound to the same DB-anchored agent, and may attach only top-level files from their own `KAGE_ARTIFACT_DIR`; cross-agent sends are rejected.
 
 ```toml
 [connectors.my_discord]

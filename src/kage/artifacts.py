@@ -131,7 +131,13 @@ def build_connector_delivery_prompt(
         "you render a final PNG or PDF from external images, first save the "
         "needed images as local files and reference them with relative paths "
         "during rendering instead of remote URLs. Keep the human-readable "
-        "response in stdout."
+        "response in stdout. If you deliberately start a detached background "
+        "job that will finish after this run, the automatic end-of-run upload "
+        "cannot deliver its later result. Have that job call `kage connector "
+        "send <connector-name> --message <text> --file <path>` when it finishes. "
+        "An agent run may send only through connectors bound to the same "
+        "DB-anchored agent, and attached files must be top-level files in "
+        f"`{ARTIFACT_ENV_VAR}`."
     )
 
 

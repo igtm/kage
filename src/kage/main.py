@@ -2652,6 +2652,12 @@ def _agent_doctor_checks(console, ok, warn, fail, *, is_ja=False):
     else:
         lok("agent binding", "no connectors configured")
 
+    lok(
+        "connector send isolation",
+        "DB-anchored run agent must match connector.agent; agent attachments are "
+        "restricted to KAGE_ARTIFACT_DIR",
+    )
+
     # 4. shell env の KAGE_RUN_ID / KAGE_AGENT_NAME 残留検知
     if os.environ.get(RUN_ID_ENV_VAR) or os.environ.get(AGENT_NAME_ENV_VAR):
         lwarn(
@@ -2980,6 +2986,98 @@ def connector_list():
         table.add_row(name, c_type, agent_name, status, ", ".join(details))
 
     console.print(table)
+
+
+@connector_app.command("send")
+def connector_send(
+    name: str = typer.Argument(..., help="Connector name to send through"),
+    message: Optional[str] = typer.Option(
+        None,
+        "--message",
+        "-m",
+        help="Message text (optional when at least one --file is provided)",
+    ),
+    files: Optional[list[Path]] = typer.Option(
+        None,
+        "--file",
+        "-f",
+        help="File to attach; repeat for multiple files",
+    ),
+):
+    """Send a message immediately, including from a detached background job."""
+    import os
+
+    from .agent import (
+        assert_connector_command_allowed,
+        get_current_agent_name,
+        get_current_run_artifact_dir,
+    )
+    from .artifacts import ARTIFACT_ENV_VAR
+    from .config import get_global_config
+    from .connector_payload import ConnectorAttachment, ConnectorMessage
+    from .connectors.runner import get_connector
+
+    config = get_global_config()
+    if name not in config.connectors:
+        typer.echo(f"Error: connector '{name}' not found.")
+        raise typer.Exit(1)
+
+    # DB-anchored KAGE_RUN_ID から得た agent と connector.agent を照合する。
+    # 人間の shell（agent env なし）だけが全 connector を操作できる。
+    assert_connector_command_allowed(config, name)
+    current_agent = get_current_agent_name(config)
+
+    attachments: list[ConnectorAttachment] = []
+    artifact_root: Path | None = None
+    if current_agent is not None and files:
+        raw_artifact_dir = os.environ.get(ARTIFACT_ENV_VAR)
+        if not raw_artifact_dir:
+            typer.echo(
+                f"Error: {ARTIFACT_ENV_VAR} is required for attachments inside "
+                "an agent run."
+            )
+            raise typer.Exit(1)
+        expected_artifact_root = get_current_run_artifact_dir()
+        artifact_root = Path(raw_artifact_dir).expanduser().resolve()
+        if expected_artifact_root is None or artifact_root != expected_artifact_root:
+            typer.echo(
+                f"Error: {ARTIFACT_ENV_VAR} does not match the DB-anchored run "
+                "artifact directory."
+            )
+            raise typer.Exit(1)
+
+    for raw_path in files or []:
+        path = raw_path.expanduser().resolve()
+        if not path.is_file():
+            typer.echo(f"Error: attachment is not a regular file: {raw_path}")
+            raise typer.Exit(1)
+        if artifact_root is not None and path.parent != artifact_root:
+            typer.echo(
+                "Error: agent-run attachments must be top-level files in "
+                f"{ARTIFACT_ENV_VAR} ({artifact_root})."
+            )
+            raise typer.Exit(1)
+        attachments.append(ConnectorAttachment.from_path(path))
+
+    text = message or ""
+    if not text and not attachments:
+        typer.echo("Error: provide --message or at least one --file.")
+        raise typer.Exit(2)
+
+    connector = get_connector(name)
+    if connector is None:
+        typer.echo(f"Error: connector '{name}' has invalid configuration.")
+        raise typer.Exit(1)
+
+    run_id = os.environ.get("KAGE_RUN_ID") if current_agent is not None else None
+    delivery = connector.send_message(
+        ConnectorMessage(text=text, attachments=attachments, run_id=run_id)
+    )
+    if delivery and delivery.errors:
+        for error in delivery.errors:
+            typer.echo(f"Error: {error}")
+        raise typer.Exit(1)
+    typer.echo(f"Message sent through connector '{name}'.")
 
 
 @connector_app.command("poll")

@@ -274,6 +274,7 @@ Cleanup old logs every midnight.
 | `kage task resume <name>` | Remove suspension metadata without starting the task |
 | `kage connector list` | List all configured connectors |
 | `kage connector setup <type>` | Show setup guide for a connector (discord, slack, telegram) |
+| `kage connector send <name> -m <text> [-f <file>]` | Send immediately, including from a detached background job |
 | `kage connector poll` | Manually poll connectors with `poll = true` |
 | `kage connector realtime start [name]` | Start detached realtime listeners |
 | `kage connector realtime stop [name]` | Stop realtime listeners |
@@ -289,6 +290,14 @@ Cleanup old logs every midnight.
 ## Connectors
 
 Connectors integrate with external chat services (Discord, Slack, Telegram). Task notifications via `notify_connectors` are **always enabled** as long as credentials are configured.
+
+Detached work that finishes after its parent run must send its own completion message. The child process inherits `KAGE_RUN_ID`, `KAGE_AGENT_NAME`, and `KAGE_ARTIFACT_DIR`, so it can run:
+
+```bash
+kage connector send my_discord --message "Render complete" --file "$KAGE_ARTIFACT_DIR/output.mp4"
+```
+
+Inside an agent run, the DB-anchored agent for `KAGE_RUN_ID` must match the connector's bound `agent`; cross-agent sends are rejected. Agent-run attachments are restricted to top-level files in that run's `KAGE_ARTIFACT_DIR`. A human shell without agent environment variables remains an administrative context and may send through any configured connector.
 
 For bi-directional chat, choose **one** mode per connector:
 

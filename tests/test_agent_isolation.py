@@ -15,7 +15,9 @@ from kage.agent import (
     get_current_agent_name,
 )
 from kage.config import AgentConfig, GlobalConfig
+from kage.connector_payload import ConnectorDelivery, ConnectorMessage
 from kage.db import init_db, start_execution
+from kage.main import app
 from kage.repo import Repo
 
 
@@ -98,6 +100,145 @@ def test_assert_connector_command_allowed_blocks_cross_agent(monkeypatch, isolat
     # 他 agent の connector は拒否
     with pytest.raises(typer.Exit):
         assert_connector_command_allowed(cfg, "prvc")
+
+
+def test_assert_connector_command_allowed_rejects_unknown_run_id(
+    monkeypatch, isolated_db
+):
+    monkeypatch.setenv(RUN_ID_ENV_VAR, "missing-run")
+    monkeypatch.setenv(AGENT_NAME_ENV_VAR, "public")
+    cfg = GlobalConfig(
+        agents={"public": AgentConfig(name="public")},
+        connectors={"pubc": {"type": "discord", "agent": "public"}},
+    )
+
+    with pytest.raises(typer.Exit):
+        assert_connector_command_allowed(cfg, "pubc")
+
+
+def test_connector_send_allows_same_agent_and_run_artifact(
+    monkeypatch, isolated_db, tmp_path, mocker
+):
+    run_id = start_execution(
+        str(tmp_path), "task", working_dir=str(tmp_path), agent_name="public"
+    )
+    artifact_dir = tmp_path / ".kage" / "tmp" / "connector-artifacts" / run_id
+    artifact_dir.mkdir(parents=True)
+    report = artifact_dir / "report.txt"
+    report.write_text("result", encoding="utf-8")
+    monkeypatch.setenv(RUN_ID_ENV_VAR, run_id)
+    monkeypatch.setenv(AGENT_NAME_ENV_VAR, "tampered")
+    monkeypatch.setenv("KAGE_ARTIFACT_DIR", str(artifact_dir))
+
+    cfg = GlobalConfig(
+        agents={"public": AgentConfig(name="public")},
+        connectors={"pubc": {"type": "discord", "agent": "public"}},
+    )
+    connector = mocker.Mock()
+    connector.send_message.return_value = ConnectorDelivery()
+    mocker.patch("kage.config.get_global_config", return_value=cfg)
+    mocker.patch("kage.connectors.runner.get_connector", return_value=connector)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "connector",
+            "send",
+            "pubc",
+            "--message",
+            "finished",
+            "--file",
+            str(report),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = connector.send_message.call_args.args[0]
+    assert isinstance(payload, ConnectorMessage)
+    assert payload.text == "finished"
+    assert payload.run_id == run_id
+    assert [item.path for item in payload.attachments] == [report.resolve()]
+
+
+def test_connector_send_blocks_cross_agent(monkeypatch, isolated_db, mocker):
+    run_id = start_execution("/p1", "task", agent_name="public")
+    monkeypatch.setenv(RUN_ID_ENV_VAR, run_id)
+    cfg = GlobalConfig(
+        agents={"public": AgentConfig(name="public")},
+        connectors={"private": {"type": "discord", "agent": "private"}},
+    )
+    connector = mocker.Mock()
+    mocker.patch("kage.config.get_global_config", return_value=cfg)
+    mocker.patch("kage.connectors.runner.get_connector", return_value=connector)
+
+    result = CliRunner().invoke(
+        app,
+        ["connector", "send", "private", "--message", "secret"],
+    )
+
+    assert result.exit_code == 1
+    assert "not to current agent 'public'" in result.output
+    connector.send_message.assert_not_called()
+
+
+def test_connector_send_blocks_attachment_outside_run_artifact_dir(
+    monkeypatch, isolated_db, tmp_path, mocker
+):
+    run_id = start_execution(
+        str(tmp_path), "task", working_dir=str(tmp_path), agent_name="public"
+    )
+    artifact_dir = tmp_path / ".kage" / "tmp" / "connector-artifacts" / run_id
+    artifact_dir.mkdir(parents=True)
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret", encoding="utf-8")
+    monkeypatch.setenv(RUN_ID_ENV_VAR, run_id)
+    monkeypatch.setenv("KAGE_ARTIFACT_DIR", str(artifact_dir))
+    cfg = GlobalConfig(
+        agents={"public": AgentConfig(name="public")},
+        connectors={"pubc": {"type": "discord", "agent": "public"}},
+    )
+    connector = mocker.Mock()
+    mocker.patch("kage.config.get_global_config", return_value=cfg)
+    mocker.patch("kage.connectors.runner.get_connector", return_value=connector)
+
+    result = CliRunner().invoke(
+        app,
+        ["connector", "send", "pubc", "--file", str(outside)],
+    )
+
+    assert result.exit_code == 1
+    assert "must be top-level files in KAGE_ARTIFACT_DIR" in result.output
+    connector.send_message.assert_not_called()
+
+
+def test_connector_send_rejects_tampered_artifact_env(
+    monkeypatch, isolated_db, tmp_path, mocker
+):
+    run_id = start_execution(
+        str(tmp_path), "task", working_dir=str(tmp_path), agent_name="public"
+    )
+    forged_dir = tmp_path / "forged"
+    forged_dir.mkdir()
+    forged_file = forged_dir / "secret.txt"
+    forged_file.write_text("secret", encoding="utf-8")
+    monkeypatch.setenv(RUN_ID_ENV_VAR, run_id)
+    monkeypatch.setenv("KAGE_ARTIFACT_DIR", str(forged_dir))
+    cfg = GlobalConfig(
+        agents={"public": AgentConfig(name="public")},
+        connectors={"pubc": {"type": "discord", "agent": "public"}},
+    )
+    connector = mocker.Mock()
+    mocker.patch("kage.config.get_global_config", return_value=cfg)
+    mocker.patch("kage.connectors.runner.get_connector", return_value=connector)
+
+    result = CliRunner().invoke(
+        app,
+        ["connector", "send", "pubc", "--file", str(forged_file)],
+    )
+
+    assert result.exit_code == 1
+    assert "does not match the DB-anchored run artifact directory" in result.output
+    connector.send_message.assert_not_called()
 
 
 def test_assert_agent_command_allowed_blocks_other_agent(monkeypatch, isolated_db):

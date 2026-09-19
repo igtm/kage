@@ -362,7 +362,9 @@ class DiscordConnector(BaseConnector):
 
     def send_message(self, payload):
         if not self.config.bot_token or not self.config.channel_id:
-            return
+            return ConnectorDelivery(
+                errors=["Discord bot_token and channel_id are required."]
+            )
         message = normalize_connector_message(payload)
         delivery = self._post_reply(
             ConnectorMessage(
@@ -372,6 +374,7 @@ class DiscordConnector(BaseConnector):
             )
         )
         self._write_delivery_metadata(message.run_id, delivery)
+        return delivery
 
     def _trigger_typing(self) -> None:
         """Trigger Discord's typing indicator in the configured channel."""
