@@ -18,6 +18,7 @@ from .connector_payload import ConnectorMessage
 from .db import (
     get_execution_agent,
     get_execution_status,
+    resume_execution,
     set_execution_pid,
     start_execution,
     update_execution,
@@ -32,11 +33,84 @@ class DispatchError(RuntimeError):
 _ABANDONED_BACKGROUND_TASK_RE = re.compile(
     r"terminating\s+\d+\s+background task\(s\)\s+on exit", re.IGNORECASE
 )
+_DISPATCH_STATUS_RE = re.compile(
+    r"(?:^|\n)\s*\[KAGE_DISPATCH_STATUS:\s*"
+    r"(COMPLETE|CONTINUE|BLOCKED)\s*\]\s*$",
+    re.IGNORECASE,
+)
+_INCOMPLETE_LINE_RE = re.compile(
+    r"(?:"
+    r"(?:まだ|現在).{0,80}(?:処理中|実行中|進行中|待機中|未完了)"
+    r"|(?:未完了|未反映|未取得|未処理|追記が必要|再開が必要|対応が必要)"
+    r"|(?:still|currently).{0,80}(?:running|processing|pending|waiting)"
+    r"|(?:incomplete|not yet complete|follow[- ]?up required)"
+    r")",
+    re.IGNORECASE,
+)
+_RESOLVED_LINE_RE = re.compile(
+    r"(?:完了しました|完了済み|解消済み|resolved|completed|finished)", re.IGNORECASE
+)
+_MAX_DISPATCH_TURNS = 3
+_CONTINUATION_OUTPUT_LIMIT = 6000
 
 
 def _abandoned_background_tasks(stderr: str) -> bool:
     """Return whether the provider exited while owned background work remained."""
     return bool(_ABANDONED_BACKGROUND_TASK_RE.search(stderr or ""))
+
+
+def _parse_dispatch_status(stdout: str) -> tuple[str | None, str]:
+    """Return the structured completion status and user-visible output."""
+    match = _DISPATCH_STATUS_RE.search(stdout or "")
+    if match is None:
+        return None, (stdout or "").strip()
+    return match.group(1).upper(), (stdout[: match.start()] or "").strip()
+
+
+def _find_incomplete_evidence(stdout: str) -> str | None:
+    """Find unresolved-work evidence near the provider's final answer."""
+    tail = (stdout or "")[-_CONTINUATION_OUTPUT_LIMIT:]
+    for raw_line in reversed(tail.splitlines()):
+        line = raw_line.strip()
+        if not line:
+            continue
+        incomplete = _INCOMPLETE_LINE_RE.search(line)
+        if incomplete is None:
+            continue
+        resolved = _RESOLVED_LINE_RE.search(line, incomplete.end())
+        if resolved is None:
+            return line[:500]
+    return None
+
+
+def _continuation_prompt(
+    original_prompt: str,
+    previous_output: str,
+    reason: str,
+    turn: int,
+) -> str:
+    tail = previous_output[-_CONTINUATION_OUTPUT_LIMIT:]
+    return (
+        "Continue the same dispatch request. Kage rejected the previous turn as "
+        f"incomplete (continuation turn {turn}): {reason}\n\n"
+        "Do not merely report progress. Resume or poll every pending remote "
+        "operation and finish all requested deliverables. If an operation name "
+        "appears below, reuse it instead of starting duplicate work.\n\n"
+        f"[Original Request]\n{original_prompt}\n\n"
+        f"[Previous Turn Tail]\n{tail}"
+    )
+
+
+def _record_continuation(child_run_id: str, turn: int, reason: str) -> None:
+    metadata = load_run_metadata(child_run_id)
+    history = metadata.get("dispatch_continuations")
+    entries = list(history) if isinstance(history, list) else []
+    entries.append({"turn": turn, "reason": reason})
+    write_run_metadata(
+        child_run_id,
+        {"dispatch_continuations": entries},
+        merge=True,
+    )
 
 
 def _connector_agent_name(config, connector_name: str) -> str | None:
@@ -240,30 +314,105 @@ def run_dispatch_worker(child_run_id: str) -> None:
             "process, including remote long-running operations, and verify the "
             "requested result. Do not return an interim progress report as your "
             "final answer. Return only after the request is complete or a terminal "
-            "blocker prevents completion. Your final output will be delivered "
-            "automatically to the source connector."
+            "blocker prevents completion. Do not call `kage connector send`; Kage "
+            "delivers your final output automatically. End your final output with "
+            "exactly one of these machine-readable lines: "
+            "`[KAGE_DISPATCH_STATUS: COMPLETE]` only when every requested result "
+            "is finished and no remote operation or follow-up remains; "
+            "`[KAGE_DISPATCH_STATUS: CONTINUE]` when work is still running or "
+            "pending; or `[KAGE_DISPATCH_STATUS: BLOCKED]` only for a terminal "
+            "blocker that cannot be resolved in another turn. Kage will reject "
+            "COMPLETE if your final answer still describes pending, missing, "
+            "running, or follow-up work."
         )
-        result = generate_logged_chat_reply(
-            prompt,
-            system_prompt=worker_system_prompt,
-            working_dir=child_run.working_dir or child_run.project_path,
-            run_name=child_run.task_name,
-            execution_kind="dispatch",
-            metadata={
-                "dispatch": {
-                    "parent_run_id": parent_run_id,
-                    "request": prompt,
+        turn_prompt = prompt
+        result: dict = {}
+        stdout = ""
+        stderr = ""
+        status = "ERROR"
+        incomplete_error: str | None = None
+        for turn in range(1, _MAX_DISPATCH_TURNS + 1):
+            result = generate_logged_chat_reply(
+                turn_prompt,
+                system_prompt=worker_system_prompt,
+                working_dir=child_run.working_dir or child_run.project_path,
+                run_name=child_run.task_name,
+                execution_kind="dispatch",
+                metadata={
+                    "dispatch": {
+                        "parent_run_id": parent_run_id,
+                        "request": prompt,
+                    },
+                    "connector": {
+                        "name": connector_name,
+                        "type": connector_type,
+                    },
+                    "agent_name": child_agent,
                 },
-                "connector": {
-                    "name": connector_name,
-                    "type": connector_type,
-                },
-                "agent_name": child_agent,
-            },
-            project_path=child_run.project_path,
-            agent_name=child_agent,
-            existing_run_id=child_run_id,
-        )
+                project_path=child_run.project_path,
+                agent_name=child_agent,
+                existing_run_id=child_run_id,
+            )
+            status = get_execution_status(child_run_id) or "ERROR"
+            raw_stdout = str(result.get("stdout") or "").strip()
+            stderr = str(result.get("stderr") or "").strip()
+            declared_status, stdout = _parse_dispatch_status(raw_stdout)
+
+            if status != "SUCCESS":
+                break
+
+            continuation_reason: str | None = None
+            if _abandoned_background_tasks(stderr):
+                continuation_reason = (
+                    "provider exited while owned background tasks were still running"
+                )
+            elif declared_status == "BLOCKED":
+                incomplete_error = "Dispatch reported a terminal blocker."
+                break
+            elif declared_status == "CONTINUE":
+                continuation_reason = "provider reported pending work"
+            elif declared_status != "COMPLETE":
+                continuation_reason = "provider omitted the required completion status"
+            else:
+                evidence = _find_incomplete_evidence(stdout)
+                if evidence:
+                    continuation_reason = (
+                        "provider declared completion but described unresolved work: "
+                        f"{evidence}"
+                    )
+
+            if continuation_reason is None:
+                current = get_run(child_run_id)
+                update_execution(
+                    child_run_id,
+                    "SUCCESS",
+                    stdout,
+                    stderr,
+                    exit_code=result.get("returncode"),
+                    output_summary=infer_output_summary(stdout, stderr),
+                    stdout_bytes=len(stdout.encode("utf-8")),
+                    stderr_bytes=len(stderr.encode("utf-8")),
+                    last_output_at=current.last_output_at if current else None,
+                )
+                break
+
+            _record_continuation(child_run_id, turn, continuation_reason)
+            if turn >= _MAX_DISPATCH_TURNS:
+                incomplete_error = (
+                    "Dispatch remained incomplete after "
+                    f"{_MAX_DISPATCH_TURNS} provider turns: {continuation_reason}."
+                )
+                break
+            if not resume_execution(child_run_id):
+                status = get_execution_status(child_run_id) or "ERROR"
+                break
+            set_execution_pid(child_run_id, os.getpid())
+            turn_prompt = _continuation_prompt(
+                prompt,
+                stdout,
+                continuation_reason,
+                turn + 1,
+            )
 
         # Re-check the DB-anchored child identity and current connector binding
         # immediately before sending the result.
@@ -272,16 +421,9 @@ def run_dispatch_worker(child_run_id: str) -> None:
         if connector is None:
             raise DispatchError(f"Connector '{connector_name}' is unavailable.")
         status = get_execution_status(child_run_id) or "ERROR"
-        stdout = str(result.get("stdout") or "").strip()
-        stderr = str(result.get("stderr") or "").strip()
-        abandoned_error: str | None = None
-        if status == "SUCCESS" and _abandoned_background_tasks(stderr):
-            abandoned_error = (
-                "Dispatch provider exited while background tasks were still "
-                "running; the requested work may be incomplete."
-            )
+        if status == "SUCCESS" and incomplete_error:
             merged_stderr = (
-                f"{stderr}\n{abandoned_error}" if stderr else abandoned_error
+                f"{stderr}\n{incomplete_error}" if stderr else incomplete_error
             )
             update_execution(
                 child_run_id,
@@ -293,7 +435,7 @@ def run_dispatch_worker(child_run_id: str) -> None:
             )
             write_run_metadata(
                 child_run_id,
-                {"dispatch_error": abandoned_error},
+                {"dispatch_error": incomplete_error},
                 merge=True,
             )
             status = "ERROR"
@@ -301,8 +443,8 @@ def run_dispatch_worker(child_run_id: str) -> None:
         if status == "SUCCESS":
             message = stdout or f"Dispatch '{child_run.task_name}' completed."
         else:
-            if abandoned_error:
-                detail = abandoned_error
+            if incomplete_error:
+                detail = incomplete_error
                 if stdout:
                     detail += f"\n\nLast provider output:\n{stdout}"
             else:
