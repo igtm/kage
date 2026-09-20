@@ -228,6 +228,11 @@ def test_dispatch_worker_executes_as_child_and_replies_to_source_connector(
     assert generate.call_args.kwargs["existing_run_id"] == child_run_id
     assert generate.call_args.kwargs["agent_name"] == "public"
     assert "already running as a detached" in generate.call_args.kwargs["system_prompt"]
+    assert "do not leave sub-agents" in generate.call_args.kwargs["system_prompt"]
+    assert (
+        "Do not return an interim progress report"
+        in generate.call_args.kwargs["system_prompt"]
+    )
     assert os.environ["KAGE_RUN_ID"] == child_run_id
     payload = connector.send_message.call_args.args[0]
     assert payload.text == "finished"
@@ -236,6 +241,70 @@ def test_dispatch_worker_executes_as_child_and_replies_to_source_connector(
         load_run_metadata(child_run_id)["dispatch_delivery"]["posted_message_id"]
         == "42"
     )
+
+
+def test_dispatch_worker_rejects_success_with_abandoned_background_tasks(
+    isolated_dispatch_db, tmp_path, monkeypatch, mocker
+):
+    parent_run_id = _source_run(tmp_path)
+    child_run_id = start_execution(
+        str(tmp_path),
+        "dispatch:chapters",
+        working_dir=str(tmp_path),
+        execution_kind="dispatch",
+        agent_name="public",
+    )
+    write_run_metadata(
+        child_run_id,
+        {
+            "dispatch": {
+                "parent_run_id": parent_run_id,
+                "request": "finish the long work",
+            },
+            "connector": {"name": "discord_public", "type": "discord"},
+        },
+    )
+    monkeypatch.setenv("KAGE_RUN_ID", parent_run_id)
+    mocker.patch("kage.config.get_global_config", return_value=_config(tmp_path))
+    connector = mocker.Mock()
+    connector.send_message.return_value = ConnectorDelivery(posted_message_id="43")
+    mocker.patch("kage.connectors.runner.get_connector", return_value=connector)
+
+    provider_stderr = (
+        "root agent idle; waiting up to 5s for 2 background task(s)\n"
+        "terminating 2 background task(s) on exit\n"
+    )
+
+    def incomplete_run(*args, **kwargs):
+        update_execution(
+            child_run_id,
+            "SUCCESS",
+            "still processing",
+            provider_stderr,
+            exit_code=0,
+        )
+        return {
+            "stdout": "still processing",
+            "stderr": provider_stderr,
+            "returncode": 0,
+            "attachments": [],
+        }
+
+    mocker.patch("kage.ai.chat.generate_logged_chat_reply", side_effect=incomplete_run)
+
+    run_dispatch_worker(child_run_id)
+
+    run = get_run(child_run_id)
+    assert run.status == "ERROR"
+    assert "requested work may be incomplete" in run.stderr
+    assert (
+        "requested work may be incomplete"
+        in load_run_metadata(child_run_id)["dispatch_error"]
+    )
+    payload = connector.send_message.call_args.args[0]
+    assert "ended with ERROR" in payload.text
+    assert "requested work may be incomplete" in payload.text
+    assert "still processing" in payload.text
 
 
 def test_dispatch_child_agent_is_immutable(isolated_dispatch_db, tmp_path):

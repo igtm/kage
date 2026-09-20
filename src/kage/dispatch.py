@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import subprocess
 
@@ -26,6 +27,16 @@ from .runs import get_run, infer_output_summary, load_run_metadata, write_run_me
 
 class DispatchError(RuntimeError):
     """Raised when a dispatch request cannot be safely created or executed."""
+
+
+_ABANDONED_BACKGROUND_TASK_RE = re.compile(
+    r"terminating\s+\d+\s+background task\(s\)\s+on exit", re.IGNORECASE
+)
+
+
+def _abandoned_background_tasks(stderr: str) -> bool:
+    """Return whether the provider exited while owned background work remained."""
+    return bool(_ABANDONED_BACKGROUND_TASK_RE.search(stderr or ""))
 
 
 def _connector_agent_name(config, connector_name: str) -> str | None:
@@ -223,8 +234,14 @@ def run_dispatch_worker(child_run_id: str) -> None:
             "[Dispatch Worker Instructions]\n"
             "You are already running as a detached one-off dispatch. Perform the "
             "requested work directly. Do not call `kage dispatch` again for this "
-            "same work. Your final output will be delivered automatically to the "
-            "source connector."
+            "same work. This worker is the only background boundary: do not leave "
+            "sub-agents, shell commands, polling loops, or other background tasks "
+            "running when you return. Wait for every required operation in this "
+            "process, including remote long-running operations, and verify the "
+            "requested result. Do not return an interim progress report as your "
+            "final answer. Return only after the request is complete or a terminal "
+            "blocker prevents completion. Your final output will be delivered "
+            "automatically to the source connector."
         )
         result = generate_logged_chat_reply(
             prompt,
@@ -257,10 +274,39 @@ def run_dispatch_worker(child_run_id: str) -> None:
         status = get_execution_status(child_run_id) or "ERROR"
         stdout = str(result.get("stdout") or "").strip()
         stderr = str(result.get("stderr") or "").strip()
+        abandoned_error: str | None = None
+        if status == "SUCCESS" and _abandoned_background_tasks(stderr):
+            abandoned_error = (
+                "Dispatch provider exited while background tasks were still "
+                "running; the requested work may be incomplete."
+            )
+            merged_stderr = (
+                f"{stderr}\n{abandoned_error}" if stderr else abandoned_error
+            )
+            update_execution(
+                child_run_id,
+                "ERROR",
+                stdout,
+                merged_stderr,
+                exit_code=result.get("returncode"),
+                output_summary=infer_output_summary(stdout, merged_stderr),
+            )
+            write_run_metadata(
+                child_run_id,
+                {"dispatch_error": abandoned_error},
+                merge=True,
+            )
+            status = "ERROR"
+            stderr = merged_stderr
         if status == "SUCCESS":
             message = stdout or f"Dispatch '{child_run.task_name}' completed."
         else:
-            detail = stdout or stderr or "No error details were produced."
+            if abandoned_error:
+                detail = abandoned_error
+                if stdout:
+                    detail += f"\n\nLast provider output:\n{stdout}"
+            else:
+                detail = stdout or stderr or "No error details were produced."
             message = (
                 f"Dispatch '{child_run.task_name}' ended with {status}.\n\n{detail}"
             )

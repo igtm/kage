@@ -1,9 +1,10 @@
-import subprocess
 import os
-import shutil
 import re
+import shutil
+import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
+
 from ..artifacts import (
     IncomingAttachmentPreparation,
     build_connector_delivery_prompt,
@@ -16,12 +17,12 @@ from ..artifacts import (
     write_incoming_artifact_metadata,
 )
 from ..config import ProviderConfig, get_global_config, render_command_template
-from ..model_fallback import run_with_model_fallback
 from ..connector_payload import ConnectorAttachment
 from ..gemini_transition import (
     emit_gemini_transition_warning,
     is_gemini_provider_name,
 )
+from ..model_fallback import run_with_model_fallback
 from ..runs import infer_output_summary
 
 # Provider name → thinking tag mapping
@@ -294,12 +295,15 @@ def _build_chat_invocation(
         system_text = DEFAULT_SYSTEM_PROMPT.strip().format(thinking_tag=thinking_tag)
 
     parts = [f"[System Context]\n{system_text}"]
-    if system_prompt:
-        parts.append(f"[Additional Instructions]\n{system_prompt.strip()}")
     if artifact_dir is not None:
         parts.append(
             build_connector_delivery_prompt(connector_targets, artifact_dir).strip()
         )
+    # Keep caller-owned instructions after generic connector guidance. Dispatch
+    # relies on this precedence to require inline completion even though ordinary
+    # connector runs may deliberately hand work to a self-notifying detached job.
+    if system_prompt:
+        parts.append(f"[Additional Instructions]\n{system_prompt.strip()}")
     for section in extra_sections or []:
         section_text = section.strip()
         if section_text:
