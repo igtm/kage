@@ -1,8 +1,9 @@
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
-from unittest.mock import patch, MagicMock
+
 from kage import db
 from kage.ai.chat import (
     _build_chat_invocation,
@@ -15,7 +16,7 @@ from kage.artifacts import (
     IncomingAttachmentPreparation,
     write_incoming_attachment_bytes,
 )
-from kage.config import GlobalConfig, ProviderConfig, CommandDef
+from kage.config import CommandDef, GlobalConfig, ProviderConfig
 from kage.gemini_transition import GEMINI_CLI_SUNSET_DATE
 from kage.runs import get_run, load_run_metadata
 
@@ -142,6 +143,32 @@ def test_chat_invocation_moves_antigravity_model_before_print(
     prompt_arg = cmd[cmd.index("--print") + 1]
     assert "[System Context]" in prompt_arg
     assert "[User Message]\nこんにちは" in prompt_arg
+
+
+@patch("kage.ai.chat.get_global_config")
+def test_chat_invocation_places_caller_instructions_after_connector_guidance(
+    mock_get_config, tmp_path
+):
+    config = GlobalConfig()
+    config.default_ai_engine = "dummy"
+    config.providers["dummy"] = ProviderConfig(command="dummy_cmd")
+    config.commands["dummy_cmd"] = CommandDef(template=["dummy", "{prompt}"])
+    mock_get_config.return_value = config
+
+    invocation = _build_chat_invocation(
+        "work",
+        system_prompt="[Dispatch Worker Instructions]\nwait until complete",
+        artifact_dir=tmp_path / "artifacts",
+        connector_targets=[("discord_public", "discord")],
+    )
+
+    prompt = invocation["system_context"]
+    assert prompt.index("## Connector Delivery Context") < prompt.index(
+        "[Dispatch Worker Instructions]"
+    )
+    assert prompt.index("[Dispatch Worker Instructions]") < prompt.index(
+        "[User Message]"
+    )
 
 
 @pytest.fixture

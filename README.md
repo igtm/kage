@@ -292,9 +292,9 @@ Cleanup old logs every midnight.
 
 Connectors integrate with external chat services (Discord, Slack, Telegram). Task notifications via `notify_connectors` are **always enabled** as long as credentials are configured.
 
-For lengthy one-off work requested in connector chat, use `kage dispatch --name <label> --prompt <instructions>`. It creates a new detached run, returns its run ID immediately, and automatically sends the eventual result back to the source connector. No task Markdown is required. The command accepts no agent or connector option: both are derived from the source `KAGE_RUN_ID`, the child run keeps the same immutable agent binding, and cross-agent connector delivery is rejected.
+For lengthy one-off work requested in connector chat, use `kage dispatch --name <label> --prompt <instructions>`. It creates a new detached run, returns its run ID immediately, and automatically sends the eventual result back to the source connector. No task Markdown is required. The command accepts no agent or connector option: both are derived from the source `KAGE_RUN_ID`, the child run keeps the same immutable agent binding, and cross-agent connector delivery is rejected. The worker is instructed to wait for all nested/background work and remote operations before returning; if the provider exits while background tasks remain, kage marks the dispatch as an error instead of sending a false success.
 
-Detached work that finishes after its parent run must send its own completion message. The child process inherits `KAGE_RUN_ID`, `KAGE_AGENT_NAME`, and `KAGE_ARTIFACT_DIR`, so it can run:
+Outside a dispatch worker, detached work that finishes after its parent run must send its own completion message. The child process inherits `KAGE_RUN_ID`, `KAGE_AGENT_NAME`, and `KAGE_ARTIFACT_DIR`, so it can run:
 
 ```bash
 kage connector send my_discord --message "Render complete" --file "$KAGE_ARTIFACT_DIR/output.mp4"

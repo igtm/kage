@@ -1933,9 +1933,9 @@ def doctor():
     )
     t_connector_artifacts = "connector artifacts" if not is_ja else "connector 添付"
     t_connector_artifacts_detail = (
-        "Connector-aware runs export KAGE_ARTIFACT_DIR as a workspace-local staging directory. Incoming connector attachments are downloaded to KAGE_ARTIFACT_DIR/incoming for that run, and Discord, Slack, and Telegram upload every top-level file left in KAGE_ARTIFACT_DIR, so keep only intended final deliverables there and delete source or intermediate files before the run ends unless they were explicitly requested."
+        "Connector-aware runs export KAGE_ARTIFACT_DIR as a workspace-local staging directory. Incoming connector attachments are downloaded to KAGE_ARTIFACT_DIR/incoming for that run, and Discord, Slack, and Telegram upload every top-level file left in KAGE_ARTIFACT_DIR, so keep only intended final deliverables there and delete source or intermediate files before the run ends unless they were explicitly requested. Dispatch workers stay active until required nested and remote work completes; if a provider exits with background tasks still running, the dispatch is reported as an error rather than a successful completion."
         if not is_ja
-        else "connector を使う run では workspace 内 staging directory として KAGE_ARTIFACT_DIR を export します。受信した connector 添付はその run の KAGE_ARTIFACT_DIR/incoming に保存され、Discord / Slack / Telegram は KAGE_ARTIFACT_DIR 直下に最後に残っている top-level file をすべて upload するので、そこには意図した最終成果物だけを残し、source や中間 file は明示的に求められた場合以外は終了前に削除してください。"
+        else "connector を使う run では workspace 内 staging directory として KAGE_ARTIFACT_DIR を export します。受信した connector 添付はその run の KAGE_ARTIFACT_DIR/incoming に保存され、Discord / Slack / Telegram は KAGE_ARTIFACT_DIR 直下に最後に残っている top-level file をすべて upload するので、そこには意図した最終成果物だけを残し、source や中間 file は明示的に求められた場合以外は終了前に削除してください。dispatch worker は必要な内部処理や remote operation が完了するまで待機し、provider が background task を残して終了した場合は成功ではなく error として通知します。"
     )
     t_connector_artifacts_detail_empty = (
         "KAGE_ARTIFACT_DIR is created only for connector-aware runs, including connector poll replies."
@@ -2869,7 +2869,7 @@ agent = "kage"            # bind to an [agents.<name>] table to isolate context
 > **⚠️ Security**: `poll = true` or `realtime = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Only enable one of them, and only in private/trusted channels. Task notifications (via `notify_connectors`) work even with both flags set to `false`.
 > **Realtime**: Run `kage connector realtime start` to start the long-lived WebSocket listener. The bot will show a typing indicator and reply immediately when a message arrives. If you have `kage cron run` installed in your crontab, realtime listeners are started/stopped automatically within one minute of changing the config.
 > **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that run, and Discord, Slack, and Telegram upload every top-level file left in `KAGE_ARTIFACT_DIR` with the text reply or task notification, so leave only the intended final deliverables there and delete source Markdown/Marp/HTML, downloaded images, and other intermediate assets unless the user explicitly asked for them.
-> **Long-running requests**: From connector chat, use `kage dispatch --name <label> --prompt <instructions>` for detached one-off agent work. The child run inherits the DB-anchored agent and automatically replies only to the source connector.
+> **Long-running requests**: From connector chat, use `kage dispatch --name <label> --prompt <instructions>` for detached one-off agent work. The child run inherits the DB-anchored agent, waits for all required nested and remote work, and automatically replies only to the source connector. Exiting with background tasks still running is reported as an error, not completion.
 """
         console.print(
             Panel(Markdown(text), title="Discord Setup", border_style="magenta")
@@ -2908,7 +2908,7 @@ agent = "kage"            # bind to an [agents.<name>] table to isolate context
 
 > **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
 > **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that run, and Slack uploads every top-level file left in `KAGE_ARTIFACT_DIR` with the text reply or task notification, so leave only the intended final deliverables there and delete source Markdown/Marp/HTML, downloaded images, and other intermediate assets unless the user explicitly asked for them.
-> **Long-running requests**: From connector chat, use `kage dispatch --name <label> --prompt <instructions>` for detached one-off agent work. The child run inherits the DB-anchored agent and automatically replies only to the source connector.
+> **Long-running requests**: From connector chat, use `kage dispatch --name <label> --prompt <instructions>` for detached one-off agent work. The child run inherits the DB-anchored agent, waits for all required nested and remote work, and automatically replies only to the source connector. Exiting with background tasks still running is reported as an error, not completion.
 """
         console.print(Panel(Markdown(text), title="Slack Setup", border_style="blue"))
     elif ctype == "telegram":
@@ -2936,7 +2936,7 @@ agent = "kage"            # bind to an [agents.<name>] table to isolate context
 
 > **⚠️ Security**: `poll = true` allows anyone in the chat to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
 > **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that run, and Telegram uploads every top-level file left in `KAGE_ARTIFACT_DIR` with the text reply or task notification, so leave only the intended final deliverables there and delete source Markdown/Marp/HTML, downloaded images, and other intermediate assets unless the user explicitly asked for them.
-> **Long-running requests**: From connector chat, use `kage dispatch --name <label> --prompt <instructions>` for detached one-off agent work. The child run inherits the DB-anchored agent and automatically replies only to the source connector.
+> **Long-running requests**: From connector chat, use `kage dispatch --name <label> --prompt <instructions>` for detached one-off agent work. The child run inherits the DB-anchored agent, waits for all required nested and remote work, and automatically replies only to the source connector. Exiting with background tasks still running is reported as an error, not completion.
 """
         console.print(
             Panel(Markdown(text), title="Telegram Setup", border_style="cyan")
