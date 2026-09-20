@@ -353,6 +353,28 @@ def update_execution(
     return updated
 
 
+def resume_execution(exec_id: str) -> bool:
+    """Resume a successful dispatch for another in-process provider turn."""
+    conn = sqlite3.connect(KAGE_DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            UPDATE executions
+            SET status = 'RUNNING', stdout = '', stderr = '', finished_at = NULL,
+                pid = NULL, exit_code = NULL, output_summary = '', stdout_bytes = 0,
+                stderr_bytes = 0, last_output_at = NULL
+            WHERE id = ? AND execution_kind = 'dispatch' AND status = 'SUCCESS'
+            """,
+            (exec_id,),
+        )
+        resumed = cursor.rowcount > 0
+        conn.commit()
+        return resumed
+    finally:
+        conn.close()
+
+
 def set_execution_pid(exec_id: str, pid: int | None):
     """実行中レコードの PID を更新する。"""
     conn = sqlite3.connect(KAGE_DB_PATH)

@@ -211,9 +211,10 @@ def test_dispatch_worker_executes_as_child_and_replies_to_source_connector(
     mocker.patch("kage.connectors.runner.get_connector", return_value=connector)
 
     def complete_run(*args, **kwargs):
-        update_execution(child_run_id, "SUCCESS", "finished", "", exit_code=0)
+        output = "finished\n[KAGE_DISPATCH_STATUS: COMPLETE]"
+        update_execution(child_run_id, "SUCCESS", output, "", exit_code=0)
         return {
-            "stdout": "finished",
+            "stdout": output,
             "stderr": "",
             "returncode": 0,
             "attachments": [],
@@ -296,15 +297,145 @@ def test_dispatch_worker_rejects_success_with_abandoned_background_tasks(
 
     run = get_run(child_run_id)
     assert run.status == "ERROR"
-    assert "requested work may be incomplete" in run.stderr
-    assert (
-        "requested work may be incomplete"
-        in load_run_metadata(child_run_id)["dispatch_error"]
-    )
+    assert "remained incomplete after 3 provider turns" in run.stderr
+    metadata = load_run_metadata(child_run_id)
+    assert "remained incomplete after 3 provider turns" in metadata["dispatch_error"]
+    assert len(metadata["dispatch_continuations"]) == 3
     payload = connector.send_message.call_args.args[0]
     assert "ended with ERROR" in payload.text
-    assert "requested work may be incomplete" in payload.text
+    assert "remained incomplete after 3 provider turns" in payload.text
     assert "still processing" in payload.text
+
+
+def test_dispatch_worker_continues_pending_remote_work_in_same_run(
+    isolated_dispatch_db, tmp_path, monkeypatch, mocker
+):
+    parent_run_id = _source_run(tmp_path)
+    child_run_id = start_execution(
+        str(tmp_path),
+        "dispatch:remote",
+        working_dir=str(tmp_path),
+        execution_kind="dispatch",
+        agent_name="public",
+    )
+    write_run_metadata(
+        child_run_id,
+        {
+            "dispatch": {
+                "parent_run_id": parent_run_id,
+                "request": "wait for remote operation op-123",
+            },
+            "connector": {"name": "discord_public", "type": "discord"},
+        },
+    )
+    monkeypatch.setenv("KAGE_RUN_ID", parent_run_id)
+    mocker.patch("kage.config.get_global_config", return_value=_config(tmp_path))
+    connector = mocker.Mock()
+    connector.send_message.return_value = ConnectorDelivery(posted_message_id="44")
+    mocker.patch("kage.connectors.runner.get_connector", return_value=connector)
+
+    outputs = [
+        "Operation op-123 is still running.\n[KAGE_DISPATCH_STATUS: CONTINUE]",
+        (
+            "Operation op-123 completed and all files were applied.\n"
+            "[KAGE_DISPATCH_STATUS: COMPLETE]"
+        ),
+    ]
+
+    def provider_turn(message, *args, **kwargs):
+        output = outputs.pop(0)
+        update_execution(child_run_id, "SUCCESS", output, "", exit_code=0)
+        return {
+            "stdout": output,
+            "stderr": "",
+            "returncode": 0,
+            "attachments": [],
+        }
+
+    generate = mocker.patch(
+        "kage.ai.chat.generate_logged_chat_reply", side_effect=provider_turn
+    )
+
+    run_dispatch_worker(child_run_id)
+
+    assert generate.call_count == 2
+    continuation_prompt = generate.call_args_list[1].args[0]
+    assert "op-123" in continuation_prompt
+    assert "reuse it instead of starting duplicate work" in continuation_prompt
+    run = get_run(child_run_id)
+    assert run.status == "SUCCESS"
+    assert run.stdout == "Operation op-123 completed and all files were applied."
+    metadata = load_run_metadata(child_run_id)
+    assert metadata["dispatch_continuations"] == [
+        {"turn": 1, "reason": "provider reported pending work"}
+    ]
+    payload = connector.send_message.call_args.args[0]
+    assert payload.text == "Operation op-123 completed and all files were applied."
+
+
+def test_dispatch_worker_rejects_complete_marker_with_unresolved_work(
+    isolated_dispatch_db, tmp_path, monkeypatch, mocker
+):
+    parent_run_id = _source_run(tmp_path)
+    child_run_id = start_execution(
+        str(tmp_path),
+        "dispatch:contradiction",
+        working_dir=str(tmp_path),
+        execution_kind="dispatch",
+        agent_name="public",
+    )
+    write_run_metadata(
+        child_run_id,
+        {
+            "dispatch": {
+                "parent_run_id": parent_run_id,
+                "request": "finish every chunk",
+            },
+            "connector": {"name": "discord_public", "type": "discord"},
+        },
+    )
+    monkeypatch.setenv("KAGE_RUN_ID", parent_run_id)
+    mocker.patch("kage.config.get_global_config", return_value=_config(tmp_path))
+    connector = mocker.Mock()
+    connector.send_message.return_value = ConnectorDelivery(posted_message_id="45")
+    mocker.patch("kage.connectors.runner.get_connector", return_value=connector)
+
+    outputs = [
+        (
+            "14件は完了しましたが、chunk_006はまだ処理中で、追記が必要です。\n"
+            "[KAGE_DISPATCH_STATUS: COMPLETE]"
+        ),
+        (
+            "chunk_006を含む全成果物の反映が完了しました。\n"
+            "[KAGE_DISPATCH_STATUS: COMPLETE]"
+        ),
+    ]
+
+    def provider_turn(*args, **kwargs):
+        output = outputs.pop(0)
+        update_execution(child_run_id, "SUCCESS", output, "", exit_code=0)
+        return {
+            "stdout": output,
+            "stderr": "",
+            "returncode": 0,
+            "attachments": [],
+        }
+
+    generate = mocker.patch(
+        "kage.ai.chat.generate_logged_chat_reply", side_effect=provider_turn
+    )
+
+    run_dispatch_worker(child_run_id)
+
+    assert generate.call_count == 2
+    metadata = load_run_metadata(child_run_id)
+    assert (
+        "described unresolved work" in metadata["dispatch_continuations"][0]["reason"]
+    )
+    assert get_run(child_run_id).status == "SUCCESS"
+    assert (
+        "全成果物の反映が完了しました" in connector.send_message.call_args.args[0].text
+    )
 
 
 def test_dispatch_child_agent_is_immutable(isolated_dispatch_db, tmp_path):
@@ -344,8 +475,9 @@ def test_dispatch_delivery_failure_marks_run_error(
     mocker.patch("kage.config.get_global_config", return_value=_config(tmp_path))
 
     def complete_run(*args, **kwargs):
-        update_execution(child_run_id, "SUCCESS", "finished", "", exit_code=0)
-        return {"stdout": "finished", "stderr": "", "attachments": []}
+        output = "finished\n[KAGE_DISPATCH_STATUS: COMPLETE]"
+        update_execution(child_run_id, "SUCCESS", output, "", exit_code=0)
+        return {"stdout": output, "stderr": "", "attachments": []}
 
     mocker.patch("kage.ai.chat.generate_logged_chat_reply", side_effect=complete_run)
     connector = mocker.Mock()

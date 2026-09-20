@@ -292,7 +292,7 @@ shell: "bash"
 
 コネクターは Discord / Slack / Telegram といった外部チャットサービスと連携します。`notify_connectors` によるタスク通知は、認証情報さえ設定されていれば **常に有効** です。
 
-connector chatで依頼された時間のかかる一時処理には、`kage dispatch --name <label> --prompt <instructions>` を使います。task Markdownは不要です。新しいdetached runを作ってrun IDを即座に返し、完了結果は元のconnectorへ自動送信します。agentやconnectorを指定するoptionはなく、どちらも呼び出し元の`KAGE_RUN_ID`から導出されます。child runは同じimmutableなagent bindingを持ち、cross-agentのconnector送信は拒否されます。workerは内部のbackground処理やremote operationがすべて完了するまで待機します。providerがbackground taskを残して終了した場合は、偽の成功通知を送らずdispatchをerrorとして扱います。
+connector chatで依頼された時間のかかる一時処理には、`kage dispatch --name <label> --prompt <instructions>` を使います。task Markdownは不要です。新しいdetached runを作ってrun IDを即座に返し、完了結果は元のconnectorへ自動送信します。agentやconnectorを指定するoptionはなく、どちらも呼び出し元の`KAGE_RUN_ID`から導出されます。child runは同じimmutableなagent bindingを持ち、cross-agentのconnector送信は拒否されます。workerはmachine-readableな`COMPLETE` / `CONTINUE` / `BLOCKED`完了契約を使います。remote workが未完了なら同じrunで最大3 provider turnまでoperation identifierを引き継いで継続します。未完了・未反映の記述と矛盾する完了宣言は拒否し、継続上限やbackground task打ち切りは偽の成功ではなくerrorとして扱います。
 
 dispatch worker以外で、親 run 終了後に完了する detached 処理は、完了時に自分で通知します。child process には `KAGE_RUN_ID`、`KAGE_AGENT_NAME`、`KAGE_ARTIFACT_DIR` が引き継がれるため、例えば次のように送信できます。
 
