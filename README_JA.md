@@ -259,6 +259,7 @@ shell: "bash"
 | `kage onboard` | グローバルセットアップ |
 | `kage init` | 現在のディレクトリに kage を初期化 |
 | `kage run <task>` | 特定 task を即時実行。停止中 task は `--force` で実行 |
+| `kage dispatch -n <label> -p <prompt>` | connector runから一時的なagent処理をdetachedで開始し、すぐに制御を返す |
 | `kage compile <task>` | prompt task から同名の `.lock.sh` override を生成 |
 | `kage runs` | 相対日時付きの色付きテーブルで実行履歴を表示 |
 | `kage runs show <exec_id>` | 実行メタデータ、状態、ログパスを表示 |
@@ -290,6 +291,8 @@ shell: "bash"
 ## Connectors
 
 コネクターは Discord / Slack / Telegram といった外部チャットサービスと連携します。`notify_connectors` によるタスク通知は、認証情報さえ設定されていれば **常に有効** です。
+
+connector chatで依頼された時間のかかる一時処理には、`kage dispatch --name <label> --prompt <instructions>` を使います。task Markdownは不要です。新しいdetached runを作ってrun IDを即座に返し、完了結果は元のconnectorへ自動送信します。agentやconnectorを指定するoptionはなく、どちらも呼び出し元の`KAGE_RUN_ID`から導出されます。child runは同じimmutableなagent bindingを持ち、cross-agentのconnector送信は拒否されます。
 
 親 run 終了後に完了する detached 処理は、完了時に自分で通知します。child process には `KAGE_RUN_ID`、`KAGE_AGENT_NAME`、`KAGE_ARTIFACT_DIR` が引き継がれるため、例えば次のように送信できます。
 

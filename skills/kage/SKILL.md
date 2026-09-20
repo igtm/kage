@@ -28,6 +28,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage compile <task>` — Compile a prompt task into a sibling `.lock.sh` override.
 - `kage cron run` — Execute the scheduler loop once (used by cron/launchd).
 - `kage runs` — List execution runs in a relative-time table; add `--absolute-time` for detailed timestamps.
+- `kage dispatch --name <label> --prompt <instructions>` — From a connector run, start detached one-off agent work and return its run ID immediately. Use this for lengthy ad-hoc connector requests that do not have a task file.
 - `kage runs show <exec_id>` — Inspect run metadata and log paths.
 - `kage runs stop <exec_id>` — Stop a running execution.
 - `kage logs [<task>]` — Open raw logs for the latest run of a task, or merge all task logs when omitted.
@@ -111,6 +112,8 @@ working_dir: ../../workspace
 Connectors integrate with external chat services. Sending (task notifications via `notify_connectors`) is **always enabled** as long as credentials are configured. Bi-directional chat is controlled by the `poll` flag (1-minute polling) or the `realtime` flag (WebSocket-based instant replies).
 
 Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that run and mentioned in the prompt so the provider can decide whether to use them. Discord, Slack, and Telegram upload every top-level file left in `KAGE_ARTIFACT_DIR` with the text reply, so leave only the intended final deliverables in that directory and delete unwanted Markdown/Marp/HTML, downloaded images, and other intermediate assets before the run ends.
+
+For lengthy ad-hoc work requested through a connector, call `kage dispatch --name <short-label> --prompt <self-contained-instructions>`. It creates a detached child agent run and automatically delivers the final output and artifacts to the source connector. Do not attempt to select an agent or connector: dispatch derives them from the DB-anchored source run, preserves the immutable agent binding, and rejects cross-agent delivery. Once it returns, tell the user the run ID rather than claiming completion.
 
 If detached work will finish after the parent run, it must call `kage connector send <name> --message <text> [--file "$KAGE_ARTIFACT_DIR/<file>"]` on completion. Agent runs may send only through connectors bound to the same DB-anchored agent, and may attach only top-level files from their own `KAGE_ARTIFACT_DIR`; cross-agent sends are rejected.
 

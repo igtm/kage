@@ -101,6 +101,36 @@ memory_app = typer.Typer(
 app.add_typer(memory_app, name="memory")
 
 
+@app.command()
+def dispatch(
+    prompt: str = typer.Option(
+        ..., "--prompt", "-p", help="One-off work to run asynchronously"
+    ),
+    name: str = typer.Option("one-off", "--name", "-n", help="Short label for the run"),
+):
+    """Dispatch one-off agent work and return immediately."""
+    from .dispatch import DispatchError, start_dispatch
+
+    try:
+        run_id, pid = start_dispatch(prompt, name=name)
+    except DispatchError as exc:
+        typer.echo(f"Error: {exc}")
+        raise typer.Exit(1) from exc
+    typer.echo(f"Dispatched '{name}' (run {run_id}, pid {pid}).")
+
+
+@app.command("_dispatch-worker", hidden=True)
+def dispatch_worker(run_id: str = typer.Argument(..., help="Dispatch run ID")):
+    """Internal detached dispatch worker."""
+    from .dispatch import DispatchError, run_dispatch_worker
+
+    try:
+        run_dispatch_worker(run_id)
+    except DispatchError as exc:
+        typer.echo(f"Error: {exc}")
+        raise typer.Exit(1) from exc
+
+
 def _completion_script(shell: str) -> str:
     target_shell = shell.lower().strip()
     if target_shell not in ("bash", "zsh"):
@@ -2839,6 +2869,7 @@ agent = "kage"            # bind to an [agents.<name>] table to isolate context
 > **⚠️ Security**: `poll = true` or `realtime = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Only enable one of them, and only in private/trusted channels. Task notifications (via `notify_connectors`) work even with both flags set to `false`.
 > **Realtime**: Run `kage connector realtime start` to start the long-lived WebSocket listener. The bot will show a typing indicator and reply immediately when a message arrives. If you have `kage cron run` installed in your crontab, realtime listeners are started/stopped automatically within one minute of changing the config.
 > **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that run, and Discord, Slack, and Telegram upload every top-level file left in `KAGE_ARTIFACT_DIR` with the text reply or task notification, so leave only the intended final deliverables there and delete source Markdown/Marp/HTML, downloaded images, and other intermediate assets unless the user explicitly asked for them.
+> **Long-running requests**: From connector chat, use `kage dispatch --name <label> --prompt <instructions>` for detached one-off agent work. The child run inherits the DB-anchored agent and automatically replies only to the source connector.
 """
         console.print(
             Panel(Markdown(text), title="Discord Setup", border_style="magenta")
@@ -2877,6 +2908,7 @@ agent = "kage"            # bind to an [agents.<name>] table to isolate context
 
 > **⚠️ Security**: `poll = true` allows anyone in the channel to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
 > **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that run, and Slack uploads every top-level file left in `KAGE_ARTIFACT_DIR` with the text reply or task notification, so leave only the intended final deliverables there and delete source Markdown/Marp/HTML, downloaded images, and other intermediate assets unless the user explicitly asked for them.
+> **Long-running requests**: From connector chat, use `kage dispatch --name <label> --prompt <instructions>` for detached one-off agent work. The child run inherits the DB-anchored agent and automatically replies only to the source connector.
 """
         console.print(Panel(Markdown(text), title="Slack Setup", border_style="blue"))
     elif ctype == "telegram":
@@ -2904,6 +2936,7 @@ agent = "kage"            # bind to an [agents.<name>] table to isolate context
 
 > **⚠️ Security**: `poll = true` allows anyone in the chat to interact with the AI, which has full access to your PC. Task notifications (via `notify_connectors`) work even with `poll = false`.
 > **Artifacts**: Connector-aware runs export `KAGE_ARTIFACT_DIR` as a workspace-local staging directory (for example `.kage/tmp/connector-artifacts/<run_id>`). Incoming connector attachments are downloaded to `KAGE_ARTIFACT_DIR/incoming` for that run, and Telegram uploads every top-level file left in `KAGE_ARTIFACT_DIR` with the text reply or task notification, so leave only the intended final deliverables there and delete source Markdown/Marp/HTML, downloaded images, and other intermediate assets unless the user explicitly asked for them.
+> **Long-running requests**: From connector chat, use `kage dispatch --name <label> --prompt <instructions>` for detached one-off agent work. The child run inherits the DB-anchored agent and automatically replies only to the source connector.
 """
         console.print(
             Panel(Markdown(text), title="Telegram Setup", border_style="cyan")

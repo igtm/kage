@@ -259,6 +259,7 @@ Cleanup old logs every midnight.
 | `kage onboard` | Global setup (cron, directories, DB) |
 | `kage init` | Initialize kage in the current directory |
 | `kage run <task>` | Run a specific task immediately; add `--force` to bypass suspension |
+| `kage dispatch -n <label> -p <prompt>` | Start detached one-off agent work from a connector run and return immediately |
 | `kage compile <task>` | Compile a prompt task into a sibling `.lock.sh` override |
 | `kage runs` | List execution runs in a status-colored table with relative time |
 | `kage runs show <exec_id>` | Show run metadata, paths, and status details |
@@ -290,6 +291,8 @@ Cleanup old logs every midnight.
 ## Connectors
 
 Connectors integrate with external chat services (Discord, Slack, Telegram). Task notifications via `notify_connectors` are **always enabled** as long as credentials are configured.
+
+For lengthy one-off work requested in connector chat, use `kage dispatch --name <label> --prompt <instructions>`. It creates a new detached run, returns its run ID immediately, and automatically sends the eventual result back to the source connector. No task Markdown is required. The command accepts no agent or connector option: both are derived from the source `KAGE_RUN_ID`, the child run keeps the same immutable agent binding, and cross-agent connector delivery is rejected.
 
 Detached work that finishes after its parent run must send its own completion message. The child process inherits `KAGE_RUN_ID`, `KAGE_AGENT_NAME`, and `KAGE_ARTIFACT_DIR`, so it can run:
 
