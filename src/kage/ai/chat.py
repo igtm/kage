@@ -179,6 +179,9 @@ If asked about these, politely decline, stating that it violates your security c
 
 [TASK CONTROL RULE]
 If the user asks to pause or resume a scheduled kage task, use `kage task suspend ...` or `kage task resume ...` instead of editing `.kage/tasks/*.md` directly.
+
+[ASYNC DISPATCH RULE]
+If a connector request requires lengthy work that should continue after the current reply, use `kage dispatch --name <short-label> --prompt <self-contained-instructions>`. It creates a detached one-off agent run and automatically returns its result to this same connector. Do not choose an agent or connector yourself; kage derives both from the DB-anchored source run. After dispatching, reply with the returned run ID instead of claiming that the work is already complete.
 """
 
 AGENT_CHAT_SYSTEM_PROMPT = """
@@ -200,6 +203,9 @@ If asked about these, politely decline, stating that it violates your security c
 
 [TASK CONTROL RULE]
 If the user asks to pause or resume a scheduled kage task, tell them the appropriate `kage task suspend ...` or `kage task resume ...` command instead of editing `.kage/tasks/*.md` directly.
+
+[ASYNC DISPATCH RULE]
+If a connector request requires lengthy work that should continue after the current reply, use `kage dispatch --name <short-label> --prompt <self-contained-instructions>`. It creates a detached one-off agent run and automatically returns its result to this same connector. Do not choose an agent or connector yourself; kage derives both from the DB-anchored source run. After dispatching, reply with the returned run ID instead of claiming that the work is already complete.
 """
 
 
@@ -403,6 +409,7 @@ def generate_logged_chat_reply(
     incoming_attachment_preparer: IncomingAttachmentPreparer | None = None,
     agent_name: str | None = None,
     run_id: str | None = None,
+    existing_run_id: str | None = None,
 ) -> dict:
     from ..db import set_execution_pid, start_execution, update_execution
     from ..executor import prepare_command_for_execution, run_logged_command
@@ -429,7 +436,7 @@ def generate_logged_chat_reply(
 
     # run_id が未指定で env にすでに KAGE_RUN_ID があれば最外周優先で維持
     # （child env 注入は _build_chat_invocation 内で既存値優先ロジックが処理）
-    exec_id = start_execution(
+    exec_id = existing_run_id or start_execution(
         effective_project_path,
         run_name,
         working_dir=str(cwd_path),
