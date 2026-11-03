@@ -1443,6 +1443,65 @@ def init():
         typer.echo("Project initialized.")
 
 
+@app.command("exec")
+def exec_prompt(
+    prompt: str = typer.Option(
+        ...,
+        "--prompt",
+        "-p",
+        help="Instruction to execute once in the current directory",
+    ),
+):
+    """Run an inline prompt synchronously without creating a task file."""
+    import sys
+    from contextlib import redirect_stdout
+    from uuid import uuid4
+
+    from .agent import assert_not_in_agent_run
+    from .executor import TaskExecutionResult, execute_task
+    from .parser import ExecutionMode, TaskDef
+    from .runs import get_run, write_run_metadata
+
+    if not prompt.strip():
+        raise typer.BadParameter("Prompt must not be empty.", param_hint="--prompt")
+
+    run_id: str | None = None
+
+    def started(value: str) -> None:
+        nonlocal run_id
+        run_id = value
+        typer.echo(f"Run: {value}", err=True)
+        write_run_metadata(value, {"prompt": prompt})
+
+    task = TaskDef(
+        name=f"exec-{uuid4()}",
+        cron="* * * * *",
+        mode=ExecutionMode.ONCE,
+        prompt=prompt,
+    )
+    try:
+        with redirect_stdout(sys.stderr):
+            assert_not_in_agent_run("execute an inline prompt")
+            result = execute_task(Path.cwd().resolve(), task, on_started=started)
+    except KeyboardInterrupt:
+        typer.echo("Interrupted.", err=True)
+        raise typer.Exit(130) from None
+
+    record = get_run(run_id) if run_id else None
+    if record is None:
+        typer.echo(
+            "Error: inline execution did not start. See diagnostics above.", err=True
+        )
+        raise typer.Exit(1)
+    if record.stdout:
+        typer.echo(record.stdout, nl=not record.stdout.endswith("\n"))
+    if record.stderr:
+        typer.echo(record.stderr, err=True, nl=not record.stderr.endswith("\n"))
+    if result != TaskExecutionResult.STARTED or record.status != "SUCCESS":
+        typer.echo(f"Execution ended with status {record.status}.", err=True)
+        raise typer.Exit(1)
+
+
 @app.command()
 def run(
     name: str = typer.Argument(
@@ -1898,9 +1957,9 @@ def doctor():
         "default_ai_engine が未設定" if is_ja else "default_ai_engine not set"
     )
     t_ai_hint = (
-        "AIタスクを使う場合: kage config default_ai_engine antigravity --global"
+        "AIタスク / kage exec -p の利用: kage config default_ai_engine antigravity --global"
         if is_ja
-        else "If using AI tasks: run 'kage config default_ai_engine antigravity --global'"
+        else "For AI tasks / kage exec -p: run 'kage config default_ai_engine antigravity --global'"
     )
     t_prov_undef = "が未定義" if is_ja else "is undefined"
     t_prov_cmd_hint = (

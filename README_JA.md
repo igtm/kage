@@ -259,6 +259,7 @@ shell: "bash"
 | `kage onboard` | グローバルセットアップ |
 | `kage init` | 現在のディレクトリに kage を初期化 |
 | `kage run <task>` | 特定 task を即時実行。停止中 task は `--force` で実行 |
+| `kage exec -p "<指示>"` | タスクファイルを作らず、現在のディレクトリで指示を1回実行 |
 | `kage dispatch -n <label> -p <prompt>` | connector runから一時的なagent処理をdetachedで開始し、すぐに制御を返す |
 | `kage compile <task>` | prompt task から同名の `.lock.sh` override を生成 |
 | `kage runs` | 相対日時付きの色付きテーブルで実行履歴を表示 |
@@ -291,6 +292,8 @@ shell: "bash"
 ## Connectors
 
 コネクターは Discord / Slack / Telegram といった外部チャットサービスと連携します。`notify_connectors` によるタスク通知は、認証情報さえ設定されていれば **常に有効** です。
+
+`kage exec -p "このリポジトリを説明して"` は、タスクファイルの作成やプロジェクト登録をせず、現在のディレクトリで同期実行します。agent と provider は既存の解決ルールに従い、対応する agent がなければデフォルト → 組み込みの `kage` にフォールバックします。回答は標準出力、run ID と診断は標準エラー出力に表示します。履歴は `kage runs`、生ログは `kage logs --run <run_id>` で確認できます。失敗時は非ゼロで終了し、Ctrl+C は provider のプロセス群を停止して 130 で終了します。人間のターミナルから利用するコマンドで、agent 実行内からの呼び出しは拒否します。このコマンドでは JSON 出力や標準入力の取り込みは追加しません。
 
 connector chatで依頼された時間のかかる一時処理には、`kage dispatch --name <label> --prompt <instructions>` を使います。task Markdownは不要です。新しいdetached runを作ってrun IDを即座に返し、完了結果は元のconnectorへ自動送信します。agentやconnectorを指定するoptionはなく、どちらも呼び出し元の`KAGE_RUN_ID`から導出されます。child runは同じimmutableなagent bindingを持ち、cross-agentのconnector送信は拒否されます。workerはmachine-readableな`COMPLETE` / `CONTINUE` / `BLOCKED`完了契約を使います。remote workが未完了なら同じrunで最大3 provider turnまでoperation identifierを引き継いで継続します。未完了・未反映の記述と矛盾する完了宣言は拒否し、継続上限やbackground task打ち切りは偽の成功ではなくerrorとして扱います。
 

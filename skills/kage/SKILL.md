@@ -24,6 +24,7 @@ description: Autonomous AI Project Agent & Cron Task Runner. Orchestrates repeti
 - `kage quest new <name> --direction "..."` — Create a new event-driven quest. A quest dispatches a team of role agents (scout → poc → strategist) as a mind-map graph, one node per cron tick, with a `--max-agent-runs` runaway budget. `kage cron run` advances active quests automatically; `kage quest list/show/stop/resume/abort-node` manage them. Quest state lives in SQLite (`quests`, `quest_nodes`, `quest_edges`), not `.kage/tasks/`. Runs flow through the normal executor, so `kage runs` / `kage logs` show quest work too.
 - `kage onboard` — Setup global directories and `kage cron`.
 - `kage init` — Initialize in current directory.
+- `kage exec -p "<instructions>"` — Execute once synchronously in the current directory without a task file or project registration. Uses existing project/default/built-in agent and provider resolution. Answer goes to stdout, run ID and diagnostics to stderr; inspect with `kage runs` / `kage logs --run <run_id>`. Failure exits nonzero; Ctrl+C stops the provider and exits 130. Human-shell use only; agent-run calls are rejected. No JSON or stdin mode.
 - `kage run <task>` — Execute a specific task immediately; add `--force` to bypass suspension.
 - `kage compile <task>` — Compile a prompt task into a sibling `.lock.sh` override.
 - `kage cron run` — Execute the scheduler loop once (used by cron/launchd).
