@@ -108,7 +108,11 @@ def dispatch(
     ),
     name: str = typer.Option("one-off", "--name", "-n", help="Short label for the run"),
 ):
-    """Dispatch one-off agent work with verified completion and return immediately."""
+    """Dispatch one-off agent work and return immediately.
+
+    Pending work and Antigravity print timeouts resume in the same run for up to
+    three provider turns using workspace checkpoints; other failures are terminal.
+    """
     from .dispatch import DispatchError, start_dispatch
 
     try:
@@ -1992,9 +1996,9 @@ def doctor():
     )
     t_connector_artifacts = "connector artifacts" if not is_ja else "connector 添付"
     t_connector_artifacts_detail = (
-        "Connector-aware runs export KAGE_ARTIFACT_DIR as a workspace-local staging directory. Incoming connector attachments are downloaded to KAGE_ARTIFACT_DIR/incoming for that run, and Discord, Slack, and Telegram upload every top-level file left in KAGE_ARTIFACT_DIR, so keep only intended final deliverables there and delete source or intermediate files before the run ends unless they were explicitly requested. Dispatch workers use a COMPLETE / CONTINUE / BLOCKED completion contract. Pending remote work continues in the same run for up to three provider turns; contradictory completion claims and abandoned background tasks are not reported as successful completion."
+        "Connector-aware runs export KAGE_ARTIFACT_DIR as a workspace-local staging directory. Incoming connector attachments are downloaded to KAGE_ARTIFACT_DIR/incoming for that run, and Discord, Slack, and Telegram upload every top-level file left in KAGE_ARTIFACT_DIR, so keep only intended final deliverables there and delete source or intermediate files before the run ends unless they were explicitly requested. Dispatch workers use a COMPLETE / CONTINUE / BLOCKED completion contract. Pending remote work continues in the same run for up to three provider turns; contradictory completion claims and abandoned background tasks are not reported as successful completion. Antigravity structured print_timeout errors (exit 3) also continue within that limit. Workers save .kage/tmp/dispatch-<run_id>.md checkpoints, use foreground polls of at most 30 seconds, and return CONTINUE before ten minutes to avoid the built-in 15-minute print timeout; other provider errors remain terminal."
         if not is_ja
-        else "connector を使う run では workspace 内 staging directory として KAGE_ARTIFACT_DIR を export します。受信した connector 添付はその run の KAGE_ARTIFACT_DIR/incoming に保存され、Discord / Slack / Telegram は KAGE_ARTIFACT_DIR 直下に最後に残っている top-level file をすべて upload するので、そこには意図した最終成果物だけを残し、source や中間 file は明示的に求められた場合以外は終了前に削除してください。dispatch worker は COMPLETE / CONTINUE / BLOCKED の完了契約を使います。未完了の remote work は同じ run で最大3 provider turnまで継続し、未完了記述と矛盾する完了宣言や background task の打ち切りを成功扱いしません。"
+        else "connector を使う run では workspace 内 staging directory として KAGE_ARTIFACT_DIR を export します。受信した connector 添付はその run の KAGE_ARTIFACT_DIR/incoming に保存され、Discord / Slack / Telegram は KAGE_ARTIFACT_DIR 直下に最後に残っている top-level file をすべて upload するので、そこには意図した最終成果物だけを残し、source や中間 file は明示的に求められた場合以外は終了前に削除してください。dispatch worker は COMPLETE / CONTINUE / BLOCKED の完了契約を使います。未完了の remote work は同じ run で最大3 provider turnまで継続し、未完了記述と矛盾する完了宣言や background task の打ち切りを成功扱いしません。Antigravity の構造化 print_timeout（終了コード3）も同じ上限内で継続します。worker は .kage/tmp/dispatch-<run_id>.md への状態保存、1回30秒以内の同期ポーリング、標準15分タイムアウト前の10分以内の CONTINUE を指示されます。他の provider エラーは継続しません。"
     )
     t_connector_artifacts_detail_empty = (
         "KAGE_ARTIFACT_DIR is created only for connector-aware runs, including connector poll replies."

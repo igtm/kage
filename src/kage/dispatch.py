@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
@@ -59,6 +60,25 @@ def _abandoned_background_tasks(stderr: str) -> bool:
     return bool(_ABANDONED_BACKGROUND_TASK_RE.search(stderr or ""))
 
 
+def _antigravity_print_timeout(result: dict, provider_name: str | None) -> bool:
+    """Recognize only agy's structured partial-turn timeout, not arbitrary errors."""
+    if provider_name != "antigravity" or result.get("returncode") != 3:
+        return False
+    for line in str(result.get("stderr") or "").splitlines():
+        if not line.startswith("AGY_ERROR: "):
+            continue
+        try:
+            error = json.loads(line.removeprefix("AGY_ERROR: "))
+        except ValueError:
+            continue
+        if isinstance(error, dict) and (
+            error.get("status") == "DEADLINE_EXCEEDED"
+            and error.get("reason") == "print_timeout"
+        ):
+            return True
+    return False
+
+
 def _parse_dispatch_status(stdout: str) -> tuple[str | None, str]:
     """Return the structured completion status and user-visible output."""
     match = _DISPATCH_STATUS_RE.search(stdout or "")
@@ -95,7 +115,9 @@ def _continuation_prompt(
         f"incomplete (continuation turn {turn}): {reason}\n\n"
         "Do not merely report progress. Resume or poll every pending remote "
         "operation and finish all requested deliverables. If an operation name "
-        "appears below, reuse it instead of starting duplicate work.\n\n"
+        "appears below, reuse it instead of starting duplicate work. Read your "
+        "saved checkpoint before doing anything; previous output may be partial. "
+        "Verify existing results before retrying any side effect.\n\n"
         f"[Original Request]\n{original_prompt}\n\n"
         f"[Previous Turn Tail]\n{tail}"
     )
@@ -311,10 +333,24 @@ def run_dispatch_worker(child_run_id: str) -> None:
             "same work. This worker is the only background boundary: do not leave "
             "sub-agents, shell commands, polling loops, or other background tasks "
             "running when you return. Wait for every required operation in this "
-            "process, including remote long-running operations, and verify the "
+            "process using repeated foreground polls of at most 30 seconds each; "
+            "do not delegate waiting to sub-agents or background tools. Save a "
+            f"checkpoint at `.kage/tmp/dispatch-{child_run_id}.md` in the workspace "
+            "before waiting: record operation IDs, "
+            "output paths, completed side effects, and remaining steps, updating "
+            "it as work advances. Include its path and pending operation IDs in "
+            "your output so another provider turn can resume without duplicate "
+            "jobs. For the built-in Antigravity command, each turn has a 15-minute "
+            "print timeout: return CONTINUE with your checkpoint before 10 minutes "
+            "elapse if remote work remains. Respect any shorter user-specified "
+            f"deadline across all turns (this run started at {child_run.run_at}). "
+            "If that deadline expires, return BLOCKED with the saved state and "
+            "explain that the requested waiting budget was exhausted. Verify the "
             "requested result. Do not return an interim progress report as your "
-            "final answer. Return only after the request is complete or a terminal "
-            "blocker prevents completion. Do not call `kage connector send`; Kage "
+            "completed final answer. CONTINUE is an internal checkpoint handoff "
+            "when the turn budget requires another turn. Otherwise return only "
+            "after the request is complete or a terminal blocker prevents "
+            "completion. Do not call `kage connector send`; Kage "
             "delivers your final output automatically. End your final output with "
             "exactly one of these machine-readable lines: "
             "`[KAGE_DISPATCH_STATUS: COMPLETE]` only when every requested result "
@@ -358,11 +394,19 @@ def run_dispatch_worker(child_run_id: str) -> None:
             stderr = str(result.get("stderr") or "").strip()
             declared_status, stdout = _parse_dispatch_status(raw_stdout)
 
-            if status != "SUCCESS":
+            current = get_run(child_run_id)
+            timed_out = status == "FAILED" and _antigravity_print_timeout(
+                result, current.provider_name if current else None
+            )
+            if status != "SUCCESS" and not timed_out:
                 break
 
             continuation_reason: str | None = None
-            if _abandoned_background_tasks(stderr):
+            if timed_out:
+                continuation_reason = (
+                    "Antigravity print timeout interrupted a partial turn"
+                )
+            elif _abandoned_background_tasks(stderr):
                 continuation_reason = (
                     "provider exited while owned background tasks were still running"
                 )
@@ -403,7 +447,7 @@ def run_dispatch_worker(child_run_id: str) -> None:
                     f"{_MAX_DISPATCH_TURNS} provider turns: {continuation_reason}."
                 )
                 break
-            if not resume_execution(child_run_id):
+            if not resume_execution(child_run_id, expected_status=status):
                 status = get_execution_status(child_run_id) or "ERROR"
                 break
             set_execution_pid(child_run_id, os.getpid())
@@ -421,7 +465,7 @@ def run_dispatch_worker(child_run_id: str) -> None:
         if connector is None:
             raise DispatchError(f"Connector '{connector_name}' is unavailable.")
         status = get_execution_status(child_run_id) or "ERROR"
-        if status == "SUCCESS" and incomplete_error:
+        if status in ("SUCCESS", "FAILED") and incomplete_error:
             merged_stderr = (
                 f"{stderr}\n{incomplete_error}" if stderr else incomplete_error
             )

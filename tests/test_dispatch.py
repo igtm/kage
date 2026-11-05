@@ -10,12 +10,24 @@ from kage import db as db_mod
 from kage import runs as runs_mod
 from kage.config import AgentConfig, GlobalConfig
 from kage.connector_payload import ConnectorDelivery
-from kage.db import get_execution_agent, init_db, start_execution, update_execution
+from kage.db import (
+    get_execution_agent,
+    init_db,
+    resume_execution,
+    start_execution,
+    update_execution,
+)
 from kage.dispatch import DispatchError, run_dispatch_worker
 from kage.main import app
 from kage.runs import get_run, load_run_metadata, write_run_metadata
 
 runner = CliRunner()
+
+AGY_TIMEOUT = (
+    "[agy] print timeout after 15m0s with turn in progress; returning partial output\n"
+    'AGY_ERROR: {"status":"DEADLINE_EXCEEDED","retryable":false,'
+    '"reason":"print_timeout"}\n'
+)
 
 
 @pytest.fixture
@@ -371,6 +383,116 @@ def test_dispatch_worker_continues_pending_remote_work_in_same_run(
     ]
     payload = connector.send_message.call_args.args[0]
     assert payload.text == "Operation op-123 completed and all files were applied."
+
+
+@pytest.mark.parametrize(
+    "provider,code,error,initial_status,exhaust,expected_status,turns",
+    [
+        ("antigravity", 3, AGY_TIMEOUT, "FAILED", False, "SUCCESS", 2),
+        ("antigravity", 3, AGY_TIMEOUT, "FAILED", True, "ERROR", 3),
+        ("antigravity", 3, AGY_TIMEOUT, "STOPPED", False, "STOPPED", 1),
+        ("codex", 3, AGY_TIMEOUT, "FAILED", False, "FAILED", 1),
+        ("antigravity", 1, AGY_TIMEOUT, "FAILED", False, "FAILED", 1),
+        ("antigravity", 3, "authentication failed", "FAILED", False, "FAILED", 1),
+        ("antigravity", 3, "AGY_ERROR: {broken", "FAILED", False, "FAILED", 1),
+        ("antigravity", 3, "AGY_ERROR: []", "FAILED", False, "FAILED", 1),
+        (
+            "antigravity",
+            3,
+            'AGY_ERROR: {"status":"DEADLINE_EXCEEDED","reason":"api_timeout"}',
+            "FAILED",
+            False,
+            "FAILED",
+            1,
+        ),
+    ],
+)
+def test_dispatch_handles_partial_print_timeout(
+    isolated_dispatch_db,
+    tmp_path,
+    monkeypatch,
+    mocker,
+    provider,
+    code,
+    error,
+    initial_status,
+    exhaust,
+    expected_status,
+    turns,
+):
+    parent_run_id = _source_run(tmp_path)
+    child_run_id = start_execution(
+        str(tmp_path),
+        "dispatch:timeout",
+        working_dir=str(tmp_path),
+        execution_kind="dispatch",
+        provider_name=provider,
+        agent_name="public",
+    )
+    write_run_metadata(
+        child_run_id,
+        {
+            "dispatch": {"parent_run_id": parent_run_id, "request": "finish op-123"},
+            "connector": {"name": "discord_public", "type": "discord"},
+        },
+    )
+    monkeypatch.setenv("KAGE_RUN_ID", parent_run_id)
+    mocker.patch("kage.config.get_global_config", return_value=_config(tmp_path))
+    connector = mocker.Mock()
+    connector.send_message.return_value = ConnectorDelivery(posted_message_id="42")
+    mocker.patch("kage.connectors.runner.get_connector", return_value=connector)
+    calls = []
+
+    def provider_turn(message, **kwargs):
+        assert get_run(child_run_id).status == "RUNNING"
+        calls.append(message)
+        if len(calls) == 1 or exhaust:
+            # Even a COMPLETE marker cannot turn a timeout into success.
+            output = "Polling op-123.\n[KAGE_DISPATCH_STATUS: COMPLETE]"
+            status, returncode, stderr = initial_status, code, error
+        else:
+            output = "All files applied.\n[KAGE_DISPATCH_STATUS: COMPLETE]"
+            status, returncode, stderr = "SUCCESS", 0, ""
+        update_execution(child_run_id, status, output, stderr, exit_code=returncode)
+        return {"stdout": output, "stderr": stderr, "returncode": returncode}
+
+    generate = mocker.patch(
+        "kage.ai.chat.generate_logged_chat_reply", side_effect=provider_turn
+    )
+    run_dispatch_worker(child_run_id)
+
+    assert len(calls) == turns
+    run = get_run(child_run_id)
+    assert run.status == expected_status
+    assert connector.send_message.call_count == 1
+    if turns > 1:
+        assert "op-123" in calls[1]
+        assert "Read your saved checkpoint" in calls[1]
+        instructions = generate.call_args.kwargs["system_prompt"]
+        assert f".kage/tmp/dispatch-{child_run_id}.md" in instructions
+        assert "at most 30 seconds" in instructions
+        assert "before 10 minutes" in instructions
+        assert (
+            "print timeout"
+            in load_run_metadata(child_run_id)["dispatch_continuations"][0]["reason"]
+        )
+    if exhaust:
+        assert "incomplete after 3 provider turns" in run.stderr
+        assert run.exit_code == 3
+    if expected_status == "SUCCESS":
+        assert run.exit_code == 0
+        assert connector.send_message.call_args.args[0].text == "All files applied."
+
+
+@pytest.mark.parametrize("status", ["RUNNING", "STOPPED", "ERROR", "FAILED"])
+def test_resume_dispatch_requires_expected_status(
+    isolated_dispatch_db, tmp_path, status
+):
+    run_id = start_execution(str(tmp_path), "dispatch:test", execution_kind="dispatch")
+    update_execution(run_id, status, "", "")
+    assert not resume_execution(run_id)
+    assert resume_execution(run_id, expected_status="FAILED") == (status == "FAILED")
+    assert get_run(run_id).status == ("RUNNING" if status == "FAILED" else status)
 
 
 def test_dispatch_worker_rejects_complete_marker_with_unresolved_work(
