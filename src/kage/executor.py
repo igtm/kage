@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -445,7 +446,7 @@ def run_logged_command(
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         proc.wait()
         raise
-    except Exception as exc:
+    except BaseException as exc:
         if "proc" in locals():
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -455,9 +456,16 @@ def run_logged_command(
                 pass
             try:
                 proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
             except Exception:
                 pass
-            raise LoggedCommandError(str(exc), started=True) from exc
+            if isinstance(exc, Exception):
+                raise LoggedCommandError(str(exc), started=True) from exc
         raise
     finally:
         if "stream_state" in locals():
@@ -524,6 +532,7 @@ def execute_task(
     task_file: Optional[Path] = None,
     *,
     force: bool = False,
+    on_started: Callable[[str], None] | None = None,
 ) -> TaskExecutionResult:
     if not task.active:
         print(f"Skipping inactive task '{task.name}' in {project_dir}")
@@ -681,6 +690,8 @@ def execute_task(
                 provider_name=engine_name if prompt_execution else None,
                 agent_name=task_agent.name,
             )
+            if on_started is not None:
+                on_started(exec_id)
 
             if compiled_override_path is not None:
                 write_run_metadata(
@@ -929,6 +940,17 @@ def execute_task(
                     run_id=exec_id,
                     attachments=attachments,
                 )
+        except KeyboardInterrupt:
+            if exec_id:
+                update_execution(
+                    exec_id,
+                    "STOPPED",
+                    "",
+                    "Interrupted by user",
+                    exit_code=130,
+                    output_summary="Interrupted by user",
+                )
+            raise
         except subprocess.TimeoutExpired:
             stderr = f"Task timed out after {task.timeout_minutes} minutes"
             if exec_id and artifact_staging_dir is not None and not attachments:

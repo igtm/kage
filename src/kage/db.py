@@ -353,8 +353,10 @@ def update_execution(
     return updated
 
 
-def resume_execution(exec_id: str) -> bool:
-    """Resume a successful dispatch for another in-process provider turn."""
+def resume_execution(exec_id: str, *, expected_status: str = "SUCCESS") -> bool:
+    """Resume a dispatch, optionally after a caller-verified provider timeout."""
+    if expected_status not in ("SUCCESS", "FAILED"):
+        return False
     conn = sqlite3.connect(KAGE_DB_PATH)
     cursor = conn.cursor()
     try:
@@ -364,9 +366,9 @@ def resume_execution(exec_id: str) -> bool:
             SET status = 'RUNNING', stdout = '', stderr = '', finished_at = NULL,
                 pid = NULL, exit_code = NULL, output_summary = '', stdout_bytes = 0,
                 stderr_bytes = 0, last_output_at = NULL
-            WHERE id = ? AND execution_kind = 'dispatch' AND status = 'SUCCESS'
+            WHERE id = ? AND execution_kind = 'dispatch' AND status = ?
             """,
-            (exec_id,),
+            (exec_id, expected_status),
         )
         resumed = cursor.rowcount > 0
         conn.commit()

@@ -108,7 +108,11 @@ def dispatch(
     ),
     name: str = typer.Option("one-off", "--name", "-n", help="Short label for the run"),
 ):
-    """Dispatch one-off agent work with verified completion and return immediately."""
+    """Dispatch one-off agent work and return immediately.
+
+    Pending work and Antigravity print timeouts resume in the same run for up to
+    three provider turns using workspace checkpoints; other failures are terminal.
+    """
     from .dispatch import DispatchError, start_dispatch
 
     try:
@@ -1443,6 +1447,65 @@ def init():
         typer.echo("Project initialized.")
 
 
+@app.command("exec")
+def exec_prompt(
+    prompt: str = typer.Option(
+        ...,
+        "--prompt",
+        "-p",
+        help="Instruction to execute once in the current directory",
+    ),
+):
+    """Run an inline prompt synchronously without creating a task file."""
+    import sys
+    from contextlib import redirect_stdout
+    from uuid import uuid4
+
+    from .agent import assert_not_in_agent_run
+    from .executor import TaskExecutionResult, execute_task
+    from .parser import ExecutionMode, TaskDef
+    from .runs import get_run, write_run_metadata
+
+    if not prompt.strip():
+        raise typer.BadParameter("Prompt must not be empty.", param_hint="--prompt")
+
+    run_id: str | None = None
+
+    def started(value: str) -> None:
+        nonlocal run_id
+        run_id = value
+        typer.echo(f"Run: {value}", err=True)
+        write_run_metadata(value, {"prompt": prompt})
+
+    task = TaskDef(
+        name=f"exec-{uuid4()}",
+        cron="* * * * *",
+        mode=ExecutionMode.ONCE,
+        prompt=prompt,
+    )
+    try:
+        with redirect_stdout(sys.stderr):
+            assert_not_in_agent_run("execute an inline prompt")
+            result = execute_task(Path.cwd().resolve(), task, on_started=started)
+    except KeyboardInterrupt:
+        typer.echo("Interrupted.", err=True)
+        raise typer.Exit(130) from None
+
+    record = get_run(run_id) if run_id else None
+    if record is None:
+        typer.echo(
+            "Error: inline execution did not start. See diagnostics above.", err=True
+        )
+        raise typer.Exit(1)
+    if record.stdout:
+        typer.echo(record.stdout, nl=not record.stdout.endswith("\n"))
+    if record.stderr:
+        typer.echo(record.stderr, err=True, nl=not record.stderr.endswith("\n"))
+    if result != TaskExecutionResult.STARTED or record.status != "SUCCESS":
+        typer.echo(f"Execution ended with status {record.status}.", err=True)
+        raise typer.Exit(1)
+
+
 @app.command()
 def run(
     name: str = typer.Argument(
@@ -1898,9 +1961,9 @@ def doctor():
         "default_ai_engine が未設定" if is_ja else "default_ai_engine not set"
     )
     t_ai_hint = (
-        "AIタスクを使う場合: kage config default_ai_engine antigravity --global"
+        "AIタスク / kage exec -p の利用: kage config default_ai_engine antigravity --global"
         if is_ja
-        else "If using AI tasks: run 'kage config default_ai_engine antigravity --global'"
+        else "For AI tasks / kage exec -p: run 'kage config default_ai_engine antigravity --global'"
     )
     t_prov_undef = "が未定義" if is_ja else "is undefined"
     t_prov_cmd_hint = (
@@ -1933,9 +1996,9 @@ def doctor():
     )
     t_connector_artifacts = "connector artifacts" if not is_ja else "connector 添付"
     t_connector_artifacts_detail = (
-        "Connector-aware runs export KAGE_ARTIFACT_DIR as a workspace-local staging directory. Incoming connector attachments are downloaded to KAGE_ARTIFACT_DIR/incoming for that run, and Discord, Slack, and Telegram upload every top-level file left in KAGE_ARTIFACT_DIR, so keep only intended final deliverables there and delete source or intermediate files before the run ends unless they were explicitly requested. Dispatch workers use a COMPLETE / CONTINUE / BLOCKED completion contract. Pending remote work continues in the same run for up to three provider turns; contradictory completion claims and abandoned background tasks are not reported as successful completion."
+        "Connector-aware runs export KAGE_ARTIFACT_DIR as a workspace-local staging directory. Incoming connector attachments are downloaded to KAGE_ARTIFACT_DIR/incoming for that run, and Discord, Slack, and Telegram upload every top-level file left in KAGE_ARTIFACT_DIR, so keep only intended final deliverables there and delete source or intermediate files before the run ends unless they were explicitly requested. Dispatch workers use a COMPLETE / CONTINUE / BLOCKED completion contract. Pending remote work continues in the same run for up to three provider turns; contradictory completion claims and abandoned background tasks are not reported as successful completion. Antigravity structured print_timeout errors (exit 3) also continue within that limit. Workers save .kage/tmp/dispatch-<run_id>.md checkpoints, use foreground polls of at most 30 seconds, and return CONTINUE before ten minutes to avoid the built-in 15-minute print timeout; other provider errors remain terminal."
         if not is_ja
-        else "connector を使う run では workspace 内 staging directory として KAGE_ARTIFACT_DIR を export します。受信した connector 添付はその run の KAGE_ARTIFACT_DIR/incoming に保存され、Discord / Slack / Telegram は KAGE_ARTIFACT_DIR 直下に最後に残っている top-level file をすべて upload するので、そこには意図した最終成果物だけを残し、source や中間 file は明示的に求められた場合以外は終了前に削除してください。dispatch worker は COMPLETE / CONTINUE / BLOCKED の完了契約を使います。未完了の remote work は同じ run で最大3 provider turnまで継続し、未完了記述と矛盾する完了宣言や background task の打ち切りを成功扱いしません。"
+        else "connector を使う run では workspace 内 staging directory として KAGE_ARTIFACT_DIR を export します。受信した connector 添付はその run の KAGE_ARTIFACT_DIR/incoming に保存され、Discord / Slack / Telegram は KAGE_ARTIFACT_DIR 直下に最後に残っている top-level file をすべて upload するので、そこには意図した最終成果物だけを残し、source や中間 file は明示的に求められた場合以外は終了前に削除してください。dispatch worker は COMPLETE / CONTINUE / BLOCKED の完了契約を使います。未完了の remote work は同じ run で最大3 provider turnまで継続し、未完了記述と矛盾する完了宣言や background task の打ち切りを成功扱いしません。Antigravity の構造化 print_timeout（終了コード3）も同じ上限内で継続します。worker は .kage/tmp/dispatch-<run_id>.md への状態保存、1回30秒以内の同期ポーリング、標準15分タイムアウト前の10分以内の CONTINUE を指示されます。他の provider エラーは継続しません。"
     )
     t_connector_artifacts_detail_empty = (
         "KAGE_ARTIFACT_DIR is created only for connector-aware runs, including connector poll replies."
